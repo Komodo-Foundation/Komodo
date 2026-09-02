@@ -1,0 +1,15 @@
+import file
+import km_compiler
+
+void main(args)
+    let path = args[2]
+    let fileName: string = path or throw "File name not provided"
+
+    if not file::exists(fileName) then
+        throw "File not found"
+
+    let source = file::read_all(fileName)
+    let asm = km_compiler::compile(source)
+
+    let outputPath = fileName + ".asm"
+    km_compiler::save(asm, outputPath)

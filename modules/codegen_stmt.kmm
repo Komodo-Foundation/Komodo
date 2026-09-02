@@ -1,0 +1,235 @@
+module km_compiler
+
+// ═══════════════════════════════════════════════════════════════════════
+//  Codegen — function and statement lowering.
+// ═══════════════════════════════════════════════════════════════════════
+
+void Codegen::genFunction(func: FunctionDecl)
+    m_names = []
+    m_offsets = []
+    m_types = []
+    m_immut = []
+    // [rbp - 8] holds the saved rbx (see emitCall); locals start below it.
+    m_frame = 8
+    m_curRet = retTypeOf(func.returnType)
+    m_curVoid = func.isVoid
+    m_curKind = funcKind(func)
+
+    for p in func.params do
+        let pty = "int"
+        if p.declaredType == "float" or p.declaredType == "string" then
+            pty = p.declaredType
+        addLocal(p.name, pty, false)
+
+    collectLocals(func.body)
+
+    // Round the frame to 16 bytes so the stack is aligned on entry to
+    // every `call` (outgoing arguments are marshalled with push/pop, so
+    // no dedicated scratch area is needed).
+    while m_frame % 16 != 0 do
+        m_frame += 8
+
+    label(func.name)
+    ins("push rbp")
+    ins("mov rbp, rsp")
+    ins("push rbx")
+    ins("sub rsp, " + string(m_frame))
+
+    // Unpack the incoming (tag, value)[] into each parameter's slot.
+    // `main` is entered by the C runtime with the C ABI, not this one.
+    if func.name != "main" then
+        let i = 0
+        for p in func.params do
+            ins("mov rax, [rsi + " + string(16 * i + 8) + "]")
+            ins("mov " + mem(p.name) + ", rax")
+            i += 1
+
+    for s in func.body do
+        genStmt(s)
+
+    // Fall-through return.
+    ins("xor eax, eax")
+    epilogue()
+    emit("")
+
+void Codegen::epilogue()
+    ins("lea rsp, [rbp - 8]")
+    ins("pop rbx")
+    ins("pop rbp")
+    ins("ret")
+
+void Codegen::genStmt(s)
+    if s is VarDecl then
+        if s.init != null then
+            genExpr(s.init)
+            storeVar(s.name)
+    else if s is AssignStmt then
+        genAssign(s)
+    else if s is ExprStmt then
+        if s.expr != null then
+            genExpr(s.expr)
+    else if s is ReturnStmt then
+        genReturn(s)
+    else if s is IfStmt then
+        genIf(s)
+    else if s is WhileStmt then
+        genWhile(s)
+    else if s is ForStmt then
+        genFor(s)
+    else if s is ForInStmt then
+        genForIn(s)
+    else if s is BreakStmt then
+        if #m_loopBreak == 0 then
+            throw "break outside a loop"
+        ins("jmp " + m_loopBreak[#m_loopBreak - 1])
+    else if s is ContinueStmt then
+        if #m_loopCont == 0 then
+            throw "continue outside a loop"
+        ins("jmp " + m_loopCont[#m_loopCont - 1])
+
+void Codegen::storeVar(name: string)
+    if typeOf(name) == "float" then
+        ins("movsd " + mem(name) + ", xmm0")
+    else
+        ins("mov " + mem(name) + ", rax")
+
+void Codegen::genAssign(s)
+    if not hasLocal(s.name) then
+        throw ("assignment to undeclared variable '" + s.name + "'")
+    if immutOf(s.name) then
+        throw ("cannot reassign immutable variable '" + s.name + "' (declared with `be`)")
+    if s.op == "+=" then
+        // array concat:  dst += src
+        m_usesAppend = true
+        genExpr(s.value)
+        ins("mov rsi, rax")
+        ins("mov rdi, " + mem(s.name))
+        emitCall("km_array_append")
+        ins("mov " + mem(s.name) + ", rax")
+    else if s.op == "-=" then
+        genExpr(s.value)
+        ins("mov rcx, rax")
+        ins("mov rax, " + mem(s.name))
+        ins("sub rax, rcx")
+        ins("mov " + mem(s.name) + ", rax")
+    else
+        genExpr(s.value)
+        storeVar(s.name)
+
+void Codegen::genReturn(s)
+    if m_curVoid and s.value != null then
+        throw "a void function cannot return a value"
+    if not m_curVoid and s.value == null then
+        throw "a value function must return a value"
+    if s.value != null then
+        genExpr(s.value)
+        let vt = exprType(s.value)
+        if m_curRet == "float" and vt == "int" then
+            ins("cvtsi2sd xmm0, rax")
+        else if m_curRet == "int" and vt == "float" then
+            ins("cvttsd2si rax, xmm0")
+    epilogue()
+
+void Codegen::genIf(s)
+    let elseL = newLabel()
+    let endL = newLabel()
+    genExpr(s.cond)
+    ins("test rax, rax")
+    ins("je " + elseL)
+    for st in s.thenBody do
+        genStmt(st)
+    ins("jmp " + endL)
+    label(elseL)
+    for st in s.elseBody do
+        genStmt(st)
+    label(endL)
+
+void Codegen::pushLoop(contL: string, breakL: string)
+    m_loopCont += [contL]
+    m_loopBreak += [breakL]
+
+void Codegen::popLoop()
+    m_loopCont = m_loopCont[0 to (#m_loopCont - 1)]
+    m_loopBreak = m_loopBreak[0 to (#m_loopBreak - 1)]
+
+void Codegen::genWhile(s)
+    let topL = newLabel()
+    let endL = newLabel()
+    pushLoop(topL, endL)
+    label(topL)
+    genExpr(s.cond)
+    ins("test rax, rax")
+    ins("je " + endL)
+    for st in s.body do
+        genStmt(st)
+    ins("jmp " + topL)
+    label(endL)
+    popLoop()
+
+// `for i = a to b`  /  `for i = a down to b`  /  `... until b`
+void Codegen::genFor(s)
+    genExpr(s.start)
+    ins("mov " + mem(s.varName) + ", rax")
+    let topL = newLabel()
+    let contL = newLabel()
+    let endL = newLabel()
+    pushLoop(contL, endL)
+    label(topL)
+    ins("mov rax, " + mem(s.varName))
+    ins("push rax")
+    genExpr(s.end)
+    ins("mov rcx, rax")
+    ins("pop rax")
+    ins("cmp rax, rcx")
+    if s.descending then
+        if s.inclusive then
+            ins("jl " + endL)
+        else
+            ins("jle " + endL)
+    else
+        if s.inclusive then
+            ins("jg " + endL)
+        else
+            ins("jge " + endL)
+    for st in s.body do
+        genStmt(st)
+    label(contL)
+    ins("mov rax, " + mem(s.varName))
+    if s.descending then
+        ins("dec rax")
+    else
+        ins("inc rax")
+    ins("mov " + mem(s.varName) + ", rax")
+    ins("jmp " + topL)
+    label(endL)
+    popLoop()
+
+// `for x in arr` — arrays only.  #a/#i are hidden per-loop locals.
+void Codegen::genForIn(s)
+    let vi = s.varName + "#i"
+    let va = s.varName + "#a"
+    genExpr(s.iterable)
+    ins("mov " + mem(va) + ", rax")
+    ins("xor eax, eax")
+    ins("mov " + mem(vi) + ", rax")
+    let topL = newLabel()
+    let contL = newLabel()
+    let endL = newLabel()
+    pushLoop(contL, endL)
+    label(topL)
+    ins("mov rax, " + mem(vi))
+    ins("mov rdx, " + mem(va))
+    ins("cmp rax, [rdx]")
+    ins("jge " + endL)
+    ins("mov rcx, rax")
+    ins("mov rax, [rdx + rcx*8 + 16]")
+    ins("mov " + mem(s.varName) + ", rax")
+    for st in s.body do
+        genStmt(st)
+    label(contL)
+    ins("mov rax, " + mem(vi))
+    ins("inc rax")
+    ins("mov " + mem(vi) + ", rax")
+    ins("jmp " + topL)
+    label(endL)
+    popLoop()

@@ -1,0 +1,123 @@
+module km_compiler
+
+// ═══════════════════════════════════════════════════════════════════════
+//  Codegen — stack-frame layout and static type inference.
+//
+//  Locals (params included) each get an 8-byte slot at a negative offset
+//  from rbp.  `exprType` is a coarse float-vs-int classifier used to pick
+//  between the integer and SSE code paths.
+// ═══════════════════════════════════════════════════════════════════════
+
+mut Codegen::hasLocal(name: string): bool
+    let i = 0
+    while i < #m_names do
+        if m_names[i] == name then
+            return true
+        i += 1
+    return false
+
+void Codegen::addLocal(name: string, ty: string, immut: bool)
+    if hasLocal(name) then
+        return
+    m_frame += 8
+    m_names += [name]
+    m_offsets += [m_frame]
+    m_types += [ty]
+    m_immut += [immut]
+
+mut Codegen::immutOf(name: string): bool
+    let i = 0
+    while i < #m_names do
+        if m_names[i] == name then
+            return m_immut[i]
+        i += 1
+    return false
+
+// A value function must return on every path.  An `if` counts only when
+// it has an `else` and both arms return; loops are treated as possibly
+// zero-iteration (conservative).
+mut Codegen::returnsOnAllPaths(stmts): bool
+    for s in stmts do
+        if s is ReturnStmt then
+            return true
+        if s is IfStmt then
+            if #s.elseBody > 0 and returnsOnAllPaths(s.thenBody) and returnsOnAllPaths(s.elseBody) then
+                return true
+    return false
+
+mut Codegen::slotOf(name: string): int
+    let i = 0
+    while i < #m_names do
+        if m_names[i] == name then
+            return m_offsets[i]
+        i += 1
+    return 0
+
+mut Codegen::typeOf(name: string): string
+    let i = 0
+    while i < #m_names do
+        if m_names[i] == name then
+            return m_types[i]
+        i += 1
+    return "int"
+
+mut Codegen::mem(name: string): string
+    return "[rbp - " + string(slotOf(name)) + "]"
+
+// Coarse "float" / "string" / "int" classification of an expression's
+// result — enough to pick between the integer and SSE code paths and to
+// tag call arguments.
+mut Codegen::exprType(e): string
+    if e is FloatLiteral then
+        return "float"
+    if e is StringLiteral then
+        return "string"
+    if e is Identifier then
+        return typeOf(e.name)
+    if e is UnaryOp then
+        if e.op == "#" then
+            return "int"
+        return exprType(e.operand)
+    if e is BinaryOp then
+        if isCompareOp(e.op) then
+            return "int"
+        // string operators:  a + b   and   s * n
+        if e.op == "+" and (exprType(e.left) == "string" or exprType(e.right) == "string") then
+            return "string"
+        if e.op == "*" and exprType(e.left) == "string" then
+            return "string"
+        if exprType(e.left) == "float" or exprType(e.right) == "float" then
+            return "float"
+        return "int"
+    if e is CallExpr then
+        return fnRet(e.name)
+    if e is TernaryOp then
+        return exprType(e.whenTrue)
+    return "int"
+
+// Pre-scan a statement list, reserving a slot for every variable it (or a
+// nested block) declares.
+void Codegen::collectLocals(stmts)
+    for s in stmts do
+        if s is VarDecl then
+            let ty = "int"
+            if s.declaredType == "float" or s.declaredType == "string" then
+                ty = s.declaredType
+            else if s.init != null then
+                let it = exprType(s.init)
+                if it == "float" or it == "string" then
+                    ty = it
+            addLocal(s.name, ty, s.immutable)
+        else if s is IfStmt then
+            collectLocals(s.thenBody)
+            collectLocals(s.elseBody)
+        else if s is WhileStmt then
+            collectLocals(s.body)
+        else if s is ForStmt then
+            addLocal(s.varName, "int", true)
+            collectLocals(s.body)
+        else if s is ForInStmt then
+            addLocal(s.varName, "int", true)
+            addLocal(s.varName + "#i", "int", false)
+            addLocal(s.varName + "#a", "int", false)
+            collectLocals(s.body)

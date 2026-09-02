@@ -1,0 +1,38 @@
+module km_compiler
+import file
+
+// ═══════════════════════════════════════════════════════════════════════
+//  Komodo → x86-64 compiler — driver
+//
+//  Pipeline:  source ──Lexer──▶ tokens ──Parser──▶ AST ──Codegen──▶ .asm
+//
+//  The compiler is split across sibling files, all `module km_compiler`:
+//
+//      ast.kmm            AST node definitions
+//      lexer.kmm          source text → tokens
+//      parser.kmm         tokens → AST
+//      codegen.kmm        Codegen class: state, driver, signature registry
+//      nasm.kmm           NASM text emitter + symbol bookkeeping
+//      codegen_frame.kmm  stack-frame layout + static type inference
+//      codegen_stmt.kmm   statement lowering
+//      codegen_expr.kmm   expression lowering
+//
+//  Output is NASM syntax.  It assembles with `nasm -f elf64` and links
+//  with `gcc` against the C standard library in stdlib/ (console, algorithm,
+//  math, string, runtime).  See stdlib/km_runtime.h for the ABI and
+//  build.sh for the one-shot build.
+// ═══════════════════════════════════════════════════════════════════════
+
+fn compile(source: string): string
+    let lexer = new Lexer(source)
+    let tokens = lexer.tokenize()
+
+    let parser = new Parser(tokens)
+    let ast = parser.parseProgram()
+
+    let gen = new Codegen()
+    return gen.compileProgram(ast)
+
+void save(asm: string, path: string)
+    file::write_all(path, asm)
+    print("wrote " + path)

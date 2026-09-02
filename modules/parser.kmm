@@ -1,0 +1,549 @@
+module km_compiler
+
+class Parser
+public
+    constructor(tokens: [Token])
+        m_tokens = tokens
+    
+    mut parseProgram(): Program
+        skipNewlines()
+        let prog = new Program()
+        while true do
+            skipNewlines()
+            if at(TokenType::EOF) then
+                break
+            if at(TokenType::FN) or at(TokenType::MUT) or at(TokenType::VOID) then
+                prog.functions += [parseFunction()]
+            else if at(TokenType::STRUCT) then
+                prog.structs += [parseStruct()]
+            else if at(TokenType::CLASS) then
+                prog.classes += [parseClass()]
+            else if at(TokenType::IMPORT) then
+                eat()
+                eat()
+                continue
+            else
+                throw ("Unexpected top-level token: " + string(peek().lexeme))
+            skipNewlines()
+        return prog
+private
+    m_tokens: [Token]
+    m_pos: int = 0
+            
+    mut peek(): Token
+        if m_pos >= #m_tokens then
+            return m_tokens[#m_tokens - 1]
+        return m_tokens[m_pos]
+
+    mut eat(): Token
+        let t = peek()
+        if m_pos < #m_tokens - 1 then
+            m_pos += 1
+        return t
+
+    mut at(type: TokenType): bool
+        return peek().type == type
+
+    mut void skipNewlines()
+        while at(TokenType::NEWLINE) do
+            eat()
+
+    mut parseParams(): [Param]
+        let params: [Param] = []
+        while not at(TokenType::CLOSE_PAREN) and not at(TokenType::EOF) do
+            let pname = peek().lexeme
+            eat()
+            let ptype: string? = null
+            if at(TokenType::COLON) then
+                eat()
+                ptype = parseType()
+            params += [new Param(pname, ptype)]
+            if at(TokenType::COMMA) then
+                eat()
+        return params
+
+    mut parseType(): string
+        if at(TokenType::OPEN_BRACKET) then
+            eat()
+            let inner = parseType()
+            if at(TokenType::CLOSE_BRACKET) then
+                eat()
+            return "[" + inner + "]"
+        let name = peek().lexeme
+        eat()
+        return name
+
+    mut parseFunction(): FunctionDecl
+        let isVoid = at(TokenType::VOID)
+        let isMut = at(TokenType::MUT)
+        if isMut then
+            eat()
+        eat()
+
+        let name = peek().lexeme
+        eat()
+        eat()
+
+        let params = parseParams()
+
+        eat()
+
+        let returnType: string? = null
+        if at(TokenType::COLON) then
+            eat()
+            returnType = parseType()
+
+        skipNewlines()
+        if at(TokenType::INDENT) then
+            eat()
+
+        let body = parseStatements()
+        skipNewlines()
+        if at(TokenType::DEDENT) then
+            eat()
+
+        let decl = new FunctionDecl(name)
+        decl.params = params
+        decl.body = body
+        decl.isVoid = isVoid
+        decl.isMut = isMut
+        decl.returnType = returnType
+        return decl
+
+    mut parseStruct(): StructDecl
+        eat()
+        let name = peek().lexeme
+        eat()
+        skipNewlines()
+        if at(TokenType::INDENT) then
+            eat()
+
+        let members: [StructMember] = []
+        while not at(TokenType::DEDENT) and not at(TokenType::EOF) do
+            skipNewlines()
+            let memberName = peek().lexeme
+            eat()
+            eat()
+            let memberType = peek().lexeme
+            eat()
+            members += [new StructMember(memberName, memberType)]
+            skipNewlines()
+
+        if at(TokenType::DEDENT) then
+            eat()
+
+        let decl = new StructDecl(name)
+        decl.members = members
+        return decl
+
+    mut parseClass(): ClassDecl
+        eat()
+        let name = peek().lexeme
+        eat()
+        skipNewlines()
+        if at(TokenType::INDENT) then
+            eat()
+
+        let methods: [FunctionDecl] = []
+        while not at(TokenType::DEDENT) and not at(TokenType::EOF) do
+            skipNewlines()
+            if at(TokenType::FN) or at(TokenType::MUT) or at(TokenType::VOID) then
+                methods += [parseFunction()]
+            else
+                skipNewlines()
+
+        if at(TokenType::DEDENT) then
+            eat()
+
+        let decl = new ClassDecl(name)
+        decl.methods = methods
+        return decl
+
+
+    mut parseStatements(): [Statement]
+        let stmts: [Statement] = []
+        while not at(TokenType::DEDENT) and not at(TokenType::EOF) do
+            skipNewlines()
+            if at(TokenType::DEDENT) or at(TokenType::EOF) then
+                break
+            let before = m_pos
+            let stmt = parseStatement()
+            if stmt != null then
+                stmts += [stmt]
+            skipNewlines()
+            if m_pos == before then
+                throw ("parseStatements stuck at " + string(peek().lexeme) + " type " + string(peek().type))
+        return stmts
+
+    mut parseStatement(): Statement?
+        if at(TokenType::LET) then
+            return parseVarDecl()
+        if at(TokenType::RETURN) then
+            return parseReturn()
+        if at(TokenType::IF) then
+            return parseIf()
+        if at(TokenType::WHILE) then
+            return parseWhile()
+        if at(TokenType::FOR) then
+            return parseFor()
+        if at(TokenType::BREAK) then
+            eat()
+            return new BreakStmt()
+        if at(TokenType::CONTINUE) then
+            eat()
+            return new ContinueStmt()
+
+        let expr = parseExpression()
+        if expr == null then
+            return null
+
+        if at(TokenType::EQUALS) or at(TokenType::PLUS_EQ) or at(TokenType::MINUS_EQ) then
+            let op = peek().lexeme
+            eat()
+            let value = parseExpression()
+            if expr is Identifier then
+                return new AssignStmt(expr.name, op, value)
+            if expr is MemberExpr then
+                return new FieldAssignStmt(expr.object, expr.member, op, value)
+            if expr is IndexExpr then
+                return new IndexAssignStmt(expr.object, expr.index, op, value)
+
+        return new ExprStmt(expr)
+
+    mut parseVarDecl(): VarDecl
+        eat()
+        let name = peek().lexeme
+        eat()
+        let vtype: string? = null
+        if at(TokenType::COLON) then
+            eat()
+            vtype = parseType()
+        // `let x be ...` binds an immutable variable; `let x = ...` is
+        // reassignable.
+        let immutable = at(TokenType::BE)
+        let init: Expression? = null
+        if at(TokenType::EQUALS) or at(TokenType::BE) then
+            eat()
+            init = parseExpression()
+        let decl = new VarDecl(name)
+        decl.declaredType = vtype
+        decl.init = init
+        decl.immutable = immutable
+        return decl
+
+    mut parseReturn(): ReturnStmt
+        eat()
+        let value: Expression? = null
+        if not at(TokenType::NEWLINE) and not at(TokenType::DEDENT) and not at(TokenType::EOF) then
+            value = parseExpression()
+        let stmt = new ReturnStmt()
+        stmt.value = value
+        return stmt
+
+    mut parseIf(): IfStmt
+        eat()
+        let cond = parseExpression()
+        let hadThen = at(TokenType::DO)
+        if at(TokenType::DO) then
+            eat()
+
+        // one-liner:  if cond then <stmt>
+        if hadThen and not at(TokenType::NEWLINE) and not at(TokenType::EOF) then
+            let single = parseStatement()
+            let one = new IfStmt()
+            one.cond = cond
+            if single != null then
+                one.thenBody = [single]
+            return one
+
+        skipNewlines()
+        if at(TokenType::INDENT) then
+            eat()
+        let thenBody = parseStatements()
+        skipNewlines()
+        if at(TokenType::DEDENT) then
+            eat()
+
+        let elseBody: [Statement] = []
+        if at(TokenType::ELSE) then
+            eat()
+            skipNewlines()
+            if at(TokenType::INDENT) then
+                eat()
+            elseBody = parseStatements()
+            skipNewlines()
+            if at(TokenType::DEDENT) then
+                eat()
+
+        let stmt = new IfStmt()
+        stmt.cond = cond
+        stmt.thenBody = thenBody
+        stmt.elseBody = elseBody
+        return stmt
+
+    mut parseWhile(): WhileStmt
+        eat()
+        let cond = parseExpression()
+        if at(TokenType::DO) then
+            eat()
+        skipNewlines()
+        if at(TokenType::INDENT) then
+            eat()
+        let body = parseStatements()
+        skipNewlines()
+        if at(TokenType::DEDENT) then
+            eat()
+        let stmt = new WhileStmt()
+        stmt.cond = cond
+        stmt.body = body
+        return stmt
+
+    mut parseFor(): Statement
+        eat()                       // for
+        let varName = peek().lexeme
+        eat()                       // loop variable
+
+        // for-each:  for x in iterable
+        if at(TokenType::IN) then
+            eat()
+            let iterable = parseExpression()
+            if at(TokenType::DO) then
+                eat()
+            skipNewlines()
+            if at(TokenType::INDENT) then
+                eat()
+            let feBody = parseStatements()
+            skipNewlines()
+            if at(TokenType::DEDENT) then
+                eat()
+            let fe = new ForInStmt(varName)
+            fe.iterable = iterable
+            fe.body = feBody
+            return fe
+
+        // range:  for i = a to b   /   for i = a down to b   /  ... until b
+        eat()                       // =
+        let start = parseExpression()
+        let descending = false
+        if at(TokenType::DOWN) then
+            descending = true
+            eat()
+        let inclusive = true
+        if at(TokenType::TO) then
+            eat()
+        else if at(TokenType::UNTIL) then
+            inclusive = false
+            eat()
+        let end = parseExpression()
+        if at(TokenType::DO) then
+            eat()
+        skipNewlines()
+        if at(TokenType::INDENT) then
+            eat()
+        let body = parseStatements()
+        skipNewlines()
+        if at(TokenType::DEDENT) then
+            eat()
+        let stmt = new ForStmt(varName)
+        stmt.start = start
+        stmt.end = end
+        stmt.body = body
+        stmt.inclusive = inclusive
+        stmt.descending = descending
+        return stmt
+
+    mut parseExpression(): Expression?
+        return parseTernary()
+
+    mut parseTernary(): Expression?
+        let cond = parseOr()
+        if at(TokenType::QUESTION) then
+            eat()
+            let a = parseExpression()
+            if at(TokenType::COLON) then
+                eat()
+            let b = parseExpression()
+            let t = new TernaryOp()
+            t.cond = cond
+            t.whenTrue = a
+            t.whenFalse = b
+            return t
+        return cond
+
+    mut parseOr(): Expression?
+        let left = parseAnd()
+        while at(TokenType::OR) do
+            eat()
+            let right = parseAnd()
+            left = new BinaryOp("or", left, right)
+        return left
+
+    mut parseAnd(): Expression?
+        let left = parseComparison()
+        while at(TokenType::AND) do
+            eat()
+            let right = parseComparison()
+            left = new BinaryOp("and", left, right)
+        return left
+
+    mut parseComparison(): Expression?
+        let left = parseBitwise()
+        if at(TokenType::LT) or at(TokenType::GT) or at(TokenType::LTE) or at(TokenType::GTE) or at(TokenType::EQ) or at(TokenType::NEQ) then
+            let op = peek().lexeme
+            eat()
+            let right = parseBitwise()
+            return new BinaryOp(op, left, right)
+        return left
+
+    mut parseBitwise(): Expression?
+        let left = parseAdditive()
+        while at(TokenType::AMP) or at(TokenType::PIPE) or at(TokenType::CARET) or at(TokenType::SHL) or at(TokenType::SHR) do
+            let op = peek().lexeme
+            eat()
+            let right = parseAdditive()
+            left = new BinaryOp(op, left, right)
+        return left
+
+    mut parseAdditive(): Expression?
+        let left = parseMultiplicative()
+        while at(TokenType::PLUS) or at(TokenType::MINUS) do
+            let op = peek().lexeme
+            eat()
+            let right = parseMultiplicative()
+            left = new BinaryOp(op, left, right)
+        return left
+
+    mut parseMultiplicative(): Expression?
+        let left = parseUnary()
+        while at(TokenType::STAR) or at(TokenType::SLASH) or at(TokenType::PERCENT) do
+            let op = peek().lexeme
+            eat()
+            let right = parseUnary()
+            left = new BinaryOp(op, left, right)
+        return left
+
+    mut parseUnary(): Expression?
+        if at(TokenType::MINUS) or at(TokenType::NOT) or at(TokenType::HASH) then
+            let op = peek().lexeme
+            eat()
+            let operand = parseUnary()
+            return new UnaryOp(op, operand)
+        return parsePostfix()
+
+    mut parsePostfix(): Expression?
+        let expr = parsePrimary()
+
+        while true do
+            if at(TokenType::DOT) then
+                eat()
+                let member = peek().lexeme
+                eat()
+                if at(TokenType::OPEN_PAREN) then
+                    eat()
+                    let cargs: [Expression] = []
+                    while not at(TokenType::CLOSE_PAREN) and not at(TokenType::EOF) do
+                        let carg = parseExpression()
+                        if carg != null then
+                            cargs += [carg]
+                        if not at(TokenType::CLOSE_PAREN) then
+                            eat()
+                    eat()
+                    let base = ""
+                    if expr is Identifier then
+                        base = expr.name
+                    expr = new CallExpr(base + "." + member, cargs)
+                else
+                    expr = new MemberExpr(expr, member)
+            else if at(TokenType::OPEN_BRACKET) then
+                eat()
+                let index = parseExpression()
+                eat()
+                expr = new IndexExpr(expr, index)
+            else if at(TokenType::OPEN_PAREN) and expr is Identifier then
+                eat()
+                let args: [Expression] = []
+                while not at(TokenType::CLOSE_PAREN) do
+                    let arg = parseExpression()
+                    if arg != null then
+                        args += [arg]
+                    if not at(TokenType::CLOSE_PAREN) then
+                        eat()
+                eat()
+                expr = new CallExpr(expr.name, args)
+            else
+                break
+
+        return expr
+
+    mut parsePrimary(): Expression?
+        if at(TokenType::INT) then
+            let val = peek().lexeme
+            eat()
+            return new IntLiteral(val)
+
+        if at(TokenType::FLOAT) then
+            let val = peek().lexeme
+            eat()
+            return new FloatLiteral(val)
+
+        if at(TokenType::STRING) then
+            let val = peek().lexeme
+            eat()
+            return new StringLiteral(val)
+
+        if at(TokenType::CHAR) then
+            let lexeme = peek().lexeme
+            eat()
+            return new CharLiteral(lexeme)
+
+        if at(TokenType::TRUE) then
+            eat()
+            return new BoolLiteral(true)
+
+        if at(TokenType::FALSE) then
+            eat()
+            return new BoolLiteral(false)
+
+        if at(TokenType::NULL) then
+            eat()
+            return new NullLiteral()
+
+        if at(TokenType::NEW) then
+            eat()
+            let typeName = peek().lexeme
+            eat()
+            eat()
+            let args: [Expression] = []
+            while not at(TokenType::CLOSE_PAREN) do
+                let arg = parseExpression()
+                if arg != null then
+                    args += [arg]
+                if not at(TokenType::CLOSE_PAREN) then
+                    eat()
+            eat()
+            return new NewExpr(typeName, args)
+
+        if at(TokenType::OPEN_BRACKET) then
+            eat()
+            let elements: [Expression] = []
+            while not at(TokenType::CLOSE_BRACKET) do
+                let elem = parseExpression()
+                if elem != null then
+                    elements += [elem]
+                if not at(TokenType::CLOSE_BRACKET) then
+                    eat()
+            eat()
+            return new ArrayExpr(elements)
+
+        if at(TokenType::OPEN_PAREN) then
+            eat()
+            let expr = parseExpression()
+            eat()
+            return expr
+
+        if at(TokenType::IDENT) then
+            let name = peek().lexeme
+            eat()
+            return new Identifier(name)
+
+        return null

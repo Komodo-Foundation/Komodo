@@ -1,0 +1,417 @@
+module km_compiler
+
+enum TokenType
+    EOF
+    NEWLINE
+    INDENT
+    DEDENT
+    IDENT
+    INT
+    FLOAT
+    STRING
+    CHAR
+    TRUE
+    FALSE
+    NULL
+    IF
+    ELSE
+    WHILE
+    FOR
+    TO
+    UNTIL
+    DO
+    FN
+    MUT
+    IMPORT
+    VOID
+    RETURN
+    BREAK
+    CONTINUE
+    STRUCT
+    CLASS
+    NEW
+    LET
+    OPEN_PAREN
+    CLOSE_PAREN
+    OPEN_BRACKET
+    CLOSE_BRACKET
+    OPEN_BRACE
+    CLOSE_BRACE
+    COMMA
+    COLON
+    DOT
+    SEMICOLON
+    EQUALS
+    PLUS
+    MINUS
+    STAR
+    SLASH
+    PERCENT
+    CARET
+    AND
+    OR
+    NOT
+    EQ
+    NEQ
+    LT
+    LTE
+    GT
+    GTE
+    ARROW
+    PLUS_EQ
+    MINUS_EQ
+    HASH
+    BE
+    DOWN
+    IN
+    AMP
+    PIPE
+    SHL
+    SHR
+    QUESTION
+
+struct Token
+    type: TokenType
+    lexeme: string
+    line: int
+    column: int
+
+// The lexer's state lives on the class; every operation on it is
+// declared within the class body with public/private sections.
+class Lexer
+public
+    constructor(src: string)
+        m_src = src
+
+    mut tokenize(): [Token]
+        while m_pos < m_src.length do
+            skipWhitespace()
+
+            if m_pos >= m_src.length then
+                break
+
+            let c = peek()
+
+            handleLineStart(c)
+
+            if c == "\n" then
+                m_tokens += [new Token(TokenType::NEWLINE, "\n", m_line, m_col)]
+                eat()
+                m_line_start = true
+            else if isDigit(c) then
+                m_tokens += [readNumber()]
+            else if isAlpha(c) then
+                m_tokens += [readIdentifier()]
+            else if c == "\"" then
+                m_tokens += [readString()]
+            else if c == "'" then
+                m_tokens += [readChar()]
+            else
+                readOperator(c)
+
+        while #m_indents > 1 do
+            m_indents = m_indents[0 to (#m_indents - 1)]
+            m_tokens += [new Token(TokenType::DEDENT, "", m_line, m_col)]
+
+        m_tokens += [new Token(TokenType::EOF, "", m_line, m_col)]
+        return m_tokens
+
+private
+    m_src: string
+    m_pos: int = 0
+    m_line: int = 1
+    m_col: int = 1
+    m_tokens: [Token] = []
+    m_indents: [int] = [0]
+    m_line_start: bool = true
+
+    mut isDigit(c: char?): bool
+        if c == null then
+            return false
+        return c >= "0" and c <= "9"
+
+    mut isAlpha(c: char?): bool
+        if c == null then
+            return false
+        return (c >= "a" and c <= "z") or (c >= "A" and c <= "Z") or c == "_"
+
+    mut isAlphaNum(c: char?): bool
+        return isAlpha(c) or isDigit(c)
+
+    mut peek(): char?
+        if m_pos >= m_src.length then
+            return null
+        return m_src[m_pos]
+
+    mut peekNext(): char?
+        if m_pos + 1 >= m_src.length then
+            return null
+        return m_src[m_pos + 1]
+
+    mut eat(): char?
+        let c = peek()
+        if c != null then
+            m_pos += 1
+            if c == "\n" then
+                m_line += 1
+                m_col = 1
+            else
+                m_col += 1
+        return c
+
+    void skipWhitespace()
+        while peek() == " " or peek() == "\t" or peek() == "\r" do
+            eat()
+
+    mut readNumber(): Token
+        let start = m_pos
+        while isDigit(peek()) do
+            eat()
+
+        let isFloat = false
+        if peek() == "." and isDigit(peekNext()) then
+            isFloat = true
+            eat()
+            while isDigit(peek()) do
+                eat()
+
+        let text = m_src[start to m_pos]
+
+        // Optional `f` suffix (`2.0f`, `2f`) marks a float literal.
+        if peek() == "f" then
+            eat()
+            isFloat = true
+
+        if isFloat then
+            return new Token(TokenType::FLOAT, text, m_line, m_col)
+
+        return new Token(TokenType::INT, text, m_line, m_col)
+
+    mut readIdentifier(): Token
+        let start = m_pos
+        while isAlphaNum(peek()) do
+            eat()
+        let text = m_src[start to m_pos]
+
+        let type = TokenType::IDENT
+        let lexeme = text
+        match text
+            case "true"
+                type = TokenType::TRUE
+            case "false"
+                type = TokenType::FALSE
+            case "null"
+                type = TokenType::NULL
+            case "if"
+                type = TokenType::IF
+            case "else"
+                type = TokenType::ELSE
+            case "while"
+                type = TokenType::WHILE
+            case "for"
+                type = TokenType::FOR
+            case "to"
+                type = TokenType::TO
+            case "until"
+                type = TokenType::UNTIL
+            case "do"
+                type = TokenType::DO
+            case "then"
+                type = TokenType::DO
+            case "fn"
+                type = TokenType::FN
+            case "void"
+                type = TokenType::VOID
+            case "return"
+                type = TokenType::RETURN
+            case "break"
+                type = TokenType::BREAK
+            case "continue"
+                type = TokenType::CONTINUE
+            case "struct"
+                type = TokenType::STRUCT
+            case "class"
+                type = TokenType::CLASS
+            case "new"
+                type = TokenType::NEW
+            case "let"
+                type = TokenType::LET
+            case "and"
+                type = TokenType::AND
+            case "or"
+                type = TokenType::OR
+            case "not"
+                type = TokenType::NOT
+            case "import"
+                type = TokenType::IMPORT
+            case "mut"
+                type = TokenType::MUT
+            case "be"
+                type = TokenType::BE
+            case "down"
+                type = TokenType::DOWN
+            case "in"
+                type = TokenType::IN
+            case "xor"
+                type = TokenType::CARET
+
+        return new Token(type, lexeme, m_line, m_col)
+
+    mut readString(): Token
+        let start = m_pos
+        eat()
+        while peek() != "\"" and peek() != null do
+            if peek() == "\\" then
+                eat()
+                eat()
+            else
+                eat()
+        eat()
+        return new Token(TokenType::STRING, m_src[start to m_pos], m_line, m_col)
+
+    mut readChar(): Token
+        let start = m_pos
+        eat()
+        while peek() != "'" and peek() != null do
+            if peek() == "\\" then
+                eat()
+                eat()
+            else
+                eat()
+        eat()
+        return new Token(TokenType::CHAR, m_src[start to m_pos], m_line, m_col)
+
+    void handleLineStart(c: char?)
+        if not m_line_start or c == "\n" or c == null then
+            return
+        let indent = m_col - 1
+        if indent > m_indents[#m_indents - 1] then
+            m_indents += [indent]
+            m_tokens += [new Token(TokenType::INDENT, "", m_line, m_col)]
+        else if indent < m_indents[#m_indents - 1] then
+            while m_indents[#m_indents - 1] > indent do
+                m_indents = m_indents[0 to (#m_indents - 1)]
+                m_tokens += [new Token(TokenType::DEDENT, "", m_line, m_col)]
+        m_line_start = false
+
+    void readOperator(c: char?)
+        match c
+            case "("
+                m_tokens += [new Token(TokenType::OPEN_PAREN, "(", m_line, m_col)]
+                eat()
+            case ")"
+                m_tokens += [new Token(TokenType::CLOSE_PAREN, ")", m_line, m_col)]
+                eat()
+            case "["
+                m_tokens += [new Token(TokenType::OPEN_BRACKET, "[", m_line, m_col)]
+                eat()
+            case "]"
+                m_tokens += [new Token(TokenType::CLOSE_BRACKET, "]", m_line, m_col)]
+                eat()
+            case "{{"
+                m_tokens += [new Token(TokenType::OPEN_BRACE, "{{", m_line, m_col)]
+                eat()
+            case "}}"
+                m_tokens += [new Token(TokenType::CLOSE_BRACE, "}}", m_line, m_col)]
+                eat()
+            case ","
+                m_tokens += [new Token(TokenType::COMMA, ",", m_line, m_col)]
+                eat()
+            case ":"
+                m_tokens += [new Token(TokenType::COLON, ":", m_line, m_col)]
+                eat()
+            case "."
+                m_tokens += [new Token(TokenType::DOT, ".", m_line, m_col)]
+                eat()
+            case ";"
+                m_tokens += [new Token(TokenType::SEMICOLON, ";", m_line, m_col)]
+                eat()
+            case "*"
+                eat()
+                m_tokens += [new Token(TokenType::STAR, "*", m_line, m_col)]
+            case "%"
+                eat()
+                m_tokens += [new Token(TokenType::PERCENT, "%", m_line, m_col)]
+            case "^"
+                eat()
+                m_tokens += [new Token(TokenType::CARET, "^", m_line, m_col)]
+            case "&"
+                eat()
+                m_tokens += [new Token(TokenType::AMP, "&", m_line, m_col)]
+            case "|"
+                eat()
+                m_tokens += [new Token(TokenType::PIPE, "|", m_line, m_col)]
+            case "?"
+                eat()
+                m_tokens += [new Token(TokenType::QUESTION, "?", m_line, m_col)]
+            case "="
+                eat()
+                if peek() == "=" then
+                    eat()
+                    m_tokens += [new Token(TokenType::EQ, "==", m_line, m_col)]
+                else
+                    m_tokens += [new Token(TokenType::EQUALS, "=", m_line, m_col)]
+            case "+"
+                eat()
+                if peek() == "=" then
+                    eat()
+                    m_tokens += [new Token(TokenType::PLUS_EQ, "+=", m_line, m_col)]
+                else
+                    m_tokens += [new Token(TokenType::PLUS, "+", m_line, m_col)]
+            case "-"
+                eat()
+                if peek() == "=" then
+                    eat()
+                    m_tokens += [new Token(TokenType::MINUS_EQ, "-=", m_line, m_col)]
+                else if peek() == ">" then
+                    eat()
+                    m_tokens += [new Token(TokenType::ARROW, "->", m_line, m_col)]
+                else
+                    m_tokens += [new Token(TokenType::MINUS, "-", m_line, m_col)]
+            case "#"
+                eat()
+                m_tokens += [new Token(TokenType::HASH, "#", m_line, m_col)]
+            case "/"
+                eat()
+                if peek() == "/" then
+                    while peek() != "\n" and peek() != null do
+                        eat()
+                else if peek() == "*" then
+                    eat()
+                    while peek() != null do
+                        if peek() == "*" and peekNext() == "/" then
+                            eat()
+                            eat()
+                            break
+                        eat()
+                else
+                    m_tokens += [new Token(TokenType::SLASH, "/", m_line, m_col)]
+            case "<"
+                eat()
+                if peek() == "=" then
+                    eat()
+                    m_tokens += [new Token(TokenType::LTE, "<=", m_line, m_col)]
+                else if peek() == "<" then
+                    eat()
+                    m_tokens += [new Token(TokenType::SHL, "<<", m_line, m_col)]
+                else
+                    m_tokens += [new Token(TokenType::LT, "<", m_line, m_col)]
+            case ">"
+                eat()
+                if peek() == "=" then
+                    eat()
+                    m_tokens += [new Token(TokenType::GTE, ">=", m_line, m_col)]
+                else if peek() == ">" then
+                    eat()
+                    m_tokens += [new Token(TokenType::SHR, ">>", m_line, m_col)]
+                else
+                    m_tokens += [new Token(TokenType::GT, ">", m_line, m_col)]
+            case "!"
+                eat()
+                if peek() == "=" then
+                    eat()
+                    m_tokens += [new Token(TokenType::NEQ, "!=", m_line, m_col)]
+                else
+                    m_tokens += [new Token(TokenType::NOT, "!", m_line, m_col)]
+            else
+                eat()

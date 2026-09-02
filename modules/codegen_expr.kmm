@@ -1,0 +1,282 @@
+module km_compiler
+
+// ═══════════════════════════════════════════════════════════════════════
+//  Codegen — expression lowering.
+//
+//  Every helper leaves its result in rax (int / pointer) or xmm0 (float).
+// ═══════════════════════════════════════════════════════════════════════
+
+void Codegen::genExpr(e)
+    if e is IntLiteral then
+        ins("mov rax, " + e.value)
+    else if e is BoolLiteral then
+        if e.value then
+            ins("mov rax, 1")
+        else
+            ins("mov rax, 0")
+    else if e is FloatLiteral then
+        let lbl = addDouble(e.value)
+        ins("movsd xmm0, [rel " + lbl + "]")
+    else if e is Identifier then
+        if not hasLocal(e.name) then
+            throw ("undefined variable '" + e.name + "'")
+        if typeOf(e.name) == "float" then
+            ins("movsd xmm0, " + mem(e.name))
+        else
+            ins("mov rax, " + mem(e.name))
+    else if e is UnaryOp then
+        genUnary(e)
+    else if e is BinaryOp then
+        genBinary(e)
+    else if e is TernaryOp then
+        genTernary(e)
+    else if e is IndexExpr then
+        genExpr(e.object)
+        ins("push rax")
+        genExpr(e.index)
+        ins("mov rcx, rax")
+        ins("pop rax")
+        ins("mov rax, [rax + rcx*8 + 16]")
+    else if e is ArrayExpr then
+        genArray(e)
+    else if e is CallExpr then
+        genCall(e)
+    else if e is StringLiteral then
+        let slbl = addString(e.value)
+        ins("lea rax, [rel " + slbl + "]")
+
+void Codegen::genUnary(e)
+    if e.op == "#" then
+        if exprType(e.operand) == "string" then
+            m_usesStr = true
+            genExpr(e.operand)
+            ins("mov rdi, rax")
+            emitCall("km_str_len")
+        else
+            genExpr(e.operand)
+            ins("mov rax, [rax]")
+    else if e.op == "-" then
+        if exprType(e.operand) == "float" then
+            genExpr(e.operand)
+            ins("movsd xmm1, xmm0")
+            ins("xorps xmm0, xmm0")
+            ins("subsd xmm0, xmm1")
+        else
+            genExpr(e.operand)
+            ins("neg rax")
+    else if e.op == "not" then
+        genExpr(e.operand)
+        ins("cmp rax, 0")
+        ins("sete al")
+        ins("movzx eax, al")
+
+void Codegen::genBinary(e)
+    if e.op == "and" or e.op == "or" then
+        genLogical(e)
+        return
+    let ls = exprType(e.left) == "string"
+    let rs = exprType(e.right) == "string"
+    if (e.op == "==" or e.op == "!=") and (ls or rs) then
+        genStrEquals(e)
+    else if isCompareOp(e.op) then
+        genCompare(e)
+    else if e.op == "+" and (ls or rs) then
+        genStrOp(e, "km_str_concat")
+    else if e.op == "*" and ls then
+        genStrOp(e, "km_str_repeat")
+    else if exprType(e.left) == "float" or exprType(e.right) == "float" then
+        genFloatArith(e)
+    else
+        genIntArith(e)
+
+// `a + b` (concat) and `s * n` (repeat) share a shape: evaluate both
+// operands, left → rdi, right → rsi, then call the runtime helper.
+void Codegen::genStrOp(e, helper: string)
+    m_usesStr = true
+    genExpr(e.left)
+    ins("push rax")
+    genExpr(e.right)
+    ins("mov rsi, rax")
+    ins("pop rdi")
+    emitCall(helper)
+
+void Codegen::genStrEquals(e)
+    m_usesStr = true
+    genExpr(e.left)
+    ins("push rax")
+    genExpr(e.right)
+    ins("mov rsi, rax")
+    ins("pop rdi")
+    emitCall("km_str_eq")
+    if e.op == "!=" then
+        ins("xor eax, 1")
+
+void Codegen::genCompare(e)
+    genExpr(e.left)
+    ins("push rax")
+    genExpr(e.right)
+    ins("mov rcx, rax")
+    ins("pop rax")
+    ins("cmp rax, rcx")
+    ins(setInstr(e.op) + " al")
+    ins("movzx eax, al")
+
+// Short-circuit `and` / `or`: the right operand is only evaluated when
+// the left doesn't already decide the result.
+void Codegen::genLogical(e)
+    let endL = newLabel()
+    genExpr(e.left)
+    ins("test rax, rax")
+    if e.op == "and" then
+        ins("je " + endL)
+    else
+        ins("jne " + endL)
+    genExpr(e.right)
+    label(endL)
+
+void Codegen::genTernary(e)
+    let elseL = newLabel()
+    let endL = newLabel()
+    genExpr(e.cond)
+    ins("test rax, rax")
+    ins("je " + elseL)
+    genExpr(e.whenTrue)
+    ins("jmp " + endL)
+    label(elseL)
+    genExpr(e.whenFalse)
+    label(endL)
+
+fn Codegen::setInstr(op: string): string
+    if op == "==" then
+        return "sete"
+    if op == "!=" then
+        return "setne"
+    if op == "<" then
+        return "setl"
+    if op == ">" then
+        return "setg"
+    if op == "<=" then
+        return "setle"
+    return "setge"
+
+void Codegen::genIntArith(e)
+    genExpr(e.left)
+    ins("push rax")
+    genExpr(e.right)
+    ins("mov rcx, rax")
+    ins("pop rax")
+    if e.op == "+" then
+        ins("add rax, rcx")
+    else if e.op == "-" then
+        ins("sub rax, rcx")
+    else if e.op == "*" then
+        ins("imul rax, rcx")
+    else if e.op == "/" then
+        ins("cqo")
+        ins("idiv rcx")
+    else if e.op == "%" then
+        ins("cqo")
+        ins("idiv rcx")
+        ins("mov rax, rdx")
+    else if e.op == "&" then
+        ins("and rax, rcx")
+    else if e.op == "|" then
+        ins("or rax, rcx")
+    else if e.op == "^" or e.op == "xor" then
+        ins("xor rax, rcx")
+    else if e.op == "<<" then
+        ins("shl rax, cl")
+    else if e.op == ">>" then
+        ins("sar rax, cl")
+
+void Codegen::genFloatArith(e)
+    genOperandAsFloat(e.left)
+    ins("sub rsp, 16")
+    ins("movsd [rsp], xmm0")
+    genOperandAsFloat(e.right)
+    ins("movsd xmm1, xmm0")
+    ins("movsd xmm0, [rsp]")
+    ins("add rsp, 16")
+    if e.op == "+" then
+        ins("addsd xmm0, xmm1")
+    else if e.op == "-" then
+        ins("subsd xmm0, xmm1")
+    else if e.op == "*" then
+        ins("mulsd xmm0, xmm1")
+    else if e.op == "/" then
+        ins("divsd xmm0, xmm1")
+
+void Codegen::genOperandAsFloat(e)
+    genExpr(e)
+    if exprType(e) != "float" then
+        ins("cvtsi2sd xmm0, rax")
+
+// Array literal → malloc'd  [ len | cap | elems… ]  handle in rax.
+void Codegen::genArray(e)
+    m_usesMalloc = true
+    let n = #e.elements
+    ins("mov rdi, " + string(16 + 8 * n))
+    emitCall("malloc")
+    ins("mov qword [rax], " + string(n))
+    ins("mov qword [rax + 8], " + string(n))
+    ins("push rax")
+    let i = 0
+    for elem in e.elements do
+        genExpr(elem)
+        ins("mov rdx, [rsp]")
+        ins("mov [rdx + " + string(16 + 8 * i) + "], rax")
+        i += 1
+    ins("pop rax")
+
+// Runtime type tag for a call argument (see km_runtime.h):
+//   0 int / pointer   1 float   2 string   3 bool
+mut Codegen::argTag(a): int
+    if a is BoolLiteral then
+        return 3
+    let t = exprType(a)
+    if t == "float" then
+        return 1
+    if t == "string" then
+        return 2
+    return 0
+
+// Every Komodo call is lowered the same way: build an argc-long array of
+// (tag, value) pairs on the stack and pass  rdi = argc,  rsi = &pairs.
+// `print`, `algorithm.sort`, … are just calls whose symbol happens to be
+// resolved from the C standard library at link time.
+void Codegen::genCall(e)
+    // Enforcements for calls to functions defined in this program.
+    let kind = fnKind(e.name)
+    if kind != "" then
+        if fnArity(e.name) != #e.args then
+            throw ("function '" + e.name + "' takes " + string(fnArity(e.name)) + " argument(s), got " + string(#e.args))
+        if m_curKind == "fn" and kind == "void" then
+            throw ("a pure `fn` cannot call the void procedure '" + e.name + "'")
+
+    let sym = mangle(e.name)
+    recordExtern(sym)
+    let n = #e.args
+
+    if n == 0 then
+        ins("xor edi, edi")
+        ins("xor esi, esi")
+        emitCall(sym)
+        return
+
+    // Carve the (tag, value)[] buffer, then fill one pair at a time.
+    // emitCall force-aligns the stack, so evaluating an argument (which
+    // may itself push temporaries or make calls) can't disturb this.
+    ins("sub rsp, " + string(n * 16))
+    let j = 0
+    for a in e.args do
+        ins("mov qword [rsp + " + string(j * 16) + "], " + string(argTag(a)))
+        genExpr(a)
+        if exprType(a) == "float" then
+            ins("movq rax, xmm0")
+        ins("mov [rsp + " + string(j * 16 + 8) + "], rax")
+        j += 1
+
+    ins("mov rdi, " + string(n))
+    ins("mov rsi, rsp")
+    emitCall(sym)
+    ins("add rsp, " + string(n * 16))

@@ -1,0 +1,251 @@
+module km_compiler
+
+// ═══════════════════════════════════════════════════════════════════════
+//  Komodo AST
+//
+//  Every node descends from `ASTNode`, so any node carries source
+//  position. `Expression`, `Statement` and `Declaration` are abstract
+//  bases - you never instantiate them, only their concrete subtypes -
+//  which lets a field typed `Expression?` hold any expression node (or
+//  null) while still being a real, checked type rather than a marker.
+//
+//  Inheritance rule (interpreter + self-hosted): a subtype's fields are
+//  the parent's fields followed by its own; instantiating an `abstract`
+//  type is an error.
+// ═══════════════════════════════════════════════════════════════════════
+
+abstract shared struct ASTNode
+    line: int = 0
+    column: int = 0
+
+// ─── Expressions ──────────────────────────────────────────────────────
+
+abstract struct Expression : ASTNode
+
+abstract struct Literal : Expression
+
+struct IntLiteral : Literal
+    value: string
+
+struct FloatLiteral : Literal
+    value: string
+
+struct BoolLiteral : Literal
+    value: bool = false
+
+struct StringLiteral : Literal
+    value: string
+
+struct CharLiteral : Literal
+    value: string
+
+struct NullLiteral : Literal
+
+struct Identifier : Expression
+    name: string
+
+// Binary arithmetic / comparison / logical (`and`, `or`) - `op` is the
+// source operator text.
+struct BinaryOp : Expression
+    op: string
+    left: Expression? = null
+    right: Expression? = null
+
+struct UnaryOp : Expression
+    op: string
+    operand: Expression? = null
+
+// `cond ? whenTrue : whenFalse`
+struct TernaryOp : Expression
+    cond: Expression? = null
+    whenTrue: Expression? = null
+    whenFalse: Expression? = null
+
+// Bare `name(args)` call (free function or in-scope method).
+struct CallExpr : Expression
+    name: string
+    args: [Expression] = []
+
+// `receiver.method(args)`
+struct MethodCallExpr : Expression
+    receiver: Expression? = null
+    method: string
+    args: [Expression] = []
+
+// `namespace::name` (module member access, e.g. `file::read_all`).
+struct ScopeExpr : Expression
+    namespace: string
+    name: string
+
+struct IndexExpr : Expression
+    object: Expression? = null
+    index: Expression? = null
+
+// `object[start to end]` / `object[start :]` etc.
+struct SliceExpr : Expression
+    object: Expression? = null
+    start: Expression? = null
+    end: Expression? = null
+    inclusive: bool = false
+
+struct MemberExpr : Expression
+    object: Expression? = null
+    member: string
+
+struct ArrayExpr : Expression
+    elements: [Expression] = []
+
+// `a to b` used as a value (range).
+struct RangeExpr : Expression
+    start: Expression? = null
+    end: Expression? = null
+    inclusive: bool = false
+
+struct NewExpr : Expression
+    typeName: string
+    args: [Expression] = []
+
+// `expr or throw "msg"` / `throw "msg"` used in expression position.
+struct ThrowExpr : Expression
+    message: Expression? = null
+
+// ─── Statements ───────────────────────────────────────────────────────
+
+abstract struct Statement : ASTNode
+
+struct VarDecl : Statement
+    name: string
+    declaredType: string? = null
+    init: Expression? = null
+    immutable: bool = false
+
+struct AssignStmt : Statement
+    name: string
+    op: string = "="
+    value: Expression? = null
+
+struct FieldAssignStmt : Statement
+    object: Expression? = null
+    field: string
+    op: string = "="
+    value: Expression? = null
+
+struct IndexAssignStmt : Statement
+    object: Expression? = null
+    index: Expression? = null
+    op: string = "="
+    value: Expression? = null
+
+struct ExprStmt : Statement
+    expr: Expression? = null
+
+struct ReturnStmt : Statement
+    value: Expression? = null
+
+struct IfStmt : Statement
+    cond: Expression? = null
+    thenBody: [Statement] = []
+    elseBody: [Statement] = []
+
+struct WhileStmt : Statement
+    cond: Expression? = null
+    body: [Statement] = []
+
+// Numeric `for i = start to end do`  /  `for i = start down to end`
+struct ForStmt : Statement
+    varName: string
+    start: Expression? = null
+    end: Expression? = null
+    body: [Statement] = []
+    inclusive: bool = false
+    descending: bool = false
+
+// `for item in iterable do`
+struct ForInStmt : Statement
+    varName: string
+    iterable: Expression? = null
+    body: [Statement] = []
+
+struct MatchCase
+    pattern: Expression? = null
+    body: [Statement] = []
+    isDefault: bool = false
+
+struct MatchStmt : Statement
+    subject: Expression? = null
+    cases: [MatchCase] = []
+
+struct ThrowStmt : Statement
+    message: Expression? = null
+
+struct BreakStmt : Statement
+
+struct ContinueStmt : Statement
+
+// ─── Declarations ─────────────────────────────────────────────────────
+
+abstract struct Declaration : ASTNode
+
+// A function / method parameter. `modifier` is `public` / `private` for
+// constructor-parameter fields, else null.
+struct Param
+    name: string
+    declaredType: string? = null
+    defaultValue: Expression? = null
+    modifier: string? = null
+
+struct FunctionDecl : Declaration
+    name: string
+    params: [Param] = []
+    returnType: string? = null
+    body: [Statement] = []
+    isVoid: bool = false
+    isMut: bool = false
+    isConstructor: bool = false
+
+struct StructMember
+    name: string
+    declaredType: string? = null
+    defaultValue: Expression? = null
+
+struct StructDecl : Declaration
+    name: string
+    members: [StructMember] = []
+    // `struct Child : Parent` - name of the base type, or null.
+    parent: string? = null
+    // A fixed-width int container (`struct Flags : u32`), or null.
+    container: string? = null
+    isAbstract: bool = false
+
+struct ClassField
+    name: string
+    declaredType: string? = null
+    defaultValue: Expression? = null
+
+struct ClassDecl : Declaration
+    name: string
+    fields: [ClassField] = []
+    methods: [FunctionDecl] = []
+    parent: string? = null
+    isAbstract: bool = false
+
+struct EnumDecl : Declaration
+    name: string
+    variants: [string] = []
+
+struct ImportDecl : Declaration
+    path: string
+
+// ─── Program ──────────────────────────────────────────────────────────
+
+struct Program
+    moduleName: string? = null
+    imports: [ImportDecl] = []
+    enums: [EnumDecl] = []
+    structs: [StructDecl] = []
+    classes: [ClassDecl] = []
+    functions: [FunctionDecl] = []
+    // All top-level declarations in source order, for traversal that
+    // needs the original ordering (e.g. registering a base type before
+    // the type that inherits it).
+    declarations: [Declaration] = []
