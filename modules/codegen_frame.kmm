@@ -3,9 +3,11 @@ module km_compiler
 // ═══════════════════════════════════════════════════════════════════════
 //  Codegen — stack-frame layout and static type inference.
 //
-//  Locals (params included) each get an 8-byte slot at a negative offset
-//  from rbp.  `exprType` is a coarse float-vs-int classifier used to pick
-//  between the integer and SSE code paths.
+//  Locals (params included) each get an 8-byte slot; `slotOf` returns the
+//  slot's byte offset from the frame base (8, 16, 24, …), which every
+//  backend interprets for its target.  `exprType` is a coarse
+//  float / string / int classifier used to pick between code paths and
+//  to tag call arguments.
 // ═══════════════════════════════════════════════════════════════════════
 
 mut Codegen::hasLocal(name: string): bool
@@ -60,9 +62,6 @@ mut Codegen::typeOf(name: string): string
             return m_types[i]
         i += 1
     return "int"
-
-mut Codegen::mem(name: string): string
-    return "[rbp - " + string(slotOf(name)) + "]"
 
 // Coarse "float" / "string" / "int" classification of an expression's
 // result — enough to pick between the integer and SSE code paths and to

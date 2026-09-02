@@ -9,7 +9,13 @@ void main(args)
         throw "File not found"
 
     let source = file::read_all(fileName)
-    let asm = km_compiler::compile(source)
+
+    // Optional 3rd argument selects the code-generation target
+    // ("x86", the default, or "stackvm").
+    let target = "x86"
+    if #args > 3 then
+        target = args[3]
+    let asm = km_compiler::compile(source, target)
 
     let outputPath = fileName + ".asm"
     km_compiler::save(asm, outputPath)

@@ -1,7 +1,8 @@
 module km_compiler
 
 // ═══════════════════════════════════════════════════════════════════════
-//  Codegen — function and statement lowering.
+//  Codegen — function and statement lowering.  Target-independent: every
+//  concrete instruction is emitted through `m_backend` (see backend.kmm).
 // ═══════════════════════════════════════════════════════════════════════
 
 void Codegen::genFunction(func: FunctionDecl)
@@ -9,7 +10,8 @@ void Codegen::genFunction(func: FunctionDecl)
     m_offsets = []
     m_types = []
     m_immut = []
-    // [rbp - 8] holds the saved rbx (see emitCall); locals start below it.
+    // Offset 8 is reserved by the x86 backend for the saved rbx; locals
+    // start below it.  Other backends simply ignore the gap.
     m_frame = 8
     m_curRet = retTypeOf(func.returnType)
     m_curVoid = func.isVoid
@@ -23,40 +25,21 @@ void Codegen::genFunction(func: FunctionDecl)
 
     collectLocals(func.body)
 
-    // Round the frame to 16 bytes so the stack is aligned on entry to
-    // every `call` (outgoing arguments are marshalled with push/pop, so
-    // no dedicated scratch area is needed).
+    // Round the frame to 16 bytes so a target that keeps a hardware
+    // stack stays aligned on entry to every call.
     while m_frame % 16 != 0 do
         m_frame += 8
 
-    label(func.name)
-    ins("push rbp")
-    ins("mov rbp, rsp")
-    ins("push rbx")
-    ins("sub rsp, " + string(m_frame))
+    let paramOffsets: [int] = []
+    for p in func.params do
+        paramOffsets += [slotOf(p.name)]
 
-    // Unpack the incoming (tag, value)[] into each parameter's slot.
-    // `main` is entered by the C runtime with the C ABI, not this one.
-    if func.name != "main" then
-        let i = 0
-        for p in func.params do
-            ins("mov rax, [rsi + " + string(16 * i + 8) + "]")
-            ins("mov " + mem(p.name) + ", rax")
-            i += 1
+    m_backend.beginFunction(func.name, m_frame, paramOffsets, func.name == "main")
 
     for s in func.body do
         genStmt(s)
 
-    // Fall-through return.
-    ins("xor eax, eax")
-    epilogue()
-    emit("")
-
-void Codegen::epilogue()
-    ins("lea rsp, [rbp - 8]")
-    ins("pop rbx")
-    ins("pop rbp")
-    ins("ret")
+    m_backend.endFunction()
 
 void Codegen::genStmt(s)
     if s is VarDecl then
@@ -81,17 +64,14 @@ void Codegen::genStmt(s)
     else if s is BreakStmt then
         if #m_loopBreak == 0 then
             throw "break outside a loop"
-        ins("jmp " + m_loopBreak[#m_loopBreak - 1])
+        m_backend.jump(m_loopBreak[#m_loopBreak - 1])
     else if s is ContinueStmt then
         if #m_loopCont == 0 then
             throw "continue outside a loop"
-        ins("jmp " + m_loopCont[#m_loopCont - 1])
+        m_backend.jump(m_loopCont[#m_loopCont - 1])
 
 void Codegen::storeVar(name: string)
-    if typeOf(name) == "float" then
-        ins("movsd " + mem(name) + ", xmm0")
-    else
-        ins("mov " + mem(name) + ", rax")
+    m_backend.storeLocal(slotOf(name), typeOf(name))
 
 void Codegen::genAssign(s)
     if not hasLocal(s.name) then
@@ -100,18 +80,11 @@ void Codegen::genAssign(s)
         throw ("cannot reassign immutable variable '" + s.name + "' (declared with `be`)")
     if s.op == "+=" then
         // array concat:  dst += src
-        m_usesAppend = true
         genExpr(s.value)
-        ins("mov rsi, rax")
-        ins("mov rdi, " + mem(s.name))
-        emitCall("km_array_append")
-        ins("mov " + mem(s.name) + ", rax")
+        m_backend.arrayAppendTo(slotOf(s.name))
     else if s.op == "-=" then
         genExpr(s.value)
-        ins("mov rcx, rax")
-        ins("mov rax, " + mem(s.name))
-        ins("sub rax, rcx")
-        ins("mov " + mem(s.name) + ", rax")
+        m_backend.subFromLocal(slotOf(s.name))
     else
         genExpr(s.value)
         storeVar(s.name)
@@ -125,24 +98,23 @@ void Codegen::genReturn(s)
         genExpr(s.value)
         let vt = exprType(s.value)
         if m_curRet == "float" and vt == "int" then
-            ins("cvtsi2sd xmm0, rax")
+            m_backend.cvtIntToFloat()
         else if m_curRet == "int" and vt == "float" then
-            ins("cvttsd2si rax, xmm0")
-    epilogue()
+            m_backend.cvtFloatToInt()
+    m_backend.epilogue()
 
 void Codegen::genIf(s)
-    let elseL = newLabel()
-    let endL = newLabel()
+    let elseL = m_backend.newLabel()
+    let endL = m_backend.newLabel()
     genExpr(s.cond)
-    ins("test rax, rax")
-    ins("je " + elseL)
+    m_backend.branchIfZero(elseL)
     for st in s.thenBody do
         genStmt(st)
-    ins("jmp " + endL)
-    label(elseL)
+    m_backend.jump(endL)
+    m_backend.label(elseL)
     for st in s.elseBody do
         genStmt(st)
-    label(endL)
+    m_backend.label(endL)
 
 void Codegen::pushLoop(contL: string, breakL: string)
     m_loopCont += [contL]
@@ -153,55 +125,37 @@ void Codegen::popLoop()
     m_loopBreak = m_loopBreak[0 to (#m_loopBreak - 1)]
 
 void Codegen::genWhile(s)
-    let topL = newLabel()
-    let endL = newLabel()
+    let topL = m_backend.newLabel()
+    let endL = m_backend.newLabel()
     pushLoop(topL, endL)
-    label(topL)
+    m_backend.label(topL)
     genExpr(s.cond)
-    ins("test rax, rax")
-    ins("je " + endL)
+    m_backend.branchIfZero(endL)
     for st in s.body do
         genStmt(st)
-    ins("jmp " + topL)
-    label(endL)
+    m_backend.jump(topL)
+    m_backend.label(endL)
     popLoop()
 
 // `for i = a to b`  /  `for i = a down to b`  /  `... until b`
 void Codegen::genFor(s)
     genExpr(s.start)
-    ins("mov " + mem(s.varName) + ", rax")
-    let topL = newLabel()
-    let contL = newLabel()
-    let endL = newLabel()
+    m_backend.storeLocal(slotOf(s.varName), "int")
+    let topL = m_backend.newLabel()
+    let contL = m_backend.newLabel()
+    let endL = m_backend.newLabel()
     pushLoop(contL, endL)
-    label(topL)
-    ins("mov rax, " + mem(s.varName))
-    ins("push rax")
+    m_backend.label(topL)
+    m_backend.loadLocal(slotOf(s.varName), "int")
+    m_backend.pushAcc()
     genExpr(s.end)
-    ins("mov rcx, rax")
-    ins("pop rax")
-    ins("cmp rax, rcx")
-    if s.descending then
-        if s.inclusive then
-            ins("jl " + endL)
-        else
-            ins("jle " + endL)
-    else
-        if s.inclusive then
-            ins("jg " + endL)
-        else
-            ins("jge " + endL)
+    m_backend.forCompareExit(endL, s.descending, s.inclusive)
     for st in s.body do
         genStmt(st)
-    label(contL)
-    ins("mov rax, " + mem(s.varName))
-    if s.descending then
-        ins("dec rax")
-    else
-        ins("inc rax")
-    ins("mov " + mem(s.varName) + ", rax")
-    ins("jmp " + topL)
-    label(endL)
+    m_backend.label(contL)
+    m_backend.stepLocal(slotOf(s.varName), s.descending)
+    m_backend.jump(topL)
+    m_backend.label(endL)
     popLoop()
 
 // `for x in arr` — arrays only.  #a/#i are hidden per-loop locals.
@@ -209,27 +163,18 @@ void Codegen::genForIn(s)
     let vi = s.varName + "#i"
     let va = s.varName + "#a"
     genExpr(s.iterable)
-    ins("mov " + mem(va) + ", rax")
-    ins("xor eax, eax")
-    ins("mov " + mem(vi) + ", rax")
-    let topL = newLabel()
-    let contL = newLabel()
-    let endL = newLabel()
+    m_backend.forInInit(slotOf(vi), slotOf(va))
+    let topL = m_backend.newLabel()
+    let contL = m_backend.newLabel()
+    let endL = m_backend.newLabel()
     pushLoop(contL, endL)
-    label(topL)
-    ins("mov rax, " + mem(vi))
-    ins("mov rdx, " + mem(va))
-    ins("cmp rax, [rdx]")
-    ins("jge " + endL)
-    ins("mov rcx, rax")
-    ins("mov rax, [rdx + rcx*8 + 16]")
-    ins("mov " + mem(s.varName) + ", rax")
+    m_backend.label(topL)
+    m_backend.forInHead(slotOf(vi), slotOf(va), endL)
+    m_backend.forInElem(slotOf(s.varName))
     for st in s.body do
         genStmt(st)
-    label(contL)
-    ins("mov rax, " + mem(vi))
-    ins("inc rax")
-    ins("mov " + mem(vi) + ", rax")
-    ins("jmp " + topL)
-    label(endL)
+    m_backend.label(contL)
+    m_backend.forInStep(slotOf(vi))
+    m_backend.jump(topL)
+    m_backend.label(endL)
     popLoop()

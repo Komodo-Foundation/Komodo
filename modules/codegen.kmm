@@ -1,36 +1,39 @@
 module km_compiler
 
 // ═══════════════════════════════════════════════════════════════════════
-//  Codegen — the x86-64 backend.
+//  Codegen — the target-independent lowering pass.
 //
-//  It walks the AST once and produces a NASM source file (System V
-//  AMD64).  The work is spread across sibling files, all `module
-//  km_compiler`:
+//  It walks the AST once and drives a `Backend` (see backend.kmm); it
+//  never names a machine instruction or an output syntax.  The work is
+//  spread across sibling files, all `module km_compiler`:
 //
 //      codegen.kmm         this file — class state, the driver, and the
 //                          function-signature registry
-//      nasm.kmm            the NASM text emitter + symbol bookkeeping
 //      codegen_frame.kmm   stack-frame layout + static type inference
 //      codegen_stmt.kmm    statement lowering
 //      codegen_expr.kmm    expression lowering
+//      backend.kmm         the Backend interface + shared bookkeeping
+//      backend_x86.kmm     X86Backend     — System V AMD64 / NASM
+//      backend_stackvm.kmm StackVMBackend — textual stack-VM bytecode
 //
-//  Every Komodo call — a user function or a standard-library one — is
-//  lowered identically (see nasm.kmm / codegen_expr.kmm / km_runtime.h);
-//  nothing about `print`, `algorithm.sort`, … is special-cased.  A
-//  dotted name `a.b` mangles to the symbol `a_b`; any call target not
-//  defined in the program is emitted as an `extern` and resolved from
-//  the C standard library at link time.
+//  Every Komodo call — user function or standard-library one — is
+//  lowered identically; nothing about `print`, `algorithm.sort`, … is
+//  special-cased.  A dotted name `a.b` mangles to the symbol `a_b`; a
+//  call target not defined in the program is left for the target's
+//  linker / loader to resolve.
 //
-//  Result register convention:  int / pointer / string → rax,
-//  float (double) → xmm0.
+//  Result-value convention (per backend):  int / pointer / string in the
+//  integer accumulator, float in the float accumulator.
 // ═══════════════════════════════════════════════════════════════════════
 
 class Codegen
 public
-    constructor()
-        m_body = ""
+    constructor(backend: Backend)
+        m_backend = backend
 
     mut compileProgram(prog: Program): string
+        m_backend.begin()
+
         // Pass 1: collect every function's signature (forward references
         // and recursion are allowed) and reject duplicates.
         for func in prog.functions do
@@ -40,6 +43,7 @@ public
             m_fnRets += [retTypeOf(func.returnType)]
             m_fnKinds += [funcKind(func)]
             m_fnArity += [#func.params]
+            m_backend.declareFn(func.name)
 
         // Pass 2: enforce "returns on every path" for value functions,
         // then lower each body.
@@ -48,7 +52,7 @@ public
                 throw ("function '" + func.name + "' must return a value on every path")
             genFunction(func)
 
-        return header() + m_body + footer()
+        return m_backend.finish()
 
     fn funcKind(func: FunctionDecl): string
         if func.isVoid then
@@ -73,21 +77,19 @@ public
             i += 1
         return 0 - 1
 
+    mut listHas(list: [string], item: string): bool
+        let i = 0
+        while i < #list do
+            if list[i] == item then
+                return true
+            i += 1
+        return false
+
 private
-    // ── output buffers (see nasm.kmm) ───────────────────────────────
-    m_body: string = ""
-    m_rodata: string = ""
-    m_labelId: int = 0
-    m_doubleId: int = 0
-    m_stringId: int = 0
+    // ── the target ─────────────────────────────────────────────────
+    m_backend: Backend
 
-    // external symbols referenced by calls / operator lowerings
-    m_externs: [string] = []
-    m_usesMalloc: bool = false
-    m_usesAppend: bool = false
-    m_usesStr: bool = false
-
-    // program-wide function table
+    // ── program-wide function table ───────────────────────────────
     m_fnNames: [string] = []
     m_fnRets: [string] = []
     m_fnKinds: [string] = []      // "fn" (pure) / "mut" / "void"
@@ -124,11 +126,11 @@ private
             if m_fnNames[i] == name then
                 return m_fnRets[i]
             i += 1
-        return stdlibRet(mangle(name))
+        return stdlibRet(m_backend.mangle(name))
 
     // The handful of standard-library symbols whose result is not a
     // plain integer.  Everything else (and every unknown symbol) is
-    // treated as returning an int / pointer in rax.
+    // treated as returning an int / pointer.
     fn stdlibRet(sym: string): string
         if sym == "math_sqrt" then
             return "float"
