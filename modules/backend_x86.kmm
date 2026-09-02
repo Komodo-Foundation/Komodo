@@ -1,0 +1,646 @@
+module km_compiler
+
+// ═══════════════════════════════════════════════════════════════════════
+//  X86Backend — System V AMD64 target, NASM syntax.
+//
+//  This is the reference lowering for the `Backend` operation vocabulary
+//  (see backend.kmm).  Everything that knows about x86-64 or NASM's
+//  concrete syntax lives here: the line buffer, the register/SSE
+//  conventions, the aligned-call sequence, .rodata interning, the extern
+//  list and the final file (header + body + footer).
+//
+//  Result convention:  int / pointer / string → rax,  float → xmm0.
+//  Locals live at `[rbp - off]`, where `off` is the byte offset handed
+//  out by `Codegen` (see codegen_frame.kmm).  `[rbp - 8]` holds the
+//  saved rbx (see emitCall); the first real local starts at `[rbp - 16]`.
+// ═══════════════════════════════════════════════════════════════════════
+
+class X86Backend : Backend
+private
+    m_text: string = ""            // .text body, function after function
+    m_rodata: string = ""          // interned .rodata lines
+    m_doubleId: int = 0
+    m_stringId: int = 0
+    m_externs: [string] = []       // link-time symbols to `extern`
+    m_usesMalloc: bool = false
+    m_usesAppend: bool = false
+    m_usesStr: bool = false
+    m_vtblText: string = ""         // `__vt_<id>: dq …` lines
+    m_vtabCount: int = 0            // number of registered type ids
+    m_vtabSet: [int] = []           // ids that have a real vtable
+
+// ── line buffer ────────────────────────────────────────────────────
+
+void X86Backend::emit(line: string)
+    m_text = m_text + line + "\n"
+
+void X86Backend::ins(text: string)
+    emit("    " + text)
+
+void X86Backend::label(name: string)
+    emit(name + ":")
+
+// Emit a `call` with the stack force-aligned to 16 bytes.  rbx holds the
+// pre-call rsp (callee-saved, and every generated function saves the
+// caller's rbx in its prologue), so temporaries left on the stack
+// mid-expression can never break an inner call's alignment.
+void X86Backend::emitCall(sym: string)
+    ins("mov rbx, rsp")
+    ins("and rsp, -16")
+    ins("call " + sym)
+    ins("mov rsp, rbx")
+
+// ── .rodata interning ──────────────────────────────────────────────
+
+mut X86Backend::addDouble(value: string): string
+    m_doubleId += 1
+    let name = "LC" + string(m_doubleId)
+    m_rodata = m_rodata + name + ": dq " + value + "\n"
+    return name
+
+// `lexeme` still carries its quotes.  NASM back-quoted strings honour
+// the same \n \t \\ escapes as Komodo source, so the body passes through.
+mut X86Backend::addString(lexeme: string): string
+    m_stringId += 1
+    let name = "LS" + string(m_stringId)
+    let body = lexeme[1 to (lexeme.length - 1)]
+    m_rodata = m_rodata + name + ": db `" + body + "`, 0\n"
+    return name
+
+// A call target that isn't defined in this program is resolved at link
+// time — record it so the header can `extern` it.
+void X86Backend::recordExtern(sym: string)
+    if isLocalFn(sym) then
+        return
+    if not listHas(m_externs, sym) then
+        m_externs += [sym]
+
+// ── lifecycle ──────────────────────────────────────────────────────
+
+void X86Backend::begin()
+    m_text = ""
+
+// name + frame size (bytes, already 16-aligned) + each parameter's
+// frame offset.  `main` is entered by the C runtime with the C ABI;
+// every other function receives  rsi = &(tag,value)[argc].
+void X86Backend::beginFunction(name: string, frame: int, paramOffsets: [int], isMain: bool)
+    label(name)
+    ins("push rbp")
+    ins("mov rbp, rsp")
+    ins("push rbx")
+    ins("sub rsp, " + string(frame))
+    if not isMain then
+        let i = 0
+        while i < #paramOffsets do
+            ins("mov rax, [rsi + " + string(16 * i + 8) + "]")
+            ins("mov [rbp - " + string(paramOffsets[i]) + "], rax")
+            i += 1
+
+void X86Backend::endFunction()
+    ins("xor eax, eax")
+    epilogue()
+    emit("")
+
+void X86Backend::epilogue()
+    ins("lea rsp, [rbp - 8]")
+    ins("pop rbx")
+    ins("pop rbp")
+    ins("ret")
+
+// ── constants ──────────────────────────────────────────────────────
+
+void X86Backend::loadIntLit(text: string)
+    ins("mov rax, " + text)
+
+void X86Backend::loadBoolLit(value: bool)
+    if value then
+        ins("mov rax, 1")
+    else
+        ins("mov rax, 0")
+
+mut X86Backend::loadFloatLit(literal: string)
+    let lbl = addDouble(literal)
+    ins("movsd xmm0, [rel " + lbl + "]")
+
+mut X86Backend::loadStrLit(literal: string)
+    let lbl = addString(literal)
+    ins("lea rax, [rel " + lbl + "]")
+
+// ── locals ─────────────────────────────────────────────────────────
+
+void X86Backend::loadLocal(off: int, ty: string)
+    if ty == "float" then
+        ins("movsd xmm0, [rbp - " + string(off) + "]")
+    else
+        ins("mov rax, [rbp - " + string(off) + "]")
+
+void X86Backend::storeLocal(off: int, ty: string)
+    if ty == "float" then
+        ins("movsd [rbp - " + string(off) + "], xmm0")
+    else
+        ins("mov [rbp - " + string(off) + "], rax")
+
+// ── operand-stack scratch ──────────────────────────────────────────
+
+void X86Backend::pushAcc()
+    ins("push rax")
+
+void X86Backend::pushAccFloat()
+    ins("sub rsp, 16")
+    ins("movsd [rsp], xmm0")
+
+// ── integer / bool ─────────────────────────────────────────────────
+
+// left spilled by pushAcc(), right in rax.
+void X86Backend::binaryInt(op: string)
+    ins("mov rcx, rax")
+    ins("pop rax")
+    if op == "+" then
+        ins("add rax, rcx")
+    else if op == "-" then
+        ins("sub rax, rcx")
+    else if op == "*" then
+        ins("imul rax, rcx")
+    else if op == "/" then
+        ins("cqo")
+        ins("idiv rcx")
+    else if op == "%" then
+        ins("cqo")
+        ins("idiv rcx")
+        ins("mov rax, rdx")
+    else if op == "&" then
+        ins("and rax, rcx")
+    else if op == "|" then
+        ins("or rax, rcx")
+    else if op == "^" or op == "xor" then
+        ins("xor rax, rcx")
+    else if op == "<<" then
+        ins("shl rax, cl")
+    else if op == ">>" then
+        ins("sar rax, cl")
+
+void X86Backend::compareInt(op: string)
+    ins("mov rcx, rax")
+    ins("pop rax")
+    ins("cmp rax, rcx")
+    ins(setInstr(op) + " al")
+    ins("movzx eax, al")
+
+fn X86Backend::setInstr(op: string): string
+    if op == "==" then
+        return "sete"
+    if op == "!=" then
+        return "setne"
+    if op == "<" then
+        return "setl"
+    if op == ">" then
+        return "setg"
+    if op == "<=" then
+        return "setle"
+    return "setge"
+
+void X86Backend::negInt()
+    ins("neg rax")
+
+void X86Backend::notBool()
+    ins("cmp rax, 0")
+    ins("sete al")
+    ins("movzx eax, al")
+
+// ── float ──────────────────────────────────────────────────────────
+
+// left spilled by pushAccFloat(), right in xmm0.
+void X86Backend::binaryFloat(op: string)
+    ins("movsd xmm1, xmm0")
+    ins("movsd xmm0, [rsp]")
+    ins("add rsp, 16")
+    if op == "+" then
+        ins("addsd xmm0, xmm1")
+    else if op == "-" then
+        ins("subsd xmm0, xmm1")
+    else if op == "*" then
+        ins("mulsd xmm0, xmm1")
+    else if op == "/" then
+        ins("divsd xmm0, xmm1")
+
+void X86Backend::negFloat()
+    ins("movsd xmm1, xmm0")
+    ins("xorps xmm0, xmm0")
+    ins("subsd xmm0, xmm1")
+
+void X86Backend::cvtIntToFloat()
+    ins("cvtsi2sd xmm0, rax")
+
+void X86Backend::cvtFloatToInt()
+    ins("cvttsd2si rax, xmm0")
+
+void X86Backend::floatToBits()
+    ins("movq rax, xmm0")
+
+// ── strings ────────────────────────────────────────────────────────
+
+// left spilled by pushAcc(), right in rax → rdi, rsi then runtime call.
+mut X86Backend::strBinOp(helper: string)
+    m_usesStr = true
+    ins("mov rsi, rax")
+    ins("pop rdi")
+    emitCall(helper)
+
+mut X86Backend::strEquals(negate: bool)
+    m_usesStr = true
+    ins("mov rsi, rax")
+    ins("pop rdi")
+    emitCall("km_str_eq")
+    if negate then
+        ins("xor eax, 1")
+
+mut X86Backend::strLen()
+    m_usesStr = true
+    ins("mov rdi, rax")
+    emitCall("km_str_len")
+
+// ── arrays ─────────────────────────────────────────────────────────
+
+// object spilled by pushAcc(), index in rax.
+void X86Backend::indexAcc()
+    ins("mov rcx, rax")
+    ins("pop rax")
+    ins("mov rax, [rax + rcx*8 + 16]")
+
+// `#arr` — the length field lives at offset 0 of the handle.
+void X86Backend::arrayLenField()
+    ins("mov rax, [rax]")
+
+mut X86Backend::arrayBegin(n: int)
+    m_usesMalloc = true
+    ins("mov rdi, " + string(16 + 8 * n))
+    emitCall("malloc")
+    ins("mov qword [rax], " + string(n))
+    ins("mov qword [rax + 8], " + string(n))
+    ins("push rax")
+
+void X86Backend::arrayStoreElem(i: int)
+    ins("mov rdx, [rsp]")
+    ins("mov [rdx + " + string(16 + 8 * i) + "], rax")
+
+void X86Backend::arrayEnd()
+    ins("pop rax")
+
+// ── objects (structs + classes) ───────────────────────────────────
+//
+//  An object handle is a bare pointer to `fieldCount` contiguous 8-byte
+//  slots — no header.  `new` mallocs and zeroes it and leaves the handle
+//  pushed (like arrayBegin); `objFinishNew` pops it back as the result.
+
+// An object handle points at  [ type_id | field0 | field1 | … ]  — one
+// leading 8-byte word holding the integer type id (structs and classes
+// both), so every field offset is shifted by 8.
+mut X86Backend::objNew(typeId: int, nFields: int)
+    m_usesMalloc = true
+    let bytes = (nFields + 1) * 8
+    ins("mov rdi, " + string(bytes))
+    emitCall("malloc")
+    ins("mov qword [rax], " + string(typeId))
+    let k = 0
+    while k < nFields do
+        ins("mov qword [rax + " + string(8 + k * 8) + "], 0")
+        k += 1
+    ins("push rax")
+
+// value in rax, handle at [rsp] (positional field init for `new`)
+void X86Backend::objSetField(idx: int)
+    ins("mov rdx, [rsp]")
+    ins("mov [rdx + " + string(8 + idx * 8) + "], rax")
+
+// handle in rax → its integer type id in rax
+void X86Backend::objTypeId()
+    ins("mov rax, [rax]")
+
+// handle in rax → rax = 1 if its header type id is one of `ids`, else 0.
+// A null handle (rax == 0) is never a match.
+mut X86Backend::isTypeCheck(ids: [int])
+    let falseL = newLabel()
+    let endL = newLabel()
+    ins("test rax, rax")
+    ins("jz " + falseL)
+    ins("mov rax, [rax]")
+    ins("xor ecx, ecx")
+    for id in ids do
+        ins("cmp rax, " + string(id))
+        ins("mov edx, 0")
+        ins("sete dl")
+        ins("or rcx, rdx")
+    ins("mov rax, rcx")
+    ins("jmp " + endL)
+    label(falseL)
+    ins("xor eax, eax")
+    label(endL)
+
+// constructor frame: slot 0 ← the pushed handle (at [rsp + total*16])
+void X86Backend::objInitArg0(total: int)
+    ins("mov rax, [rsp + " + string(total * 16) + "]")
+    ins("mov qword [rsp], 0")
+    ins("mov [rsp + 8], rax")
+
+void X86Backend::objFinishNew()
+    ins("pop rax")
+
+// handle in rax → field value in rax
+void X86Backend::loadField(idx: int)
+    ins("mov rax, [rax + " + string(8 + idx * 8) + "]")
+
+// value in rax, handle spilled by pushAcc()
+void X86Backend::storeField(idx: int)
+    ins("mov rcx, rax")
+    ins("pop rax")
+    ins("mov [rax + " + string(8 + idx * 8) + "], rcx")
+
+// `arr[i] = v` — value in rax, index spilled, handle spilled below it
+void X86Backend::indexAssign()
+    ins("mov rcx, rax")
+    ins("pop rax")
+    ins("pop rdx")
+    ins("mov [rdx + rax*8 + 16], rcx")
+
+// `dst += src` — value in rax, dst at [rbp - off].
+mut X86Backend::arrayAppendTo(off: int)
+    m_usesAppend = true
+    ins("mov rsi, rax")
+    ins("mov rdi, [rbp - " + string(off) + "]")
+    emitCall("km_array_append")
+    ins("mov [rbp - " + string(off) + "], rax")
+
+// `dst -= src` — value in rax, dst at [rbp - off].
+void X86Backend::subFromLocal(off: int)
+    ins("mov rcx, rax")
+    ins("mov rax, [rbp - " + string(off) + "]")
+    ins("sub rax, rcx")
+    ins("mov [rbp - " + string(off) + "], rax")
+
+// ── control flow ───────────────────────────────────────────────────
+
+void X86Backend::jump(name: string)
+    ins("jmp " + name)
+
+void X86Backend::branchIfZero(name: string)
+    ins("test rax, rax")
+    ins("je " + name)
+
+void X86Backend::branchIfNonzero(name: string)
+    ins("test rax, rax")
+    ins("jne " + name)
+
+// `and` / `or` short-circuit: `test` already leaves the value in rax, so
+// the "keep" forms are identical to the plain ones on x86.
+void X86Backend::branchIfZeroKeep(name: string)
+    branchIfZero(name)
+
+void X86Backend::branchIfNonzeroKeep(name: string)
+    branchIfNonzero(name)
+
+// loop-variable in rax spilled by pushAcc(), bound in rax; exit when the
+// loop is already past the bound.
+void X86Backend::forCompareExit(endL: string, descending: bool, inclusive: bool)
+    ins("mov rcx, rax")
+    ins("pop rax")
+    ins("cmp rax, rcx")
+    if descending then
+        if inclusive then
+            ins("jl " + endL)
+        else
+            ins("jle " + endL)
+    else
+        if inclusive then
+            ins("jg " + endL)
+        else
+            ins("jge " + endL)
+
+void X86Backend::stepLocal(off: int, down: bool)
+    ins("mov rax, [rbp - " + string(off) + "]")
+    if down then
+        ins("dec rax")
+    else
+        ins("inc rax")
+    ins("mov [rbp - " + string(off) + "], rax")
+
+// `for x in arr` — iterable handle in rax; vi = cursor, va = handle copy.
+void X86Backend::forInInit(viOff: int, vaOff: int)
+    ins("mov [rbp - " + string(vaOff) + "], rax")
+    ins("xor eax, eax")
+    ins("mov [rbp - " + string(viOff) + "], rax")
+
+void X86Backend::forInHead(viOff: int, vaOff: int, endL: string)
+    ins("mov rax, [rbp - " + string(viOff) + "]")
+    ins("mov rdx, [rbp - " + string(vaOff) + "]")
+    ins("cmp rax, [rdx]")
+    ins("jge " + endL)
+
+// rax = cursor, rdx = handle (left by forInHead).
+void X86Backend::forInElem(xOff: int)
+    ins("mov rcx, rax")
+    ins("mov rax, [rdx + rcx*8 + 16]")
+    ins("mov [rbp - " + string(xOff) + "], rax")
+
+void X86Backend::forInStep(viOff: int)
+    ins("mov rax, [rbp - " + string(viOff) + "]")
+    ins("inc rax")
+    ins("mov [rbp - " + string(viOff) + "], rax")
+
+// ── calls ──────────────────────────────────────────────────────────
+//
+//  Uniform ABI: build an argc-long (tag, value)[] on the stack, pass
+//  rdi = argc, rsi = &pairs.  `print`, `algorithm.sort`, … are ordinary
+//  calls whose symbol is resolved from the C runtime at link time.
+
+mut X86Backend::call0(name: string)
+    let sym = mangle(name)
+    recordExtern(sym)
+    ins("xor edi, edi")
+    ins("xor esi, esi")
+    emitCall(sym)
+
+void X86Backend::callFrameBegin(n: int)
+    ins("sub rsp, " + string(n * 16))
+
+void X86Backend::callArgTag(j: int, tag: int)
+    ins("mov qword [rsp + " + string(j * 16) + "], " + string(tag))
+
+void X86Backend::callArgStore(j: int)
+    ins("mov [rsp + " + string(j * 16 + 8) + "], rax")
+
+mut X86Backend::callFrameEnd(name: string, n: int)
+    let sym = mangle(name)
+    recordExtern(sym)
+    ins("mov rdi, " + string(n))
+    ins("mov rsi, rsp")
+    emitCall(sym)
+    ins("add rsp, " + string(n * 16))
+
+// Virtual dispatch: the (tag,value)[] frame is already built (arg 0 = the
+// receiver handle).  Look the method up through  __km_vtab[type_id][slot].
+mut X86Backend::vcall(slot: int, n: int)
+    ins("mov rdi, " + string(n))
+    ins("mov rsi, rsp")
+    ins("mov rcx, [rsp + 8]")
+    ins("mov rcx, [rcx]")
+    ins("lea rdx, [__km_vtab]")
+    ins("mov rdx, [rdx + rcx*8]")
+    ins("mov rax, [rdx + " + string(slot * 8) + "]")
+    ins("mov rbx, rsp")
+    ins("and rsp, -16")
+    ins("call rax")
+    ins("mov rsp, rbx")
+    ins("add rsp, " + string(n * 16))
+
+// ── vtables ────────────────────────────────────────────────────────
+
+void X86Backend::beginVtables(nTypes: int)
+    m_vtabCount = nTypes
+
+mut X86Backend::setVtable(typeId: int, labels: [string])
+    let line = "__vt_" + string(typeId) + ": dq "
+    let i = 0
+    while i < #labels do
+        if i > 0 then
+            line = line + ", "
+        line = line + labels[i]
+        i += 1
+    m_vtblText = m_vtblText + line + "\n"
+    m_vtabSet += [typeId]
+
+// ── C FFI (`extern fn`) — full System V AMD64 call ─────────────────
+//
+//  Every argument is evaluated left-to-right and spilled to a scratch
+//  block with `push` (8 bytes each, ints and floats alike) so a nested
+//  call in a later argument can't clobber it.  `cCallEnd` then, from the
+//  recorded per-argument class list:
+//
+//    • loads the first 6 integer/pointer args into rdi rsi rdx rcx r8 r9
+//    • loads the first 8 float args into xmm0..7
+//    • copies any further args to a fresh 16-aligned block at [rsp+k*8]
+//    • sets al = number of xmm regs used (the vararg convention)
+//
+//  rbx holds the scratch base across the call (no nested emitCall runs
+//  between the spills and here), so one `mov rsp, rbx` unwinds both the
+//  aligned outgoing block and the scratch.
+//
+//  Scratch layout after n pushes:  arg i sits at [rsp + (n-1-i)*8].
+
+void X86Backend::cCallBegin(n: int)
+    return
+
+void X86Backend::cCallArg(i: int, cls: string)
+    if cls == "float" then
+        ins("sub rsp, 8")
+        ins("movsd [rsp], xmm0")
+    else
+        ins("push rax")
+
+mut X86Backend::cCallEnd(name: string, classes: [string])
+    let n = #classes
+    // `$`-prefix so NASM always reads it as an identifier, never as one
+    // of its own reserved words (`abs`, `rel`, `seg`, …).
+    let sym = "$" + name
+    recordExtern(sym)
+
+    let gpRegs = ["rdi", "rsi", "rdx", "rcx", "r8", "r9"]
+    let xmmRegs = ["xmm0", "xmm1", "xmm2", "xmm3", "xmm4", "xmm5", "xmm6", "xmm7"]
+    let gp = 0
+    let xmm = 0
+
+    // scratch base — arg i is at [rbx + (n-1-i)*8] from here on.
+    ins("mov rbx, rsp")
+
+    // Pass 1: register args, straight from the scratch block.
+    let stackArgs: [int] = []
+    let i = 0
+    while i < n do
+        let cls = classes[i]
+        let src = "[rbx + " + string((n - 1 - i) * 8) + "]"
+        if cls == "float" then
+            if xmm < 8 then
+                ins("movsd " + xmmRegs[xmm] + ", " + src)
+                xmm += 1
+            else
+                stackArgs += [i]
+        else
+            if gp < 6 then
+                ins("mov " + gpRegs[gp] + ", " + src)
+                gp += 1
+            else
+                stackArgs += [i]
+        i += 1
+
+    // Pass 2: overflow args → a fresh 16-aligned outgoing block.
+    let ns = #stackArgs
+    ins("and rsp, -16")
+    if ns % 2 != 0 then
+        ins("sub rsp, 8")
+    if ns > 0 then
+        ins("sub rsp, " + string(ns * 8))
+        let k = 0
+        while k < ns do
+            ins("mov rax, [rbx + " + string((n - 1 - stackArgs[k]) * 8) + "]")
+            ins("mov [rsp + " + string(k * 8) + "], rax")
+            k += 1
+
+    // al = number of vector registers used (harmless for non-variadic).
+    ins("mov eax, " + string(xmm))
+    ins("call " + sym)
+    // Unwind the outgoing block and the scratch in one move.
+    ins("mov rsp, rbx")
+    ins("add rsp, " + string(n * 8))
+
+// `data(arr)` — element pointer of an array handle (skip len/cap).
+void X86Backend::arrayDataPtr()
+    ins("add rax, 16")
+
+// ── final assembly ─────────────────────────────────────────────────
+
+mut X86Backend::finish(): string
+    return header() + m_text + footer()
+
+mut X86Backend::header(): string
+    let h = "; generated by the Komodo compiler — NASM x86-64\n"
+    h = h + "default rel\n\n"
+    h = h + "global main\n\n"
+    if m_usesMalloc then
+        h = h + "extern malloc\n"
+    if m_usesAppend then
+        h = h + "extern km_array_append\n"
+    if m_usesStr then
+        h = h + "extern km_str_concat\n"
+        h = h + "extern km_str_repeat\n"
+        h = h + "extern km_str_len\n"
+        h = h + "extern km_str_eq\n"
+    let i = 0
+    while i < #m_externs do
+        h = h + "extern " + m_externs[i] + "\n"
+        i += 1
+    h = h + "\nsection .text\n\n"
+    return h
+
+fn X86Backend::intListHas(xs: [int], v: int): bool
+    let i = 0
+    while i < #xs do
+        if xs[i] == v then
+            return true
+        i += 1
+    return false
+
+fn X86Backend::footer(): string
+    let r = "\nsection .rodata\n" + m_rodata
+    if m_vtabCount > 0 then
+        r = r + m_vtblText
+        r = r + "__km_vtab: dq "
+        let i = 0
+        while i < m_vtabCount do
+            if i > 0 then
+                r = r + ", "
+            if intListHas(m_vtabSet, i) then
+                r = r + "__vt_" + string(i)
+            else
+                r = r + "0"
+            i += 1
+        r = r + "\n"
+    return r + "\nsection .note.GNU-stack noalloc noexec nowrite progbits\n"

@@ -1,0 +1,44 @@
+// Runtime type tests (`x is Type`), single-inheritance struct field
+// flattening, and `abstract` bases in the self-hosted compiler.
+
+import console
+
+abstract struct Shape
+    tag: int
+
+struct Circle : Shape
+    r: int
+
+struct Square : Shape
+    side: int
+
+struct Box
+    item: Circle
+
+// `s` is statically a `Shape`; the concrete type is recovered at runtime.
+fn describe(s: Shape) : int
+    if s is Circle then
+        return 1
+    if s is Square then
+        return 2
+    return 0
+
+void main()
+    // parent field (`tag`) comes first in the flattened layout
+    let c = new Circle(0, 5)
+    let q = new Square(9, 4)
+    console.print("circle.r:", c.r)
+    console.print("square.tag:", q.tag)
+    console.print("square.side:", q.side)
+
+    console.print("c is Circle:", c is Circle)
+    console.print("c is Square:", c is Square)
+    console.print("c is Shape:", c is Shape)
+    console.print("q is Shape:", q is Shape)
+
+    console.print("describe(c):", describe(c))
+    console.print("describe(q):", describe(q))
+
+    // a zero (null) handle is never an instance of anything
+    let b = new Box()
+    console.print("null is Circle:", b.item is Circle)

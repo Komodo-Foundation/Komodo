@@ -1,0 +1,8 @@
+rect area: 12
+square area: 25
+circle area: 300
+areaOf(rect): 12
+areaOf(square): 25
+areaOf(circle): 300
+square name: square
+circle describe: circle

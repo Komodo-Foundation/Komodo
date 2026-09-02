@@ -1,15 +1,92 @@
 import file
 import km_compiler
 
+// Komodo compiler driver.
+//
+//   source (+ every .kmm it imports, transitively) ──▶ merge ──▶ compile
+//
+// `import X` is resolved by searching the directory tree of the file
+// being compiled for `X.kmm` (via file::find); modules with no Komodo
+// source — `console`, `math`, `file`, … — resolve to nothing here and are
+// left for the linker.  All resolved sources are concatenated and handed
+// to the compiler as one translation unit (namespaces are flat).
+
 void main(args)
-    let path = args[2]
+    let path = args[1]
     let fileName: string = path or throw "File name not provided"
 
     if not file::exists(fileName) then
         throw "File not found"
 
-    let source = file::read_all(fileName)
-    let asm = km_compiler::compile(source)
+    // Optional 3rd argument selects the code-generation target
+    // ("x86", the default, or "stackvm").
+    let target = "x86"
+    if #args > 2 then
+        target = args[2]
+
+    let source = gather(fileName)
+    let asm = km_compiler::compile(source, target)
 
     let outputPath = fileName + ".asm"
     km_compiler::save(asm, outputPath)
+
+fn listHas(xs: [string], v: string) : bool
+    for x in xs do
+        if x == v then
+            return true
+    return false
+
+// Read `rootPath` and every `.kmm` reachable from its `import` lines
+// (breadth-first, each file once); return all their sources joined.
+fn gather(rootPath: string) : string
+    let seen: [string] = []
+    let queue: [string] = [rootPath]
+    let out = ""
+
+    while #queue > 0 do
+        let p = queue[0]
+        queue = queue[1 to #queue]
+        if listHas(seen, p) then
+            continue
+        seen += [p]
+
+        let src = file::read_all(p)
+        out = out + src + "\n"
+
+        for name in importNames(src) do
+            let resolved = file::find(name, rootPath)
+            if resolved != null and not listHas(seen, resolved) then
+                queue += [resolved]
+
+    return out
+
+// Names on `import <name>` lines, in source order.
+fn importNames(src: string) : [string]
+    let names: [string] = []
+    let i = 0
+    let lineStart = 0
+    while i <= src.length do
+        if i == src.length or src[i] == "\n" then
+            let name = importOnLine(src[lineStart to i])
+            if name != "" then
+                names += [name]
+            lineStart = i + 1
+        i += 1
+    return names
+
+fn importOnLine(line: string) : string
+    let a = 0
+    while a < line.length and (line[a] == " " or line[a] == "\t") do
+        a += 1
+    let rest = line[a to line.length]
+    if rest.length < 8 then
+        return ""
+    if rest[0 to 7] != "import " then
+        return ""
+    let b = 7
+    while b < rest.length and rest[b] == " " do
+        b += 1
+    let s = b
+    while s < rest.length and rest[s] != " " and rest[s] != "\r" and rest[s] != "\n" do
+        s += 1
+    return rest[b to s]

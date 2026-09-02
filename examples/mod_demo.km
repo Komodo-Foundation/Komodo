@@ -1,0 +1,8 @@
+// Multi-file: `import mathx` pulls in examples/mathx.kmm and merges it.
+
+import console
+import mathx
+
+void main()
+    console.print("square(6):", mathx::square(6))
+    console.print("hypot_sq(3,4):", mathx::hypot_sq(3, 4))
