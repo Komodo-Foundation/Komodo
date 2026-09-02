@@ -1,5 +1,6 @@
 // New language features: for-loops (range / down / for-in), break &
-// continue, bitwise operators, ternary, short-circuit and/or.
+// continue, bitwise operators, Lua-style `and/or` conditional value,
+// short-circuit and/or.
 // Build:  kmsrc/compiler/build.sh kmsrc/features_demo.km
 
 import console
@@ -41,7 +42,7 @@ void main()
     console.print("1 << 4 =", 1 << 4, "  256 >> 2 =", 256 >> 2)
 
     let n = 7
-    console.print("parity of 7:", n % 2 == 0 ? 0 : 1)
+    console.print("parity of 7:", n % 2 != 0 and 1 or 0)
     console.print("short-circuit guard:", n > 0 and 100 / n > 5)
 
     console.print("clamp(50, 0, 10) =", clamp(50, 0, 10))

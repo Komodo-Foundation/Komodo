@@ -279,3 +279,64 @@ void StackVMBackend::callArgStore(j: int)
 
 void StackVMBackend::callFrameEnd(name: string, n: int)
     op("CALL " + mangle(name) + " " + string(n))
+
+// C FFI — operands are already stacked in argument order; a distinct
+// opcode marks it as a native C call rather than a Komodo one.
+void StackVMBackend::cCallBegin(n: int)
+    return
+
+void StackVMBackend::cCallArg(i: int, cls: string)
+    return
+
+void StackVMBackend::cCallEnd(name: string, classes: [string])
+    op("CCALL " + name + " " + string(#classes))
+
+void StackVMBackend::arrayDataPtr()
+    op("ADATA")
+
+// ── objects (structs + classes) ───────────────────────────────────
+
+void StackVMBackend::objNew(typeId: int, nFields: int)
+    op("ONEW " + string(typeId) + " " + string(nFields))
+
+// handle on stack → its integer type id on stack
+void StackVMBackend::objTypeId()
+    op("OTID")
+
+// handle on stack → 1 if its type id is one of `ids`, else 0
+mut StackVMBackend::isTypeCheck(ids: [int])
+    let s = "ISTYPE"
+    for id in ids do
+        s = s + " " + string(id)
+    op(s)
+
+// virtual dispatch through the receiver's class vtable
+void StackVMBackend::vcall(slot: int, n: int)
+    op("VCALL " + string(slot) + " " + string(n))
+
+void StackVMBackend::beginVtables(nTypes: int)
+    op("; vtables for " + string(nTypes) + " types")
+
+mut StackVMBackend::setVtable(typeId: int, labels: [string])
+    let s = ".vtable " + string(typeId)
+    for l in labels do
+        s = s + " " + l
+    op(s)
+
+void StackVMBackend::objSetField(idx: int)
+    op("OSET " + string(idx))
+
+void StackVMBackend::objInitArg0(total: int)
+    op("OARG0 " + string(total))
+
+void StackVMBackend::objFinishNew()
+    op("OFIN")
+
+void StackVMBackend::loadField(idx: int)
+    op("OGET " + string(idx))
+
+void StackVMBackend::storeField(idx: int)
+    op("OPUT " + string(idx))
+
+void StackVMBackend::indexAssign()
+    op("ASET")

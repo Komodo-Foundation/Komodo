@@ -29,6 +29,8 @@ for name in "${names[@]}"; do
     fi
 
     cp "$src" "$work/$name.km"
+    # sibling Komodo modules an example may `import`
+    cp examples/*.kmm "$work"/ 2>/dev/null || true
     ws="$work/$name.km"
 
     # x86: compile + assemble + link + run

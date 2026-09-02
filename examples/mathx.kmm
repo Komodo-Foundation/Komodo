@@ -1,0 +1,7 @@
+module mathx
+
+fn square(n: int) : int
+    return n * n
+
+fn hypot_sq(a: int, b: int) : int
+    return square(a) + square(b)

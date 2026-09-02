@@ -22,7 +22,10 @@ enum TokenType
     DO
     FN
     MUT
+    EXTERN
+    MODULE
     IMPORT
+    CONSTRUCTOR
     VOID
     RETURN
     BREAK
@@ -64,11 +67,12 @@ enum TokenType
     BE
     DOWN
     IN
+    IS
     AMP
     PIPE
     SHL
     SHR
-    QUESTION
+    SCOPE
 
 struct Token
     type: TokenType
@@ -246,12 +250,20 @@ private
                 type = TokenType::IMPORT
             case "mut"
                 type = TokenType::MUT
+            case "extern"
+                type = TokenType::EXTERN
+            case "module"
+                type = TokenType::MODULE
+            case "constructor"
+                type = TokenType::CONSTRUCTOR
             case "be"
                 type = TokenType::BE
             case "down"
                 type = TokenType::DOWN
             case "in"
                 type = TokenType::IN
+            case "is"
+                type = TokenType::IS
             case "xor"
                 type = TokenType::CARET
 
@@ -318,8 +330,12 @@ private
                 m_tokens += [new Token(TokenType::COMMA, ",", m_line, m_col)]
                 eat()
             case ":"
-                m_tokens += [new Token(TokenType::COLON, ":", m_line, m_col)]
                 eat()
+                if peek() == ":" then
+                    eat()
+                    m_tokens += [new Token(TokenType::SCOPE, "::", m_line, m_col)]
+                else
+                    m_tokens += [new Token(TokenType::COLON, ":", m_line, m_col)]
             case "."
                 m_tokens += [new Token(TokenType::DOT, ".", m_line, m_col)]
                 eat()
@@ -341,9 +357,6 @@ private
             case "|"
                 eat()
                 m_tokens += [new Token(TokenType::PIPE, "|", m_line, m_col)]
-            case "?"
-                eat()
-                m_tokens += [new Token(TokenType::QUESTION, "?", m_line, m_col)]
             case "="
                 eat()
                 if peek() == "=" then

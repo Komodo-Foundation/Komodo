@@ -14,15 +14,27 @@ void Codegen::genExpr(e)
     else if e is FloatLiteral then
         m_backend.loadFloatLit(e.value)
     else if e is Identifier then
-        if not hasLocal(e.name) then
+        if not hasLocal(e.name) and isCurField(e.name) then
+            m_backend.loadLocal(slotOf("self"), "int")
+            m_backend.loadField(fieldIndexOf(m_curClass, e.name))
+        else if not hasLocal(e.name) and isMacro(e.name) then
+            genExpr(macroExprOf(e.name))
+        else if not hasLocal(e.name) then
             throw ("undefined variable '" + e.name + "'")
-        m_backend.loadLocal(slotOf(e.name), typeOf(e.name))
+        else
+            m_backend.loadLocal(slotOf(e.name), typeOf(e.name))
+    else if e is NewExpr then
+        genNew(e)
+    else if e is MemberExpr then
+        let mt = exprType(e.object)
+        if not isObjType(mt) then
+            throw ("field access on a non-object (type '" + mt + "')")
+        genExpr(e.object)
+        m_backend.loadField(fieldIndexOf(mt, e.member))
     else if e is UnaryOp then
         genUnary(e)
     else if e is BinaryOp then
         genBinary(e)
-    else if e is TernaryOp then
-        genTernary(e)
     else if e is IndexExpr then
         genExpr(e.object)
         m_backend.pushAcc()
@@ -34,6 +46,20 @@ void Codegen::genExpr(e)
         genCall(e)
     else if e is StringLiteral then
         m_backend.loadStrLit(e.value)
+
+// `expr is TypeName` — evaluate the handle, then let the backend load its
+// header type id and test it against `TypeName` + every descendant id.
+// A null handle is never an instance of anything.
+void Codegen::genIsCheck(e)
+    let rn = ""
+    if e.right is Identifier then
+        rn = e.right.name
+    else
+        throw "`is` expects a type name on the right"
+    if not isObjType(rn) then
+        throw ("`is` of unknown type '" + rn + "'")
+    genExpr(e.left)
+    m_backend.isTypeCheck(descendantIds(rn))
 
 void Codegen::genUnary(e)
     if e.op == "#" then
@@ -53,6 +79,9 @@ void Codegen::genUnary(e)
         m_backend.notBool()
 
 void Codegen::genBinary(e)
+    if e.op == "is" then
+        genIsCheck(e)
+        return
     if e.op == "and" or e.op == "or" then
         genLogical(e)
         return
@@ -103,17 +132,6 @@ void Codegen::genLogical(e)
     genExpr(e.right)
     m_backend.label(endL)
 
-void Codegen::genTernary(e)
-    let elseL = m_backend.newLabel()
-    let endL = m_backend.newLabel()
-    genExpr(e.cond)
-    m_backend.branchIfZero(elseL)
-    genExpr(e.whenTrue)
-    m_backend.jump(endL)
-    m_backend.label(elseL)
-    genExpr(e.whenFalse)
-    m_backend.label(endL)
-
 void Codegen::genIntArith(e)
     genExpr(e.left)
     m_backend.pushAcc()
@@ -158,8 +176,55 @@ mut Codegen::argTag(a): int
 // buffer, filled one pair at a time.  `print`, `algorithm.sort`, … are
 // just calls whose symbol is resolved by the target's linker / loader.
 void Codegen::genCall(e)
-    // Enforcements for calls to functions defined in this program.
+    // `data(arr)` — the element pointer of a Komodo array (handle + 16),
+    // for handing a writable buffer to an `extern fn` (out-params, event
+    // structs, …).  Read results back with ordinary `arr[i]`.
+    if e.name == "data" then
+        if #e.args != 1 then
+            throw "data(arr) takes exactly one argument"
+        genExpr(e.args[0])
+        m_backend.arrayDataPtr()
+        return
+
+    // `recv.method(args)` where `recv` is an object-typed local, a field
+    // of the enclosing class, or `self` — a method call: the receiver
+    // rides in as implicit argument 0.
+    let dot = dotIndex(e.name)
+    if dot > 0 then
+        let recv = e.name[0 to dot]
+        let meth = e.name[(dot + 1) to e.name.length]
+        if isMethodReceiver(recv) then
+            genMethodCall(recv, meth, e.args)
+            return
+
     let kind = fnKind(e.name)
+
+    // `extern fn` — call through the native System V AMD64 C ABI.
+    // Integer / pointer / string args fill rdi, rsi, rdx, rcx, r8, r9
+    // then spill to the stack; float args fill xmm0..7 then spill; the
+    // backend places each one from the class list built here.
+    if kind == "extern" then
+        if fnArity(e.name) != #e.args then
+            throw ("extern '" + e.name + "' takes " + string(fnArity(e.name)) + " argument(s), got " + string(#e.args))
+        // Classify every argument up front — an argument may itself be a
+        // nested extern call, so nothing stateful can live in the backend
+        // across the evaluation loop.
+        let classes: [string] = []
+        for a in e.args do
+            if exprType(a) == "float" then
+                classes += ["float"]
+            else
+                classes += ["int"]
+        m_backend.cCallBegin(#e.args)
+        let ci = 0
+        for a in e.args do
+            genExpr(a)
+            m_backend.cCallArg(ci, classes[ci])
+            ci += 1
+        m_backend.cCallEnd(e.name, classes)
+        return
+
+    // Enforcements for calls to functions defined in this program.
     if kind != "" then
         if fnArity(e.name) != #e.args then
             throw ("function '" + e.name + "' takes " + string(fnArity(e.name)) + " argument(s), got " + string(#e.args))
@@ -181,3 +246,122 @@ void Codegen::genCall(e)
         m_backend.callArgStore(j)
         j += 1
     m_backend.callFrameEnd(e.name, n)
+
+// ── objects: `new`, method calls ──────────────────────────────────
+
+mut Codegen::dotIndex(s: string): int
+    let i = 0
+    while i < s.length do
+        if s[i] == "." then
+            return i
+        i += 1
+    return 0 - 1
+
+// `new T(args)` — allocate a zeroed handle, then either run the class
+// constructor (receiver as implicit arg 0) or store the args positionally
+// into the fields (struct / constructor-less class).  Result: the handle.
+void Codegen::genNew(e)
+    if not isObjType(e.typeName) then
+        throw ("`new` of unknown type '" + e.typeName + "'")
+    if isAbstractType(e.typeName) then
+        throw ("cannot instantiate abstract type '" + e.typeName + "'")
+    let nfields = objFieldCount(e.typeName)
+    m_backend.objNew(typeIdOf(e.typeName), nfields)
+
+    let ctor = resolveCtorSym(e.typeName)
+    let hasCtor = typeIsClass(e.typeName) and hasFn(ctor)
+
+    // Field default initializers run first (interpreter order): before the
+    // constructor for a class, and for the slots a positional `new` on a
+    // struct / ctor-less class doesn't fill.
+    let di = 0
+    while di < nfields do
+        let dflt = fieldDefaultAt(e.typeName, di)
+        let filledPositionally = not hasCtor and di < #e.args
+        if dflt != null and not filledPositionally then
+            genExpr(dflt)
+            m_backend.objSetField(di)
+        di += 1
+
+    if hasCtor then
+        let total = 1 + #e.args
+        if fnArity(ctor) != total then
+            throw ("constructor '" + e.typeName + "' takes " + string(fnArity(ctor) - 1) + " argument(s), got " + string(#e.args))
+        m_backend.callFrameBegin(total)
+        m_backend.objInitArg0(total)
+        let j = 1
+        for a in e.args do
+            m_backend.callArgTag(j, argTag(a))
+            genExpr(a)
+            if exprType(a) == "float" then
+                m_backend.floatToBits()
+            m_backend.callArgStore(j)
+            j += 1
+        m_backend.callFrameEnd(ctor, total)
+    else
+        if #e.args > nfields then
+            throw ("`new " + e.typeName + "` given more values than it has fields")
+        let i = 0
+        for a in e.args do
+            genExpr(a)
+            m_backend.objSetField(i)
+            i += 1
+    m_backend.objFinishNew()
+
+// Is `recv` a name we can call a method on — an object-typed local, an
+// object-typed field of the enclosing class, or `self`?
+mut Codegen::isMethodReceiver(recv: string): bool
+    if hasLocal(recv) then
+        return isObjType(typeOf(recv))
+    if recv == "self" and m_curClass != "" then
+        return true
+    if m_curClass != "" and isCurField(recv) then
+        return isObjType(fieldTypeOf(m_curClass, recv))
+    return false
+
+// Static type of such a receiver.
+mut Codegen::receiverType(recv: string): string
+    if hasLocal(recv) then
+        return typeOf(recv)
+    if recv == "self" then
+        return m_curClass
+    return fieldTypeOf(m_curClass, recv)
+
+// Leave the receiver handle in the integer accumulator.
+void Codegen::loadReceiver(recv: string)
+    if hasLocal(recv) then
+        m_backend.loadLocal(slotOf(recv), "int")
+    else if recv == "self" then
+        m_backend.loadLocal(slotOf("self"), "int")
+    else
+        m_backend.loadLocal(slotOf("self"), "int")
+        m_backend.loadField(fieldIndexOf(m_curClass, recv))
+
+void Codegen::genMethodCall(recv: string, meth: string, args)
+    let objType = receiverType(recv)
+    let owner = resolveMethodOwner(objType, meth)
+    if owner == "" then
+        throw ("type '" + objType + "' has no method '" + meth + "'")
+    let sym = owner + "__" + meth
+    let total = 1 + #args
+    if fnArity(sym) != total then
+        throw ("method '" + objType + "." + meth + "' takes " + string(fnArity(sym) - 1) + " argument(s), got " + string(#args))
+    // Virtual when the static type carries a vtable slot for this method;
+    // a plain direct call otherwise (structs, leaf classes).
+    let slot = methodSlotOf(objType, meth)
+    m_backend.callFrameBegin(total)
+    m_backend.callArgTag(0, 0)
+    loadReceiver(recv)
+    m_backend.callArgStore(0)
+    let j = 1
+    for a in args do
+        m_backend.callArgTag(j, argTag(a))
+        genExpr(a)
+        if exprType(a) == "float" then
+            m_backend.floatToBits()
+        m_backend.callArgStore(j)
+        j += 1
+    if slot >= 0 then
+        m_backend.vcall(slot, total)
+    else
+        m_backend.callFrameEnd(sym, total)
