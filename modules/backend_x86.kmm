@@ -259,6 +259,23 @@ mut X86Backend::strLen()
     ins("mov rdi, rax")
     emitCall("km_str_len")
 
+// `s[a to b]` — object spilled first (deeper), start spilled next, end in
+// rax.  → km_str_slice(s, start, end); fresh char* in rax.
+mut X86Backend::sliceStr()
+    ins("mov rdx, rax")
+    ins("pop rsi")
+    ins("pop rdi")
+    recordExtern("km_str_slice")
+    emitCall("km_str_slice")
+
+// `arr[a to b]` — same operand layout → km_array_slice; fresh handle in rax.
+mut X86Backend::sliceArray()
+    ins("mov rdx, rax")
+    ins("pop rsi")
+    ins("pop rdi")
+    recordExtern("km_array_slice")
+    emitCall("km_array_slice")
+
 // ── arrays ─────────────────────────────────────────────────────────
 
 // object spilled by pushAcc(), index in rax.

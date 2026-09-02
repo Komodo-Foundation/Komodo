@@ -40,12 +40,35 @@ void Codegen::genExpr(e)
         m_backend.pushAcc()
         genExpr(e.index)
         m_backend.indexAcc()
+    else if e is SliceExpr then
+        genSlice(e)
     else if e is ArrayExpr then
         genArray(e)
     else if e is CallExpr then
         genCall(e)
     else if e is StringLiteral then
         m_backend.loadStrLit(e.value)
+
+// `obj[start to end]` — a fresh string or array holding the half-open
+// range.  A missing start is 0; a missing end is passed as -1 and the
+// runtime helper clamps it to the length.
+void Codegen::genSlice(e)
+    let isStr = exprType(e.object) == "string"
+    genExpr(e.object)
+    m_backend.pushAcc()
+    if e.start == null then
+        m_backend.loadIntLit("0")
+    else
+        genExpr(e.start)
+    m_backend.pushAcc()
+    if e.end == null then
+        m_backend.loadIntLit("-1")
+    else
+        genExpr(e.end)
+    if isStr then
+        m_backend.sliceStr()
+    else
+        m_backend.sliceArray()
 
 // `expr is TypeName` — evaluate the handle, then let the backend load its
 // header type id and test it against `TypeName` + every descendant id.

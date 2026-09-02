@@ -303,6 +303,13 @@ void StackVMBackend::objNew(typeId: int, nFields: int)
 void StackVMBackend::objTypeId()
     op("OTID")
 
+// `s[a to b]` / `arr[a to b]` — object, start, end on the stack
+void StackVMBackend::sliceStr()
+    op("STRSLICE")
+
+void StackVMBackend::sliceArray()
+    op("ARRSLICE")
+
 // handle on stack → 1 if its type id is one of `ids`, else 0
 mut StackVMBackend::isTypeCheck(ids: [int])
     let s = "ISTYPE"

@@ -81,6 +81,9 @@ mut Codegen::exprType(e): string
         return e.typeName
     if e is MemberExpr then
         return fieldTypeOf(exprType(e.object), e.member)
+    if e is SliceExpr then
+        // a slice of a string is a string; of an array, an array
+        return exprType(e.object)
     if e is UnaryOp then
         if e.op == "#" then
             return "int"

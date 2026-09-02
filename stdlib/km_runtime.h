@@ -60,12 +60,14 @@ static inline long km_from_float(double d)
 /* ── compiler-internal runtime (operator lowerings, not Komodo calls) ── */
 KmArray *km_array_new(long len);
 KmArray *km_array_append(KmArray *dst, KmArray *src);
+KmArray *km_array_slice(KmArray *a, long start, long end);
 
 /* string operators:  a + b   #s   s * n   a == b */
 const char *km_str_concat(const char *a, const char *b);
 const char *km_str_repeat(const char *s, long n);
 long        km_str_len(const char *s);
 long        km_str_eq(const char *a, const char *b);
+const char *km_str_slice(const char *s, long start, long end);
 
 /* ── module: console ── */
 void console_print(long argc, KmArg *items);

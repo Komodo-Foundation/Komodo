@@ -24,7 +24,41 @@ KmArray *km_array_append(KmArray *dst, KmArray *src)
     return out;
 }
 
+/* `arr[start to end]` — a fresh array holding the half-open range.
+ * `end < 0` (or past the end) means "to the length"; bounds are clamped. */
+KmArray *km_array_slice(KmArray *a, long start, long end)
+{
+    long n = a->len;
+    if (end < 0 || end > n)
+        end = n;
+    if (start < 0)
+        start = 0;
+    if (start > end)
+        start = end;
+    long len = end - start;
+    KmArray *out = km_array_new(len);
+    memcpy(out->data, a->data + start, (size_t)len * sizeof(long));
+    return out;
+}
+
 /* ── string operators ── */
+
+/* `s[start to end]` — a fresh NUL-terminated substring, same clamping. */
+const char *km_str_slice(const char *s, long start, long end)
+{
+    long n = (long)strlen(s);
+    if (end < 0 || end > n)
+        end = n;
+    if (start < 0)
+        start = 0;
+    if (start > end)
+        start = end;
+    long len = end - start;
+    char *out = malloc((size_t)len + 1);
+    memcpy(out, s + start, (size_t)len);
+    out[len] = '\0';
+    return out;
+}
 
 /* `a + b` */
 const char *km_str_concat(const char *a, const char *b)
