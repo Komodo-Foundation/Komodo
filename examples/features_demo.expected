@@ -1,0 +1,11 @@
+1..5 sum: 15
+countdown 3
+countdown 2
+countdown 1
+evens before first > 20: 3
+6 & 3 = 2   6 | 3 = 7   6 ^ 3 = 5
+1 << 4 = 16   256 >> 2 = 64
+parity of 7: 1
+short-circuit guard: 1
+clamp(50, 0, 10) = 10
+factorial(6) = 720

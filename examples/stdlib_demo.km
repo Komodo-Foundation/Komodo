@@ -1,0 +1,24 @@
+// Exercises the expanded Komodo standard library.
+// Build:  kmsrc/compiler/build.sh kmsrc/stdlib_demo.km
+
+import console
+import algorithm
+import math
+
+void main()
+    let nums = [5, 2, 9, 1, 7]
+    algorithm.sort(nums)
+    console.print("sorted:", nums[0], nums[1], nums[2], nums[3], nums[4])
+    console.print("sum:", algorithm.sum(nums), "max:", algorithm.max(nums), "min:", algorithm.min(nums))
+    console.print("has 9?", algorithm.contains(nums, 9), "index of 7:", algorithm.index_of(nums, 7))
+
+    console.print("abs(-7):", math.abs(-7))
+    console.print("pow(2, 10):", math.pow(2, 10))
+    console.print("gcd(48, 18):", math.gcd(48, 18))
+    console.print("sqrt(2):", math.sqrt(2.0))
+
+    // strings: concat with +, length with #, repeat with *, compare with ==
+    let greeting = "Komodo" + " rocks"
+    console.print(greeting, "- length", #greeting)
+    console.print("ab x3 =", "ab" * 3)
+    console.print("equal:", "x" == "x", "  not-equal:", "x" != "y")
