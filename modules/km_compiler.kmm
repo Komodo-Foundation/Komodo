@@ -2,36 +2,48 @@ module km_compiler
 import file
 
 // ═══════════════════════════════════════════════════════════════════════
-//  Komodo → x86-64 compiler — driver
+//  Komodo compiler — driver
 //
-//  Pipeline:  source ──Lexer──▶ tokens ──Parser──▶ AST ──Codegen──▶ .asm
+//  Pipeline:  source ──Lexer──▶ tokens ──Parser──▶ AST ──Codegen──▶ text
 //
 //  The compiler is split across sibling files, all `module km_compiler`:
 //
-//      ast.kmm            AST node definitions
-//      lexer.kmm          source text → tokens
-//      parser.kmm         tokens → AST
-//      codegen.kmm        Codegen class: state, driver, signature registry
-//      nasm.kmm           NASM text emitter + symbol bookkeeping
-//      codegen_frame.kmm  stack-frame layout + static type inference
-//      codegen_stmt.kmm   statement lowering
-//      codegen_expr.kmm   expression lowering
+//      ast.kmm             AST node definitions
+//      lexer.kmm           source text → tokens
+//      parser.kmm          tokens → AST
+//      codegen.kmm         Codegen: target-independent lowering pass
+//      codegen_frame.kmm   stack-frame layout + static type inference
+//      codegen_stmt.kmm    statement lowering
+//      codegen_expr.kmm    expression lowering
+//      backend.kmm         Backend: the target-independent emit interface
+//      backend_x86.kmm     X86Backend     — System V AMD64, NASM syntax
+//      backend_stackvm.kmm StackVMBackend — textual stack-VM bytecode
 //
-//  Output is NASM syntax.  It assembles with `nasm -f elf64` and links
-//  with `gcc` against the C standard library in stdlib/ (console, algorithm,
-//  math, string, runtime).  See stdlib/km_runtime.h for the ABI and
+//  The front end and `Codegen` are target-agnostic; picking a target is
+//  just picking a `Backend` (see `selectBackend`).  The x86 output
+//  assembles with `nasm -f elf64` and links with `gcc` against the C
+//  standard library in stdlib/.  See stdlib/km_runtime.h for the ABI and
 //  build.sh for the one-shot build.
 // ═══════════════════════════════════════════════════════════════════════
 
-fn compile(source: string): string
+fn compile(source: string, target: string): string
     let lexer = new Lexer(source)
     let tokens = lexer.tokenize()
 
     let parser = new Parser(tokens)
     let ast = parser.parseProgram()
 
-    let gen = new Codegen()
+    let gen = new Codegen(selectBackend(target))
     return gen.compileProgram(ast)
+
+// The one place that knows the set of targets.  Add a case here after
+// writing a new `<T>Backend : Backend`.
+fn selectBackend(target: string): Backend
+    if target == "stackvm" then
+        return new StackVMBackend()
+    if target == "x86" or target == "" then
+        return new X86Backend()
+    throw ("unknown target '" + target + "' (known: x86, stackvm)")
 
 void save(asm: string, path: string)
     file::write_all(path, asm)

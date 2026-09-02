@@ -1,0 +1,10 @@
+circle.r: 5
+square.tag: 9
+square.side: 4
+c is Circle: 1
+c is Square: 0
+c is Shape: 1
+q is Shape: 1
+describe(c): 1
+describe(q): 2
+null is Circle: 0

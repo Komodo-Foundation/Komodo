@@ -1,0 +1,111 @@
+module km_compiler
+
+// ═══════════════════════════════════════════════════════════════════════
+//  Backend — the target-independent code-emission interface.
+//
+//  `Codegen` (codegen*.kmm) walks the AST once and never names a machine
+//  instruction; it drives an *operand stack* through a `Backend`:
+//
+//      evaluate left   →  one value pushed
+//      backend.pushAcc()                       (spill boundary — see note)
+//      evaluate right  →  a second value pushed
+//      backend.binaryInt("+")                  pops two, pushes the sum
+//
+//  A concrete backend maps those operations onto its target.  Two ship
+//  today, both `module km_compiler`:
+//
+//      backend_x86.kmm     X86Backend      — System V AMD64, NASM syntax
+//      backend_stackvm.kmm StackVMBackend  — textual stack-VM bytecode
+//
+//  To add a target, write another `<T>Backend : Backend`, implement the
+//  same operation names, and register it in `selectBackend`
+//  (km_compiler.kmm).  Nothing in the lexer, parser, AST, frame layout,
+//  type inference or statement/expression walk needs to change.
+//
+//  ── operation vocabulary ─────────────────────────────────────────────
+//  Every backend implements these (grouped; see X86Backend for the
+//  canonical reference lowering):
+//
+//    lifecycle    begin() finish():string
+//                 beginFunction(name, frame, paramOffsets, isMain)
+//                 endFunction() epilogue()
+//    constants    loadIntLit(t) loadBoolLit(b) loadFloatLit(l) loadStrLit(l)
+//    locals       loadLocal(off,ty) storeLocal(off,ty)
+//    stack        pushAcc() pushAccFloat()
+//    integer      binaryInt(op) compareInt(op) negInt() notBool()
+//    float        binaryFloat(op) negFloat() cvtIntToFloat() cvtFloatToInt()
+//                 floatToBits()
+//    strings      strBinOp(helper) strEquals(negate) strLen()
+//    arrays       indexAcc() arrayLenField() indexAssign()
+//                 arrayBegin(n) arrayStoreElem(i) arrayEnd()
+//                 arrayAppendTo(off) subFromLocal(off)
+//    objects      objNew(typeId, nFields) objSetField(i) objInitArg0(total)
+//                 objFinishNew() loadField(i) storeField(i) objTypeId()
+//                 — a struct/class handle points at [ type_id | field0 |
+//                 field1 | … ]: one leading 8-byte word holding the
+//                 integer runtime type id, then nFields 8-byte slots.
+//                 `objTypeId` reads that word.  Methods/constructors are
+//                 ordinary functions with the receiver as argument 0.
+//    control      label(name) jump(name) branchIfZero(name) branchIfNonzero(name)
+//    loops        forCompareExit(endL, descending, inclusive) stepLocal(off, down)
+//                 forInInit(viOff, vaOff) forInHead(viOff, vaOff, endL)
+//                 forInElem(xOff) forInStep(viOff)
+//    calls        call0(name) callFrameBegin(n) callArgTag(j, tag)
+//                 callArgStore(j) callFrameEnd(name, n)
+//    C FFI        cCallBegin(n) cCallArg(i, cls) cCallEnd(name, classes)
+//                 arrayDataPtr()
+//                 — native System V AMD64 call for `extern fn`.  Each
+//                 arg is evaluated (result in the int or float acc) then
+//                 handed over by index with its class ("int"/"float");
+//                 the backend fills rdi..r9 / xmm0..7, spills the rest to
+//                 the stack, and sets the vararg xmm count.  Result in
+//                 rax, or xmm0 when the prototype return type is float.
+//                 `arrayDataPtr` turns an array handle into its element
+//                 pointer for `data(arr)`.
+//
+//  Frame offsets are the byte distance handed out by `Codegen` (8, 16,
+//  24, …); a register target reads them as `[rbp - off]`, a slot target
+//  as local index `off / 8 - 1`.
+// ═══════════════════════════════════════════════════════════════════════
+
+abstract class Backend
+public
+    // ── labels ─────────────────────────────────────────────────────
+    mut newLabel(): string
+        m_labelId += 1
+        return ".L" + string(m_labelId)
+
+    // ── program-wide function table ────────────────────────────────
+    // Recorded in pass 1 so a call target defined in this program is
+    // never emitted as an external symbol.
+    mut declareFn(name: string)
+        let m = mangle(name)
+        if not listHas(m_fnNames, m) then
+            m_fnNames += [m]
+
+    mut isLocalFn(mangledSym: string): bool
+        return listHas(m_fnNames, mangledSym)
+
+    // `module.member` → `module_member`; a plain name is unchanged.
+    fn mangle(name: string): string
+        let out = ""
+        let i = 0
+        while i < name.length do
+            if name[i] == "." then
+                out = out + "_"
+            else
+                out = out + name[i]
+            i += 1
+        return out
+
+    mut listHas(list: [string], item: string): bool
+        let i = 0
+        while i < #list do
+            if list[i] == item then
+                return true
+            i += 1
+        return false
+
+private
+    m_labelId: int = 0
+    m_fnNames: [string] = []

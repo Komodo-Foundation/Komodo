@@ -1,0 +1,26 @@
+# ── build artifacts ──────────────────────────────────────────────────
+# `build.sh` writes <src>.asm / <src>.o next to the source and links an
+# executable at <src> without the .km suffix.
+*.asm
+*.o
+*.s
+
+# Compiled example / demo binaries land next to their .km source.  Keep
+# the sources and their expected-output fixtures; ignore everything else
+# that shows up in these dirs.
+/examples/*
+!/examples/*.km
+!/examples/*.kmm
+!/examples/*.expected
+/demos/*
+!/demos/*.km
+!/demos/*.kmm
+
+# ── interpreter AST cache ────────────────────────────────────────────
+# The interpreter memoises parsed ASTs under ~/.km/cache; nothing local,
+# but list it in case a run is pointed at a repo-local cache dir.
+.km/
+
+# ── editor / OS ──────────────────────────────────────────────────────
+/.vscode/
+.DS_Store

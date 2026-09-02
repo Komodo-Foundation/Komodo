@@ -3,9 +3,11 @@ module km_compiler
 // ═══════════════════════════════════════════════════════════════════════
 //  Codegen — stack-frame layout and static type inference.
 //
-//  Locals (params included) each get an 8-byte slot at a negative offset
-//  from rbp.  `exprType` is a coarse float-vs-int classifier used to pick
-//  between the integer and SSE code paths.
+//  Locals (params included) each get an 8-byte slot; `slotOf` returns the
+//  slot's byte offset from the frame base (8, 16, 24, …), which every
+//  backend interprets for its target.  `exprType` is a coarse
+//  float / string / int classifier used to pick between code paths and
+//  to tag call arguments.
 // ═══════════════════════════════════════════════════════════════════════
 
 mut Codegen::hasLocal(name: string): bool
@@ -61,9 +63,6 @@ mut Codegen::typeOf(name: string): string
         i += 1
     return "int"
 
-mut Codegen::mem(name: string): string
-    return "[rbp - " + string(slotOf(name)) + "]"
-
 // Coarse "float" / "string" / "int" classification of an expression's
 // result — enough to pick between the integer and SSE code paths and to
 // tag call arguments.
@@ -73,12 +72,25 @@ mut Codegen::exprType(e): string
     if e is StringLiteral then
         return "string"
     if e is Identifier then
+        if not hasLocal(e.name) and isCurField(e.name) then
+            return fieldTypeOf(m_curClass, e.name)
+        if not hasLocal(e.name) and isMacro(e.name) then
+            return exprType(macroExprOf(e.name))
         return typeOf(e.name)
+    if e is NewExpr then
+        return e.typeName
+    if e is MemberExpr then
+        return fieldTypeOf(exprType(e.object), e.member)
+    if e is SliceExpr then
+        // a slice of a string is a string; of an array, an array
+        return exprType(e.object)
     if e is UnaryOp then
         if e.op == "#" then
             return "int"
         return exprType(e.operand)
     if e is BinaryOp then
+        if e.op == "is" then
+            return "int"
         if isCompareOp(e.op) then
             return "int"
         // string operators:  a + b   and   s * n
@@ -90,24 +102,33 @@ mut Codegen::exprType(e): string
             return "float"
         return "int"
     if e is CallExpr then
+        let d = dotIndex(e.name)
+        if d > 0 then
+            let r = e.name[0 to d]
+            let mth = e.name[(d + 1) to e.name.length]
+            if isMethodReceiver(r) then
+                let owner = resolveMethodOwner(receiverType(r), mth)
+                if owner != "" then
+                    return fnRet(owner + "__" + mth)
         return fnRet(e.name)
-    if e is TernaryOp then
-        return exprType(e.whenTrue)
     return "int"
 
 // Pre-scan a statement list, reserving a slot for every variable it (or a
 // nested block) declares.
 void Codegen::collectLocals(stmts)
     for s in stmts do
-        if s is VarDecl then
+        if s is VarDecl and not s.immutable then
             let ty = "int"
             if s.declaredType == "float" or s.declaredType == "string" then
                 ty = s.declaredType
+            else if s.declaredType != null and isObjType(s.declaredType) then
+                ty = s.declaredType
             else if s.init != null then
                 let it = exprType(s.init)
-                if it == "float" or it == "string" then
+                if it == "float" or it == "string" or isObjType(it) then
                     ty = it
             addLocal(s.name, ty, s.immutable)
+        // `let x be expr` is a scoped macro, not a stack local — no slot.
         else if s is IfStmt then
             collectLocals(s.thenBody)
             collectLocals(s.elseBody)

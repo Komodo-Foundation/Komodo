@@ -1,0 +1,40 @@
+// Structs, and a simple class (fields + constructor + methods) in the
+// self-hosted compiler.
+
+import console
+
+struct Point
+    x: int
+    y: int
+
+class Counter
+    constructor(start: int)
+        m_n = start
+    mut bump()
+        m_n = m_n + 1
+    fn value() : int
+        return m_n
+    m_n: int
+
+fn manhattan(a: Point, b: Point) : int
+    let dx = a.x - b.x
+    let dy = a.y - b.y
+    if dx < 0 then
+        dx = 0 - dx
+    if dy < 0 then
+        dy = 0 - dy
+    return dx + dy
+
+void main()
+    let p = new Point(3, 4)
+    let q = new Point(10, 2)
+    console.print("p:", p.x, p.y)
+    p.x = 7
+    console.print("p.x now:", p.x)
+    console.print("manhattan:", manhattan(p, q))
+
+    let c = new Counter(5)
+    c.bump()
+    c.bump()
+    c.bump()
+    console.print("counter:", c.value())

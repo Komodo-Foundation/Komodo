@@ -1,36 +1,78 @@
 module km_compiler
 
 // ═══════════════════════════════════════════════════════════════════════
-//  Codegen — the x86-64 backend.
+//  Codegen — the target-independent lowering pass.
 //
-//  It walks the AST once and produces a NASM source file (System V
-//  AMD64).  The work is spread across sibling files, all `module
-//  km_compiler`:
+//  It walks the AST once and drives a `Backend` (see backend.kmm); it
+//  never names a machine instruction or an output syntax.  The work is
+//  spread across sibling files, all `module km_compiler`:
 //
 //      codegen.kmm         this file — class state, the driver, and the
 //                          function-signature registry
-//      nasm.kmm            the NASM text emitter + symbol bookkeeping
 //      codegen_frame.kmm   stack-frame layout + static type inference
 //      codegen_stmt.kmm    statement lowering
 //      codegen_expr.kmm    expression lowering
+//      backend.kmm         the Backend interface + shared bookkeeping
+//      backend_x86.kmm     X86Backend     — System V AMD64 / NASM
+//      backend_stackvm.kmm StackVMBackend — textual stack-VM bytecode
 //
-//  Every Komodo call — a user function or a standard-library one — is
-//  lowered identically (see nasm.kmm / codegen_expr.kmm / km_runtime.h);
-//  nothing about `print`, `algorithm.sort`, … is special-cased.  A
-//  dotted name `a.b` mangles to the symbol `a_b`; any call target not
-//  defined in the program is emitted as an `extern` and resolved from
-//  the C standard library at link time.
+//  Every Komodo call — user function or standard-library one — is
+//  lowered identically; nothing about `print`, `algorithm.sort`, … is
+//  special-cased.  A dotted name `a.b` mangles to the symbol `a_b`; a
+//  call target not defined in the program is left for the target's
+//  linker / loader to resolve.
 //
-//  Result register convention:  int / pointer / string → rax,
-//  float (double) → xmm0.
+//  Result-value convention (per backend):  int / pointer / string in the
+//  integer accumulator, float in the float accumulator.
 // ═══════════════════════════════════════════════════════════════════════
 
 class Codegen
 public
-    constructor()
-        m_body = ""
+    constructor(backend: Backend)
+        m_backend = backend
 
     mut compileProgram(prog: Program): string
+        m_backend.begin()
+
+        // Pass -1: record top-level `let NAME be EXPR` macros in the
+        // outermost macro scope. They are not lowered here — each use
+        // site re-lowers the expression. Nested `be` bindings push
+        // further scopes as their blocks are lowered (see genStmt).
+        for mac in prog.macros do
+            if listHas(m_macroNames, mac.name) then
+                throw ("duplicate macro '" + mac.name + "'")
+            pushMacro(mac.name, mac.init)
+
+        // Pass 0: register every struct / class as an object type (name →
+        // ordered fields) and lower each method / constructor to a free
+        // function `Type.method` whose first parameter is the receiver
+        // `self`.  Types are registered parent-before-child so an inheriting
+        // type can prepend its parent's fields (see `registerTypeFull`).
+        let ordered = orderTypesByInheritance(prog)
+        for d in ordered do
+            if d is StructDecl then
+                registerTypeFull(d.name, false, d.isAbstract, d.parent, memberNames(d.members), memberTypes(d.members), memberDefaults(d.members))
+            else
+                registerTypeFull(d.name, true, d.isAbstract, d.parent, fieldNames(d.fields), fieldTypes(d.fields), fieldDefaults(d.fields))
+                for m in d.methods do
+                    let mfn = new FunctionDecl(methodSym(d.name, m))
+                    let ps: [Param] = [new Param("self", d.name)]
+                    for mp in m.params do
+                        ps += [mp]
+                    mfn.params = ps
+                    mfn.body = m.body
+                    mfn.isVoid = m.isVoid
+                    mfn.isMut = m.isMut
+                    mfn.isConstructor = m.isConstructor
+                    mfn.returnType = m.returnType
+                    mfn.ownerClass = d.name
+                    prog.functions += [mfn]
+                    registerMethod(d.name, m.name)
+
+        // Pass 0b: assign vtable slots now that every type + its own
+        // methods are registered.
+        buildVtables()
+
         // Pass 1: collect every function's signature (forward references
         // and recursion are allowed) and reject duplicates.
         for func in prog.functions do
@@ -40,18 +82,474 @@ public
             m_fnRets += [retTypeOf(func.returnType)]
             m_fnKinds += [funcKind(func)]
             m_fnArity += [#func.params]
+            // An extern is resolved by the linker under its raw C name;
+            // don't register it as a program-local symbol.
+            if not func.isExtern then
+                m_backend.declareFn(func.name)
 
-        // Pass 2: enforce "returns on every path" for value functions,
-        // then lower each body.
+        // Pass 2: enforce "returns on every path" for value functions and
+        // the `fn` / `mut` mutability contract, then lower each body.
         for func in prog.functions do
-            if not func.isVoid and not returnsOnAllPaths(func.body) then
+            if func.isExtern then
+                continue
+            if not isVoidFn(func) and not returnsOnAllPaths(func.body) then
                 throw ("function '" + func.name + "' must return a value on every path")
+            checkMutability(func)
             genFunction(func)
 
-        return header() + m_body + footer()
+        // Emit the per-class vtables + the type-id → vtable index table.
+        emitVtables()
+
+        return m_backend.finish()
+
+    // ── object-type registry ──────────────────────────────────────
+
+    // `_`-joined so the symbol needs no mangling and its emitted label
+    // matches the call site.
+    fn methodSym(className: string, m: FunctionDecl): string
+        if m.isConstructor then
+            return className + "__ctor"
+        return className + "__" + m.name
+
+    fn ctorSym(className: string): string
+        return className + "__ctor"
+
+    // A class with no `constructor` of its own inherits its nearest
+    // ancestor's (interpreter rule).  Falls back to `Name__ctor`.
+    mut resolveCtorSym(className: string): string
+        let cur = className
+        let guard = 0
+        while cur != "" do
+            let s = cur + "__ctor"
+            if hasFn(s) then
+                return s
+            cur = typeParentOf(cur)
+            guard += 1
+            if guard > 10000 then
+                return className + "__ctor"
+        return className + "__ctor"
+
+    fn methodSymOf(className: string, method: string): string
+        return className + "__" + method
+
+    mut memberNames(ms: [StructMember]): [string]
+        let out: [string] = []
+        for m in ms do
+            out += [m.name]
+        return out
+
+    mut memberTypes(ms: [StructMember]): [string]
+        let out: [string] = []
+        for m in ms do
+            out += [typeOrInt(m.declaredType)]
+        return out
+
+    mut fieldNames(fs: [ClassField]): [string]
+        let out: [string] = []
+        for f in fs do
+            out += [f.name]
+        return out
+
+    mut fieldTypes(fs: [ClassField]): [string]
+        let out: [string] = []
+        for f in fs do
+            out += [typeOrInt(f.declaredType)]
+        return out
+
+    mut memberDefaults(ms: [StructMember]): [Expression?]
+        let out: [Expression?] = []
+        for m in ms do
+            out += [m.defaultValue]
+        return out
+
+    mut fieldDefaults(fs: [ClassField]): [Expression?]
+        let out: [Expression?] = []
+        for f in fs do
+            out += [f.defaultValue]
+        return out
+
+    fn typeOrInt(t: string?): string
+        if t == null then
+            return "int"
+        return t
+
+    fn parentOrEmpty(p: string?): string
+        if p == null then
+            return ""
+        return p
+
+    // Order structs+classes so every type comes after its parent — an
+    // inheriting type prepends its (already-registered) parent's fields.
+    mut orderTypesByInheritance(prog: Program): [Declaration]
+        let work: [Declaration] = []
+        for st in prog.structs do
+            work += [st]
+        for cl in prog.classes do
+            work += [cl]
+        let ordered: [Declaration] = []
+        let done: [string] = []
+        let guard = 0
+        while #work > 0 do
+            let remaining: [Declaration] = []
+            let progressed = false
+            for d in work do
+                let par = parentOrEmpty(d.parent)
+                if par == "" or listHas(done, par) then
+                    ordered += [d]
+                    done += [d.name]
+                    progressed = true
+                else
+                    remaining += [d]
+            work = remaining
+            if not progressed then
+                throw ("cyclic or unresolved type inheritance near '" + work[0].name + "'")
+            guard += 1
+            if guard > 10000 then
+                throw "type inheritance ordering did not converge"
+        return ordered
+
+    // Register a type, prepending its parent's flattened fields (names,
+    // types and default-value expressions) ahead of its own.
+    mut registerTypeFull(name: string, isClass: bool, isAbs: bool, parent: string?, fnames: [string], ftypes: [string], fdefs: [Expression?])
+        if listHas(m_typeNames, name) then
+            throw ("duplicate type '" + name + "'")
+        let par = parentOrEmpty(parent)
+        let allNames: [string] = []
+        let allTypes: [string] = []
+        let allDefs: [Expression?] = []
+        if par != "" then
+            let pi = typeIndex(par)
+            if pi < 0 then
+                throw ("type '" + name + "' inherits unknown type '" + par + "'")
+            for x in m_typeFieldNames[pi] do
+                allNames += [x]
+            for x in m_typeFieldTypes[pi] do
+                allTypes += [x]
+            for x in m_typeFieldDefaults[pi] do
+                allDefs += [x]
+        let k = 0
+        while k < #fnames do
+            allNames += [fnames[k]]
+            allTypes += [ftypes[k]]
+            allDefs += [fdefs[k]]
+            k += 1
+        m_typeNames += [name]
+        m_typeIsClass += [isClass]
+        m_typeIsAbstract += [isAbs]
+        m_typeParent += [par]
+        m_typeFieldNames += [allNames]
+        m_typeFieldTypes += [allTypes]
+        m_typeFieldDefaults += [allDefs]
+        m_typeOwnMethods += [[]]
+
+    // Record a method name declared directly on `className` (used to
+    // resolve inherited method calls to the class that defines them).
+    mut registerMethod(className: string, methodName: string)
+        let ti = typeIndex(className)
+        if ti < 0 then
+            return
+        m_typeOwnMethods[ti] += [methodName]
+
+    // The default-value expression for field `i` of `typeName`, or null.
+    mut fieldDefaultAt(typeName: string, i: int): Expression?
+        let ti = typeIndex(typeName)
+        if ti < 0 then
+            return null
+        let defs = m_typeFieldDefaults[ti]
+        if i < 0 or i >= #defs then
+            return null
+        return defs[i]
+
+    mut isAbstractType(name: string): bool
+        let ti = typeIndex(name)
+        if ti < 0 then
+            return false
+        return m_typeIsAbstract[ti]
+
+    mut typeParentOf(name: string): string
+        let ti = typeIndex(name)
+        if ti < 0 then
+            return ""
+        return m_typeParent[ti]
+
+    // True if `t` descends from `ancestor` (strictly — not the same type).
+    mut isDescendantOf(t: string, ancestor: string): bool
+        let cur = typeParentOf(t)
+        let guard = 0
+        while cur != "" do
+            if cur == ancestor then
+                return true
+            cur = typeParentOf(cur)
+            guard += 1
+            if guard > 10000 then
+                return false
+        return false
+
+    // The type ids matched by `x is Name` — `Name` itself plus every type
+    // that descends from it (all known at compile time).
+    mut descendantIds(name: string): [int]
+        let out: [int] = [typeIndex(name)]
+        let i = 0
+        while i < #m_typeNames do
+            if isDescendantOf(m_typeNames[i], name) then
+                out += [i]
+            i += 1
+        return out
+
+    // A class needs a vtable when it takes part in inheritance — it has a
+    // parent, or some other class names it as parent.
+    mut needsVtable(name: string): bool
+        if not typeIsClass(name) then
+            return false
+        if typeParentOf(name) != "" then
+            return true
+        let i = 0
+        while i < #m_typeNames do
+            if m_typeParent[i] == name then
+                return true
+            i += 1
+        return false
+
+    // Assign vtable slots.  Registry order is parent-before-child, so a
+    // child inherits its parent's slot list (overrides reuse the slot)
+    // and appends its own new methods.
+    mut buildVtables()
+        let i = 0
+        while i < #m_typeNames do
+            m_typeSlotNames += [[]]
+            i += 1
+        i = 0
+        while i < #m_typeNames do
+            if m_typeIsClass[i] and needsVtable(m_typeNames[i]) then
+                let slots: [string] = []
+                let par = m_typeParent[i]
+                if par != "" then
+                    let pi = typeIndex(par)
+                    if pi >= 0 then
+                        for s in m_typeSlotNames[pi] do
+                            slots += [s]
+                for mn in m_typeOwnMethods[i] do
+                    if mn != "constructor" and not listHas(slots, mn) then
+                        slots += [mn]
+                m_typeSlotNames[i] = slots
+            i += 1
+
+    // Vtable slot of `method` for a receiver statically typed `className`,
+    // or -1 when the call can be a direct (non-virtual) one.
+    mut methodSlotOf(className: string, method: string): int
+        let ti = typeIndex(className)
+        if ti < 0 then
+            return 0 - 1
+        let slots = m_typeSlotNames[ti]
+        let i = 0
+        while i < #slots do
+            if slots[i] == method then
+                return i
+            i += 1
+        return 0 - 1
+
+    // Drive the backend's vtable emission: one `__vt_<id>` per class with
+    // slots, resolving each slot to the nearest declaring class's symbol.
+    mut emitVtables()
+        m_backend.beginVtables(#m_typeNames)
+        let i = 0
+        while i < #m_typeNames do
+            if #m_typeSlotNames[i] > 0 then
+                let labels: [string] = []
+                for slotName in m_typeSlotNames[i] do
+                    let owner = resolveMethodOwner(m_typeNames[i], slotName)
+                    labels += [owner + "__" + slotName]
+                m_backend.setVtable(i, labels)
+            i += 1
+
+    // The class that actually declares `method` for a receiver statically
+    // typed `className` — walk up the parent chain.  "" if none.
+    mut resolveMethodOwner(className: string, method: string): string
+        let cur = className
+        let guard = 0
+        while cur != "" do
+            let ti = typeIndex(cur)
+            if ti >= 0 and listHas(m_typeOwnMethods[ti], method) then
+                return cur
+            cur = typeParentOf(cur)
+            guard += 1
+            if guard > 10000 then
+                return ""
+        return ""
+
+    mut isObjType(name: string): bool
+        return listHas(m_typeNames, name)
+
+    mut hasFn(name: string): bool
+        return listHas(m_fnNames, name)
+
+    // ── macro registry ────────────────────────────────────────────
+    //
+    // `m_macroNames` / `m_macroExprs` are a stack. Entering a block
+    // records its length (`macroScopeMark`); leaving the block truncates
+    // back to that mark (`macroScopeRestore`), so a `be` binding is
+    // visible only within its enclosing block. Lookup scans from the top
+    // of the stack, so an inner binding shadows an outer one.
+
+    mut isMacro(name: string): bool
+        return listHas(m_macroNames, name)
+
+    mut macroExprOf(name: string): Expression?
+        let i = #m_macroNames - 1
+        while i >= 0 do
+            if m_macroNames[i] == name then
+                return m_macroExprs[i]
+            i -= 1
+        return null
+
+    mut macroScopeMark(): int
+        return #m_macroNames
+
+    void macroScopeRestore(mark: int)
+        while #m_macroNames > mark do
+            m_macroNames = m_macroNames[0 to (#m_macroNames - 1)]
+            m_macroExprs = m_macroExprs[0 to (#m_macroExprs - 1)]
+
+    void pushMacro(name: string, e: Expression?)
+        if e == null then
+            throw ("macro '" + name + "' has no value")
+        m_macroNames += [name]
+        m_macroExprs += [e]
+
+    mut typeIsClass(name: string): bool
+        let ti = typeIndex(name)
+        if ti < 0 then
+            return false
+        return m_typeIsClass[ti]
+
+    mut typeIndex(name: string): int
+        let i = 0
+        while i < #m_typeNames do
+            if m_typeNames[i] == name then
+                return i
+            i += 1
+        return 0 - 1
+
+    // The runtime type id stored in an object's header word — its index
+    // in the registry (structs and classes share one id space).
+    mut typeIdOf(name: string): int
+        return typeIndex(name)
+
+    mut objFieldCount(typeName: string): int
+        let ti = typeIndex(typeName)
+        if ti < 0 then
+            return 0
+        return #m_typeFieldNames[ti]
+
+    mut fieldIndexOf(typeName: string, field: string): int
+        let ti = typeIndex(typeName)
+        if ti < 0 then
+            throw ("unknown type '" + typeName + "'")
+        let names = m_typeFieldNames[ti]
+        let i = 0
+        while i < #names do
+            if names[i] == field then
+                return i
+            i += 1
+        throw ("type '" + typeName + "' has no field '" + field + "'")
+
+    mut fieldTypeOf(typeName: string, field: string): string
+        let ti = typeIndex(typeName)
+        if ti < 0 then
+            return "int"
+        let names = m_typeFieldNames[ti]
+        let i = 0
+        while i < #names do
+            if names[i] == field then
+                return m_typeFieldTypes[ti][i]
+            i += 1
+        return "int"
+
+    // Fields of the class whose method is currently being lowered (for
+    // resolving an unqualified name against `self`); empty otherwise.
+    mut curClassFields(): [string]
+        if m_curClass == "" then
+            return []
+        let ti = typeIndex(m_curClass)
+        if ti < 0 then
+            return []
+        return m_typeFieldNames[ti]
+
+    mut isCurField(name: string): bool
+        return listHas(curClassFields(), name)
+
+    // A function with no declared return type never yields a value
+    // (`void f()`, or `mut m()` with no `: T`).
+    fn isVoidFn(func: FunctionDecl): bool
+        return func.isVoid or func.returnType == null
+
+    // ── `fn` / `mut` mutability contract ──────────────────────────
+    //
+    //  "Mutating code" = a write the caller can observe: a field write
+    //  (`obj.f = v`, or a bare `field = v` against `self`), or an array
+    //  element write (`arr[i] = v`).  Reassigning the function's own
+    //  locals doesn't count, and analysis does not follow calls.
+    //
+    //    • a pure `fn` (has a return type, not `mut`) may NOT mutate
+    //    • a `mut` function / method MUST mutate
+    //    • `void` procedures and constructors are unconstrained
+
+    fn isPureFn(func: FunctionDecl): bool
+        if func.isExtern or func.isMut or func.isConstructor then
+            return false
+        return func.returnType != null
+
+    mut ownerFields(func: FunctionDecl): [string]
+        if func.ownerClass == null then
+            return []
+        let ti = typeIndex(func.ownerClass)
+        if ti < 0 then
+            return []
+        return m_typeFieldNames[ti]
+
+    mut bodyMutates(stmts, fields: [string]): bool
+        for s in stmts do
+            if s is FieldAssignStmt then
+                return true
+            if s is IndexAssignStmt then
+                return true
+            if s is AssignStmt then
+                if listHas(fields, s.name) then
+                    return true
+            if s is IfStmt then
+                if bodyMutates(s.thenBody, fields) or bodyMutates(s.elseBody, fields) then
+                    return true
+            if s is WhileStmt then
+                if bodyMutates(s.body, fields) then
+                    return true
+            if s is ForStmt then
+                if bodyMutates(s.body, fields) then
+                    return true
+            if s is ForInStmt then
+                if bodyMutates(s.body, fields) then
+                    return true
+        return false
+
+    // `Box__peek` → `Box.peek` for diagnostics.
+    fn displayName(func: FunctionDecl): string
+        if func.ownerClass == null then
+            return func.name
+        let pfx = func.ownerClass + "__"
+        if #func.name > #pfx and func.name[0 to #pfx] == pfx then
+            return func.ownerClass + "." + func.name[#pfx to #func.name]
+        return func.name
+
+    mut checkMutability(func: FunctionDecl)
+        let muts = bodyMutates(func.body, ownerFields(func))
+        if func.isMut and not muts then
+            throw ("`mut " + displayName(func) + "` has no mutating code — declare it `fn` or `void`")
+        if isPureFn(func) and muts then
+            throw ("pure `fn " + displayName(func) + "` mutates state — declare it `mut`")
 
     fn funcKind(func: FunctionDecl): string
-        if func.isVoid then
+        if func.isExtern then
+            return "extern"
+        if isVoidFn(func) then
             return "void"
         if func.isMut then
             return "mut"
@@ -73,25 +571,44 @@ public
             i += 1
         return 0 - 1
 
+    mut listHas(list: [string], item: string): bool
+        let i = 0
+        while i < #list do
+            if list[i] == item then
+                return true
+            i += 1
+        return false
+
 private
-    // ── output buffers (see nasm.kmm) ───────────────────────────────
-    m_body: string = ""
-    m_rodata: string = ""
-    m_labelId: int = 0
-    m_doubleId: int = 0
-    m_stringId: int = 0
+    // ── the target ─────────────────────────────────────────────────
+    m_backend: Backend
 
-    // external symbols referenced by calls / operator lowerings
-    m_externs: [string] = []
-    m_usesMalloc: bool = false
-    m_usesAppend: bool = false
-    m_usesStr: bool = false
-
-    // program-wide function table
+    // ── program-wide function table ───────────────────────────────
     m_fnNames: [string] = []
     m_fnRets: [string] = []
     m_fnKinds: [string] = []      // "fn" (pure) / "mut" / "void"
     m_fnArity: [int] = []
+
+    // ── top-level macros (`let NAME be EXPR`) ─────────────────────
+    m_macroNames: [string] = []
+    m_macroExprs: [Expression?] = []
+
+    // ── object-type registry (structs + classes) ──────────────────
+    m_typeNames: [string] = []
+    m_typeIsClass: [bool] = []
+    m_typeIsAbstract: [bool] = []
+    // parent type name, or "" — fields below are already parent-flattened
+    m_typeParent: [string] = []
+    m_typeFieldNames: [[string]] = []
+    m_typeFieldTypes: [[string]] = []
+    // default-value expression per (flattened) field, or null
+    m_typeFieldDefaults: [[Expression?]] = []
+    // method names declared directly on each type (not inherited)
+    m_typeOwnMethods: [[string]] = []
+    // per class: method name at each vtable slot ([] = no vtable)
+    m_typeSlotNames: [[string]] = []
+    // class owning the method currently being lowered ("" if none)
+    m_curClass: string = ""
 
     // ── current-function stack frame (see codegen_frame.kmm) ────────
     m_names: [string] = []
@@ -124,11 +641,11 @@ private
             if m_fnNames[i] == name then
                 return m_fnRets[i]
             i += 1
-        return stdlibRet(mangle(name))
+        return stdlibRet(m_backend.mangle(name))
 
     // The handful of standard-library symbols whose result is not a
     // plain integer.  Everything else (and every unknown symbol) is
-    // treated as returning an int / pointer in rax.
+    // treated as returning an int / pointer.
     fn stdlibRet(sym: string): string
         if sym == "math_sqrt" then
             return "float"

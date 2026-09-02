@@ -1,0 +1,33 @@
+/**
+ * LeetCode Problem
+ * https://leetcode.com/problems/median-of-two-sorted-arrays/
+ */
+
+import algorithm
+import console
+
+fn findMedianSortedArrays(nums1: [uint], nums2: [uint]) : float
+        let merged: [uint] = []
+        
+        // Merge nums1 and nums2 into merged array.
+        merged += nums1
+        merged += nums2
+        
+        // Sort the merged array.
+        algorithm.sort(merged)
+        
+        // Calculate the total number of elements in the merged array.
+        let total = #merged
+
+        if (total % 2 == 1)
+            // If the total number of elements is odd, return the middle element as the median.
+            return merged[total / 2]
+        else
+            // If the total number of elements is even, calculate the average of the two middle elements as the median.
+            let middle1 be merged[total / 2 - 1]
+            let middle2 be merged[total / 2]
+
+            return (middle1 + middle2) / 2.0f
+
+void main()
+    console.print(findMedianSortedArrays([13, 3, 59], [4, 5, 5]))

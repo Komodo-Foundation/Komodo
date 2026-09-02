@@ -55,12 +55,6 @@ struct UnaryOp : Expression
     op: string
     operand: Expression? = null
 
-// `cond ? whenTrue : whenFalse`
-struct TernaryOp : Expression
-    cond: Expression? = null
-    whenTrue: Expression? = null
-    whenFalse: Expression? = null
-
 // Bare `name(args)` call (free function or in-scope method).
 struct CallExpr : Expression
     name: string
@@ -90,7 +84,10 @@ struct SliceExpr : Expression
 
 struct MemberExpr : Expression
     object: Expression? = null
-    member: string
+    // defaulted so positional `new MemberExpr(obj, name)` keeps field
+    // order (the interpreter floats required fields ahead of optional
+    // ones otherwise).
+    member: string = ""
 
 struct ArrayExpr : Expression
     elements: [Expression] = []
@@ -126,7 +123,7 @@ struct AssignStmt : Statement
 
 struct FieldAssignStmt : Statement
     object: Expression? = null
-    field: string
+    field: string = ""             // defaulted to keep positional field order
     op: string = "="
     value: Expression? = null
 
@@ -202,6 +199,12 @@ struct FunctionDecl : Declaration
     isVoid: bool = false
     isMut: bool = false
     isConstructor: bool = false
+    // `extern fn` — a foreign C function, no body; calls use the native
+    // System V AMD64 C ABI instead of Komodo's (tag,value)[] ABI.
+    isExtern: bool = false
+    // For a method / constructor lowered to a free function: the class it
+    // came from (so an unqualified field name resolves against `self`).
+    ownerClass: string? = null
 
 struct StructMember
     name: string
@@ -245,6 +248,10 @@ struct Program
     structs: [StructDecl] = []
     classes: [ClassDecl] = []
     functions: [FunctionDecl] = []
+    // Top-level `let NAME be EXPR` compile-time macros. Each use of NAME
+    // in the program is replaced by a fresh lowering of EXPR at codegen
+    // time; nothing is allocated for the name itself.
+    macros: [VarDecl] = []
     // All top-level declarations in source order, for traversal that
     // needs the original ordering (e.g. registering a base type before
     // the type that inherits it).

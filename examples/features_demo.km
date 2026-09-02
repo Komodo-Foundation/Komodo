@@ -1,0 +1,49 @@
+// New language features: for-loops (range / down / for-in), break &
+// continue, bitwise operators, Lua-style `and/or` conditional value,
+// short-circuit and/or.
+// Build:  kmsrc/compiler/build.sh kmsrc/features_demo.km
+
+import console
+
+fn clamp(x: int, lo: int, hi: int) : int
+    let r = x
+    if r < lo then
+        r = lo
+    if r > hi then
+        r = hi
+    return r
+
+fn factorial(n: int) : int
+    let acc = 1
+    for i = 2 to n
+        acc = acc * i
+    return acc
+
+void main()
+    let total = 0
+    for i = 1 to 5
+        total = total + i
+    console.print("1..5 sum:", total)
+
+    for i = 3 down to 1
+        console.print("countdown", i)
+
+    let xs = [4, 15, 8, 23, 16, 42]
+    let evens = 0
+    for x in xs
+        if x % 2 != 0 then
+            continue
+        if x > 20 then
+            break
+        evens = evens + 1
+    console.print("evens before first > 20:", evens)
+
+    console.print("6 & 3 =", 6 & 3, "  6 | 3 =", 6 | 3, "  6 ^ 3 =", 6 ^ 3)
+    console.print("1 << 4 =", 1 << 4, "  256 >> 2 =", 256 >> 2)
+
+    let n = 7
+    console.print("parity of 7:", n % 2 != 0 and 1 or 0)
+    console.print("short-circuit guard:", n > 0 and 100 / n > 5)
+
+    console.print("clamp(50, 0, 10) =", clamp(50, 0, 10))
+    console.print("factorial(6) =", factorial(6))

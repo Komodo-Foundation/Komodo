@@ -1,0 +1,31 @@
+// `let NAME be EXPR` macros: substituted at each use site, and scoped to
+// the block they are declared in. Inner declarations shadow outer ones.
+
+import console
+
+let WIDTH be 4
+let HEIGHT be 3
+let AREA be WIDTH * HEIGHT       // may refer to earlier macros
+let LABEL be "area:"
+
+fn describe() : int
+    return AREA                  // top-level macro visible in any function
+
+void main()
+    console.print(LABEL, describe())
+    console.print("w+h:", WIDTH + HEIGHT)
+
+    let N be 10                  // function-scoped macro
+    console.print("N:", N)
+
+    if WIDTH > 0
+        let N be 99              // shadows the outer N inside this block
+        console.print("inner N:", N)
+
+    console.print("outer N again:", N)
+
+    let sum = 0
+    for i = 1 to 3
+        let STEP be i * 100      // re-evaluated per use, scoped to the loop body
+        sum = sum + STEP
+    console.print("sum:", sum)

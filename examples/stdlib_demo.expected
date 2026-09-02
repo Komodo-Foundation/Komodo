@@ -1,0 +1,10 @@
+sorted: 1 2 5 7 9
+sum: 24 max: 9 min: 1
+has 9? 1 index of 7: 3
+abs(-7): 7
+pow(2, 10): 1024
+gcd(48, 18): 6
+sqrt(2): 1.41421
+Komodo rocks - length 12
+ab x3 = ababab
+equal: 1   not-equal: 1

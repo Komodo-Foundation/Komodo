@@ -1,0 +1,63 @@
+// Class inheritance, method inheritance, `abstract`, and virtual dispatch
+// through a base-typed variable in the self-hosted compiler.
+
+import console
+
+abstract class Shape
+    constructor(name: string)
+        m_name = name
+    fn name() : string
+        return m_name
+    fn area() : int
+        return 0
+    fn describe() : string
+        // calls the virtual `area()` — resolves to the concrete subclass
+        return m_name
+    m_name: string
+
+class Rect : Shape
+    constructor(w: int, h: int)
+        m_name = "rect"
+        m_w = w
+        m_h = h
+    fn area() : int
+        return m_w * m_h
+    m_w: int
+    m_h: int
+
+class Square : Rect
+    constructor(s: int)
+        m_name = "square"
+        m_w = s
+        m_h = s
+    // inherits Rect.area()
+
+class Circle : Shape
+    constructor(r: int)
+        m_name = "circle"
+        m_r = r
+    fn area() : int
+        // pi ~ 3
+        return 3 * m_r * m_r
+    m_r: int
+
+fn areaOf(s: Shape) : int
+    return s.area()
+
+void main()
+    let r = new Rect(3, 4)
+    let q = new Square(5)
+    let c = new Circle(10)
+
+    console.print("rect area:", r.area())
+    console.print("square area:", q.area())
+    console.print("circle area:", c.area())
+
+    // virtual dispatch through a Shape-typed parameter
+    console.print("areaOf(rect):", areaOf(r))
+    console.print("areaOf(square):", areaOf(q))
+    console.print("areaOf(circle):", areaOf(c))
+
+    // inherited method + name
+    console.print("square name:", q.name())
+    console.print("circle describe:", c.describe())

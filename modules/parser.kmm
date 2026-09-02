@@ -12,15 +12,47 @@ public
             skipNewlines()
             if at(TokenType::EOF) then
                 break
-            if at(TokenType::FN) or at(TokenType::MUT) or at(TokenType::VOID) then
+            if at(TokenType::EXTERN) then
+                prog.functions += [parseExtern()]
+            else if at(TokenType::FN) or at(TokenType::MUT) or at(TokenType::VOID) then
                 prog.functions += [parseFunction()]
             else if at(TokenType::STRUCT) then
                 prog.structs += [parseStruct()]
             else if at(TokenType::CLASS) then
                 prog.classes += [parseClass()]
+            else if at(TokenType::IDENT) and (peek().lexeme == "abstract" or peek().lexeme == "shared") then
+                // leading type modifiers: `abstract` / `shared` before
+                // `struct` / `class`.  `shared` is parsed and ignored
+                // (all handles are plain pointers in the compiler).
+                let isAbs = false
+                while at(TokenType::IDENT) and (peek().lexeme == "abstract" or peek().lexeme == "shared") do
+                    if peek().lexeme == "abstract" then
+                        isAbs = true
+                    eat()
+                if at(TokenType::STRUCT) then
+                    let sd = parseStruct()
+                    sd.isAbstract = isAbs
+                    prog.structs += [sd]
+                else if at(TokenType::CLASS) then
+                    let cd = parseClass()
+                    cd.isAbstract = isAbs
+                    prog.classes += [cd]
+                else
+                    throw ("expected `struct` or `class` after type modifier")
+            else if at(TokenType::LET) then
+                // `let NAME be EXPR` at top level — a compile-time macro.
+                prog.macros += [parseVarDecl()]
             else if at(TokenType::IMPORT) then
                 eat()
                 eat()
+                continue
+            else if at(TokenType::MODULE) then
+                // `module <name>` — namespaces are flat after the driver
+                // merges the imported files, so just record and move on.
+                eat()
+                if not at(TokenType::NEWLINE) and not at(TokenType::EOF) then
+                    prog.moduleName = peek().lexeme
+                    eat()
                 continue
             else
                 throw ("Unexpected top-level token: " + string(peek().lexeme))
@@ -73,12 +105,33 @@ private
         eat()
         return name
 
+    // `extern fn name(params): type`  /  `extern void name(params)`
+    // A prototype only — no body follows.
+    mut parseExtern(): FunctionDecl
+        eat()                       // extern
+        let isVoid = at(TokenType::VOID)
+        eat()                       // fn | void
+        let name = peek().lexeme
+        eat()
+        eat()                       // (
+        let params = parseParams()
+        eat()                       // )
+        let returnType: string? = null
+        if at(TokenType::COLON) then
+            eat()
+            returnType = parseType()
+        skipNewlines()
+        let decl = new FunctionDecl(name)
+        decl.params = params
+        decl.returnType = returnType
+        decl.isVoid = isVoid
+        decl.isExtern = true
+        return decl
+
     mut parseFunction(): FunctionDecl
         let isVoid = at(TokenType::VOID)
         let isMut = at(TokenType::MUT)
-        if isMut then
-            eat()
-        eat()
+        eat()                       // fn | void | mut  (single leading keyword)
 
         let name = peek().lexeme
         eat()
@@ -114,6 +167,11 @@ private
         eat()
         let name = peek().lexeme
         eat()
+        let parent: string? = null
+        if at(TokenType::COLON) then
+            eat()
+            parent = peek().lexeme
+            eat()
         skipNewlines()
         if at(TokenType::INDENT) then
             eat()
@@ -121,12 +179,20 @@ private
         let members: [StructMember] = []
         while not at(TokenType::DEDENT) and not at(TokenType::EOF) do
             skipNewlines()
+            if at(TokenType::DEDENT) or at(TokenType::EOF) then
+                break
             let memberName = peek().lexeme
             eat()
-            eat()
-            let memberType = peek().lexeme
-            eat()
-            members += [new StructMember(memberName, memberType)]
+            if at(TokenType::COLON) then
+                eat()
+            let memberType = parseType()
+            let mdefault: Expression? = null
+            if at(TokenType::EQUALS) then
+                eat()
+                mdefault = parseExpression()
+            let sm = new StructMember(memberName, memberType)
+            sm.defaultValue = mdefault
+            members += [sm]
             skipNewlines()
 
         if at(TokenType::DEDENT) then
@@ -134,29 +200,82 @@ private
 
         let decl = new StructDecl(name)
         decl.members = members
+        decl.parent = parent
         return decl
 
+    // `constructor(params)` + body — lowered like a void method.
+    mut parseCtor(): FunctionDecl
+        eat()                       // constructor
+        eat()                       // (
+        let params = parseParams()
+        eat()                       // )
+        skipNewlines()
+        if at(TokenType::INDENT) then
+            eat()
+        let body = parseStatements()
+        skipNewlines()
+        if at(TokenType::DEDENT) then
+            eat()
+        let decl = new FunctionDecl("constructor")
+        decl.params = params
+        decl.body = body
+        decl.isVoid = true
+        decl.isConstructor = true
+        return decl
+
+    // class body: one indent level; `public` / `private` labels optional;
+    // `constructor`, `fn` / `mut` / `void` methods, and `name: type`
+    // fields, in any order.
     mut parseClass(): ClassDecl
         eat()
         let name = peek().lexeme
         eat()
+        let decl = new ClassDecl(name)
+        if at(TokenType::COLON) then
+            eat()
+            decl.parent = peek().lexeme
+            eat()
         skipNewlines()
         if at(TokenType::INDENT) then
             eat()
 
-        let methods: [FunctionDecl] = []
         while not at(TokenType::DEDENT) and not at(TokenType::EOF) do
             skipNewlines()
-            if at(TokenType::FN) or at(TokenType::MUT) or at(TokenType::VOID) then
-                methods += [parseFunction()]
-            else
+            if at(TokenType::DEDENT) or at(TokenType::EOF) then
+                break
+
+            if at(TokenType::IDENT) and (peek().lexeme == "public" or peek().lexeme == "private") then
+                eat()
                 skipNewlines()
+                continue
+
+            if at(TokenType::CONSTRUCTOR) then
+                decl.methods += [parseCtor()]
+                skipNewlines()
+                continue
+
+            if at(TokenType::FN) or at(TokenType::MUT) or at(TokenType::VOID) then
+                decl.methods += [parseFunction()]
+                skipNewlines()
+                continue
+
+            // otherwise: a field declaration  `name: type [= default]`
+            let fname = peek().lexeme
+            eat()
+            if at(TokenType::COLON) then
+                eat()
+            let ftype = parseType()
+            let fdefault: Expression? = null
+            if at(TokenType::EQUALS) then
+                eat()
+                fdefault = parseExpression()
+            let cf = new ClassField(fname, ftype)
+            cf.defaultValue = fdefault
+            decl.fields += [cf]
+            skipNewlines()
 
         if at(TokenType::DEDENT) then
             eat()
-
-        let decl = new ClassDecl(name)
-        decl.methods = methods
         return decl
 
 
@@ -352,23 +471,11 @@ private
         stmt.descending = descending
         return stmt
 
+    // Komodo has no C-style `?:`. A conditional value is the Lua idiom
+    // `cond and whenTrue or whenFalse`, built from short-circuit and/or,
+    // which yield operand values (not coerced booleans).
     mut parseExpression(): Expression?
-        return parseTernary()
-
-    mut parseTernary(): Expression?
-        let cond = parseOr()
-        if at(TokenType::QUESTION) then
-            eat()
-            let a = parseExpression()
-            if at(TokenType::COLON) then
-                eat()
-            let b = parseExpression()
-            let t = new TernaryOp()
-            t.cond = cond
-            t.whenTrue = a
-            t.whenFalse = b
-            return t
-        return cond
+        return parseOr()
 
     mut parseOr(): Expression?
         let left = parseAnd()
@@ -379,11 +486,23 @@ private
         return left
 
     mut parseAnd(): Expression?
-        let left = parseComparison()
+        let left = parseIs()
         while at(TokenType::AND) do
             eat()
-            let right = parseComparison()
+            let right = parseIs()
             left = new BinaryOp("and", left, right)
+        return left
+
+    // `expr is TypeName` — runtime type test.  The right side is a bare
+    // type name (matches the interpreter): pulled off as an Identifier,
+    // never evaluated as a value.
+    mut parseIs(): Expression?
+        let left = parseComparison()
+        while at(TokenType::IS) do
+            eat()
+            let tn = peek().lexeme
+            eat()
+            left = new BinaryOp("is", left, new Identifier(tn))
         return left
 
     mut parseComparison(): Expression?
@@ -456,9 +575,24 @@ private
                     expr = new MemberExpr(expr, member)
             else if at(TokenType::OPEN_BRACKET) then
                 eat()
-                let index = parseExpression()
-                eat()
-                expr = new IndexExpr(expr, index)
+                // `obj[i]` indexes; `obj[a to b]` / `obj[a:b]` slices
+                // (end exclusive).  Either bound may be omitted:
+                // `obj[:b]`, `obj[a:]`, `obj[a to]`, `obj[:]`.
+                let sStart: Expression? = null
+                if not at(TokenType::COLON) and not at(TokenType::TO) and not at(TokenType::CLOSE_BRACKET) then
+                    sStart = parseExpression()
+                if at(TokenType::COLON) or at(TokenType::TO) then
+                    eat()
+                    let sEnd: Expression? = null
+                    if not at(TokenType::CLOSE_BRACKET) then
+                        sEnd = parseExpression()
+                    if at(TokenType::CLOSE_BRACKET) then
+                        eat()
+                    expr = new SliceExpr(expr, sStart, sEnd)
+                else
+                    if at(TokenType::CLOSE_BRACKET) then
+                        eat()
+                    expr = new IndexExpr(expr, sStart)
             else if at(TokenType::OPEN_PAREN) and expr is Identifier then
                 eat()
                 let args: [Expression] = []
@@ -544,6 +678,12 @@ private
         if at(TokenType::IDENT) then
             let name = peek().lexeme
             eat()
+            // `ns::member` — the namespace is dropped (flat after merge);
+            // `a::b::c` keeps the last segment.
+            while at(TokenType::SCOPE) do
+                eat()
+                name = peek().lexeme
+                eat()
             return new Identifier(name)
 
         return null
