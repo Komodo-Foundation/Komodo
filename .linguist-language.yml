@@ -1,0 +1,8 @@
+Komodo:
+  type: programming
+  color: '#2E86AB'
+  extensions:
+    - .km
+    - .kmm
+  aliases:
+    - komodo
