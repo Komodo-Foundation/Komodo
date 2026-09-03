@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Getting Started — Komodo</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-content">
+            <a href="index.html" class="logo">Komodo</a>
+            <ul class="nav-links">
+                <li><a href="getting-started.html">Getting Started</a></li>
+                <li><a href="language-basics.html">Language</a></li>
+                <li><a href="oop.html">OOP</a></li>
+                <li><a href="advanced.html">Advanced</a></li>
+                <li><a href="stdlib.html">Stdlib</a></li>
+                <li><a href="compiler.html">Compiler</a></li>
+                <li><a href="examples.html">Examples</a></li>
+            </ul>
+        </div>
+    </nav>
+
+    <main>
+        <h1>Getting Started</h1>
+
+        <section>
+            <h2>Requirements</h2>
+            <ul>
+                <li><strong>Python 3</strong> and the Komodo reference interpreter (<a href="https://github.com/lrperks/KomodoPy">KomodoPy</a>)</li>
+                <li><strong>NASM</strong> — the Netwide Assembler (for x86 target)</li>
+                <li><strong>GCC</strong> — GNU C compiler (for linking)</li>
+            </ul>
+        </section>
+
+        <section>
+            <h2>Setup</h2>
+            <p>Clone the Komodo repository and set the path to the reference interpreter:</p>
+            <pre><code>git clone https://github.com/lrperks/Komodo.git
+cd Komodo
+export KOMODO_MAIN="/path/to/KomodoPy/main.py"</code></pre>
+            <p>If you haven't cloned KomodoPy yet:</p>
+            <pre><code>git clone https://github.com/lrperks/KomodoPy.git ../KomodoPy
+export KOMODO_MAIN="../KomodoPy/main.py"</code></pre>
+        </section>
+
+        <section>
+            <h2>Your First Program</h2>
+            <p>Create a file <code>hello.km</code>:</p>
+            <pre><code>import console
+
+void main()
+    print("Hello, Komodo!")</code></pre>
+            <p>Compile and run it:</p>
+            <pre><code>./build.sh hello.km</code></pre>
+            <p>The script will:</p>
+            <ul>
+                <li>Invoke the Komodo compiler on <code>hello.km</code></li>
+                <li>Generate <code>hello.km.asm</code> (x86-64 assembly)</li>
+                <li>Assemble and link it with the C runtime</li>
+                <li>Run the result</li>
+            </ul>
+        </section>
+
+        <section>
+            <h2>Build Options</h2>
+            <p>The build script accepts a target and output path:</p>
+            <pre><code>./build.sh FILE [target] [output] [extra cc inputs...]</code></pre>
+
+            <h3>Targets</h3>
+            <ul>
+                <li><code>x86</code> (default) — native x86-64 assembly</li>
+                <li><code>stackvm</code> — textual stack-VM bytecode (no runtime yet)</li>
+            </ul>
+
+            <h3>Examples</h3>
+            <pre><code>./build.sh examples/features_demo.km           # x86, run immediately
+./build.sh examples/features_demo.km x86       # explicit x86
+./build.sh examples/features_demo.km stackvm   # generate bytecode only
+
+# Link external libraries
+./build.sh demos/sdl_window.km x86 ./w -lSDL2</code></pre>
+
+            <p>The compiler output (ASM or bytecode) is saved as <code>&lt;file&gt;.km.asm</code> or <code>&lt;file&gt;.km.txt</code>.</p>
+        </section>
+
+        <section>
+            <h2>Running Tests</h2>
+            <p>Run the built-in test suite:</p>
+            <pre><code>./run-tests.sh              # all examples
+./run-tests.sh oop_demo     # specific example</code></pre>
+            <p>Each example is compiled to x86, run, and compared against its <code>.expected</code> file. The stack-VM target is also checked to ensure the target-independent lowering is correct.</p>
+        </section>
+
+        <section>
+            <h2>Caching</h2>
+            <p>The compiler caches parsed ASTs under <code>~/.km/cache</code> for faster builds. The build script clears this cache each run, so edits to compiler modules always take effect. To manually clear:</p>
+            <pre><code>rm -rf ~/.km/cache</code></pre>
+        </section>
+
+        <section>
+            <h2>Next Steps</h2>
+            <ul>
+                <li><a href="language-basics.html">Learn the language syntax and types</a></li>
+                <li><a href="oop.html">Explore structs and classes</a></li>
+                <li><a href="examples.html">See more code examples</a></li>
+                <li><a href="compiler.html">Understand the compiler architecture</a></li>
+            </ul>
+        </section>
+    </main>
+
+    <footer>
+        <p>© 2026 Lukas Perkins. <a href="https://github.com/lrperks/Komodo">View on GitHub</a></p>
+    </footer>
+</body>
+</html>

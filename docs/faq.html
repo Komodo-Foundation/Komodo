@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FAQ — Komodo</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-content">
+            <a href="index.html" class="logo">Komodo</a>
+            <ul class="nav-links">
+                <li><a href="getting-started.html">Getting Started</a></li>
+                <li><a href="language-basics.html">Language</a></li>
+                <li><a href="oop.html">OOP</a></li>
+                <li><a href="advanced.html">Advanced</a></li>
+                <li><a href="stdlib.html">Stdlib</a></li>
+                <li><a href="compiler.html">Compiler</a></li>
+                <li><a href="examples.html">Examples</a></li>
+            </ul>
+        </div>
+    </nav>
+
+    <main>
+        <h1>Frequently Asked Questions</h1>
+
+        <section>
+            <h2>What's the difference between .km and .kmm files?</h2>
+            <p><code>.km</code> files are programs (they must have <code>void main()</code>), while <code>.kmm</code> files are modules (libraries with no <code>main</code>). Both are compiled together.</p>
+        </section>
+
+        <section>
+            <h2>Do I need to install anything special?</h2>
+            <p>You need Python 3, the KomodoPy reference interpreter, NASM, and GCC. See <a href="getting-started.html">Getting Started</a> for setup instructions.</p>
+        </section>
+
+        <section>
+            <h2>Is the compiler self-hosting yet?</h2>
+            <p>Not yet. The compiler is written in Komodo and runs on the reference interpreter. It's almost ready to compile itself — a few language features are missing from the interpreter to allow full self-hosting.</p>
+        </section>
+
+        <section>
+            <h2>Can I use multiple inheritance?</h2>
+            <p>No, Komodo only supports single inheritance. Use composition (struct/class fields) if you need multiple types of behavior.</p>
+        </section>
+
+        <section>
+            <h2>What happens if I don't provide a type annotation?</h2>
+            <p>The compiler infers types from context. If it can't decide unambiguously, you'll get a compile error asking for an explicit annotation.</p>
+        </section>
+
+        <section>
+            <h2>Can I call C code from Komodo?</h2>
+            <p>Yes, use <code>extern fn</code> declarations. The compiler supports the full System V AMD64 ABI, so you can call any C function with proper signatures.</p>
+        </section>
+
+        <section>
+            <h2>What's the performance like?</h2>
+            <p>The x86-64 backend generates native code compiled by GCC, so performance is comparable to C. Stack-VM is slower but useful for testing and portability.</p>
+        </section>
+
+        <section>
+            <h2>Can I modify structs after creation?</h2>
+            <p>Yes, struct fields are mutable by default. Use a <code>void</code> or <code>mut</code> method to modify fields. For immutability, declare the struct binding as <code>be</code> instead of regular <code>let</code>.</p>
+        </section>
+
+        <section>
+            <h2>How does method overriding work?</h2>
+            <p>When you define a method in a subclass with the same name and signature as the parent, it overrides the parent's method. Dispatch is virtual by default.</p>
+        </section>
+
+        <section>
+            <h2>What's the entry point for command-line args?</h2>
+            <p>Define <code>void main(args: [string])</code>. The args array contains the command-line arguments (program name at index 0, user args starting at index 1).</p>
+        </section>
+
+        <section>
+            <h2>Can I use generics with classes?</h2>
+            <p>Classes themselves aren't generic, but you can write generic functions that work with any class or struct. Call-site monomorphization handles specialization.</p>
+        </section>
+
+        <section>
+            <h2>How do I debug compilation errors?</h2>
+            <p>The compiler reports errors with line and column numbers. Read the error message carefully — it will tell you what type or syntax issue was found. Check the <a href="language-basics.html">Language Basics</a> page for reference.</p>
+        </section>
+
+        <section>
+            <h2>Can I write inline assembly?</h2>
+            <p>Not directly, but you can use <code>extern fn</code> to call C functions that contain assembly. The x86 backend generates optimized assembly automatically.</p>
+        </section>
+
+        <section>
+            <h2>What's the difference between <code>fn</code> and <code>void</code>?</h2>
+            <p><code>fn</code> declares a pure function that returns a value. <code>void</code> declares a procedure that has side effects and returns nothing. Methods can be either.</p>
+        </section>
+
+        <section>
+            <h2>Where can I get help?</h2>
+            <ul>
+                <li><a href="https://github.com/lrperks/Komodo">GitHub repository</a> — source code and issue tracker</li>
+                <li>Read the <a href="design.md">Language Design document</a> for deeper semantics</li>
+                <li>Check the <code>examples/</code> directory for working programs</li>
+            </ul>
+        </section>
+    </main>
+
+    <footer>
+        <p>© 2026 Lukas Perkins. <a href="https://github.com/lrperks/Komodo">View on GitHub</a></p>
+    </footer>
+</body>
+</html>

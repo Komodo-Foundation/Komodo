@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Code Examples — Komodo</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-content">
+            <a href="index.html" class="logo">Komodo</a>
+            <ul class="nav-links">
+                <li><a href="getting-started.html">Getting Started</a></li>
+                <li><a href="language-basics.html">Language</a></li>
+                <li><a href="oop.html">OOP</a></li>
+                <li><a href="advanced.html">Advanced</a></li>
+                <li><a href="stdlib.html">Stdlib</a></li>
+                <li><a href="compiler.html">Compiler</a></li>
+                <li><a href="examples.html">Examples</a></li>
+            </ul>
+        </div>
+    </nav>
+
+    <main>
+        <h1>Code Examples</h1>
+
+        <section>
+            <h2>Hello World</h2>
+            <pre><code>import console
+
+void main()
+    print("Hello, World!")</code></pre>
+        </section>
+
+        <section>
+            <h2>Functions & Macros</h2>
+            <pre><code>import console
+
+fn factorial(n: int): int
+    if n <= 1
+        return 1
+    return n * factorial(n - 1)
+
+let PI be 3.14159
+
+void main()
+    print("5! = ", factorial(5))
+    print("Circumference of circle: ", 2.0 * PI * 5.0)</code></pre>
+        </section>
+
+        <section>
+            <h2>Arrays & Slices</h2>
+            <pre><code>import console
+import algorithm
+
+void main()
+    let arr = [5, 2, 8, 1, 9, 3]
+    print("Original: ", arr)
+
+    algorithm::sort(arr)
+    print("Sorted: ", arr)
+
+    let slice = arr[1 to 4]
+    print("Slice [1:4]: ", slice)
+
+    print("Max: ", algorithm::max(arr))</code></pre>
+        </section>
+
+        <section>
+            <h2>Structs</h2>
+            <pre><code>import console
+import math
+
+struct Circle
+    x: float
+    y: float
+    radius: float
+
+    fn area(): float
+        return 3.14159 * this.radius * this.radius
+
+void main()
+    let c = Circle(x: 0.0, y: 0.0, radius: 5.0)
+    print("Area: ", c.area())</code></pre>
+        </section>
+
+        <section>
+            <h2>Classes & Inheritance</h2>
+            <pre><code>import console
+
+class Animal
+    name: string
+    age: int = 0
+
+    void speak()
+        print(this.name, " makes a sound")
+
+class Dog : Animal
+    breed: string = "Mixed"
+
+    void speak()
+        print(this.name, " barks!")
+
+class Cat : Animal
+    void speak()
+        print(this.name, " meows!")
+
+void main()
+    let dog = Dog(name: "Rex", age: 3, breed: "Labrador")
+    let cat = Cat(name: "Whiskers", age: 5)
+
+    dog.speak()
+    cat.speak()</code></pre>
+        </section>
+
+        <section>
+            <h2>Generics</h2>
+            <pre><code>import console
+
+fn first(arr: [T]): T
+    return arr[0]
+
+fn last(arr: [T]): T
+    return arr[#arr - 1]
+
+fn reverse(arr: [T])
+    let i = 0
+    let j = #arr - 1
+    while i < j
+        let tmp = arr[i]
+        arr[i] = arr[j]
+        arr[j] = tmp
+        i = i + 1
+        j = j - 1
+
+void main()
+    let ints = [1, 2, 3, 4, 5]
+    let strs = ["a", "b", "c"]
+
+    print("First int: ", first(ints))
+    print("Last int: ", last(ints))
+    print("First string: ", first(strs))
+
+    reverse(ints)
+    print("Reversed: ", ints)</code></pre>
+        </section>
+
+        <section>
+            <h2>Overloading</h2>
+            <pre><code>import console
+
+fn format(x: int): string
+    return x.to_string()
+
+fn format(x: float): string
+    return x.to_string()
+
+fn format(x: string): string
+    return "\"" + x + "\""
+
+void main()
+    print(format(42))
+    print(format(3.14))
+    print(format("hello"))</code></pre>
+        </section>
+
+        <section>
+            <h2>Control Flow</h2>
+            <pre><code>import console
+
+void main()
+    let count = 0
+    while count < 5
+        if count % 2 == 0
+            print(count, " is even")
+        else
+            print(count, " is odd")
+        count = count + 1
+
+    for i in 0 to 3
+        print("Loop: ", i)
+
+    let x = 10
+    if x > 5 and x < 15
+        print("x is between 5 and 15")</code></pre>
+        </section>
+
+        <section>
+            <h2>Running Examples</h2>
+            <p>Example programs in the repository can be run with:</p>
+            <pre><code>./build.sh examples/features_demo.km
+./build.sh examples/oop_demo.km
+./build.sh examples/generic_demo.km
+./run-tests.sh    # run all examples</code></pre>
+            <p>Check the <code>examples/</code> directory for more complete programs and their expected output.</p>
+        </section>
+
+        <section>
+            <h2>More Resources</h2>
+            <ul>
+                <li><a href="language-basics.html">Language reference</a></li>
+                <li><a href="oop.html">OOP features</a></li>
+                <li><a href="advanced.html">Advanced features</a></li>
+                <li><a href="https://github.com/lrperks/Komodo/tree/main/examples">Browse example files on GitHub</a></li>
+            </ul>
+        </section>
+    </main>
+
+    <footer>
+        <p>© 2026 Lukas Perkins. <a href="https://github.com/lrperks/Komodo">View on GitHub</a></p>
+    </footer>
+</body>
+</html>

@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Modules — Komodo</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-content">
+            <a href="index.html" class="logo">Komodo</a>
+            <ul class="nav-links">
+                <li><a href="getting-started.html">Getting Started</a></li>
+                <li><a href="language-basics.html">Language</a></li>
+                <li><a href="oop.html">OOP</a></li>
+                <li><a href="advanced.html">Advanced</a></li>
+                <li><a href="stdlib.html">Stdlib</a></li>
+                <li><a href="compiler.html">Compiler</a></li>
+                <li><a href="examples.html">Examples</a></li>
+            </ul>
+        </div>
+    </nav>
+
+    <main>
+        <h1>Modules</h1>
+
+        <section>
+            <h2>File Types</h2>
+            <ul>
+                <li><code>.km</code> — program file (must contain a <code>void main()</code>)</li>
+                <li><code>.kmm</code> — module file (library code, no <code>main</code>)</li>
+            </ul>
+        </section>
+
+        <section>
+            <h2>Declaring a Module</h2>
+            <p>Every module file starts with a <code>module</code> declaration:</p>
+            <pre><code>module math
+
+fn square(x: int): int
+    return x * x
+
+fn cube(x: int): int
+    return x * x * x</code></pre>
+            <p>This file is <code>math.kmm</code>. All files declaring the same module name are merged into one namespace.</p>
+        </section>
+
+        <section>
+            <h2>Importing</h2>
+            <p>Import modules with the <code>import</code> statement:</p>
+            <pre><code>import math
+import console
+
+void main()
+    let result = math::square(5)
+    print(result)</code></pre>
+            <p>The compiler searches for <code>math.kmm</code> in the project directory tree and compiles it together with your program. All imported modules are compiled as a single unit.</p>
+        </section>
+
+        <section>
+            <h2>Namespacing</h2>
+            <p>Access imported members using <code>::</code> (scope) or <code>.</code> (member access):</p>
+            <pre><code>import math
+
+let x = math::square(5)      // module::member
+let y = x.toString()         // receiver.method</code></pre>
+            <p>After modules are merged, all members are in a flat namespace, so <code>math::member</code> resolves to <code>member</code>.</p>
+        </section>
+
+        <section>
+            <h2>Built-in Modules</h2>
+            <p>Some modules don't have source files — they're linked from C. Import them normally:</p>
+            <pre><code>import console
+import math
+import algorithm
+import file</code></pre>
+            <p>These are resolved by the linker to their corresponding <code>.c</code> implementations.</p>
+        </section>
+
+        <section>
+            <h2>Module Organization</h2>
+            <p>Keep modules focused and cohesive. Good module structure:</p>
+            <pre><code>// utils/math.kmm
+module math
+
+fn abs(x: int): int
+    if x < 0
+        return -x
+    return x
+
+// utils/string.kmm
+module string
+
+fn reverse(s: string): string
+    // ...
+
+// main.km
+import utils::math
+import utils::string
+
+void main()
+    print(math::abs(-5))</code></pre>
+        </section>
+
+        <section>
+            <h2>Entry Point</h2>
+            <p>Your program file (<code>.km</code>) must define <code>void main()</code> or <code>void main(args)</code>:</p>
+            <pre><code>void main()
+    print("Hello")
+
+// Or with command-line arguments:
+void main(args: [string])
+    print("Arg count: ", #args)
+    if #args > 0
+        print("First arg: ", args[0])</code></pre>
+            <p>Arguments start at index 0 (program name is at index 0, user args at 1+).</p>
+        </section>
+
+        <section>
+            <h2>Next Steps</h2>
+            <ul>
+                <li><a href="stdlib.html">Learn about the standard library</a></li>
+                <li><a href="examples.html">See multi-file examples</a></li>
+            </ul>
+        </section>
+    </main>
+
+    <footer>
+        <p>© 2026 Lukas Perkins. <a href="https://github.com/lrperks/Komodo">View on GitHub</a></p>
+    </footer>
+</body>
+</html>
