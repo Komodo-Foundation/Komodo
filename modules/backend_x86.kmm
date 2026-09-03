@@ -28,6 +28,8 @@ private
     m_vtblText: string = ""         // `__vt_<id>: dq …` lines
     m_vtabCount: int = 0            // number of registered type ids
     m_vtabSet: [int] = []           // ids that have a real vtable
+    m_tryCatch: [string] = []       // protected-call: catch labels (nesting stack)
+    m_tryDone: [string] = []        // protected-call: done labels (nesting stack)
 
 // ── line buffer ────────────────────────────────────────────────────
 
@@ -611,6 +613,55 @@ mut X86Backend::cCallEnd(name: string, classes: [string])
 // `data(arr)` — element pointer of an array handle (skip len/cap).
 void X86Backend::arrayDataPtr()
     ins("add rax, 16")
+
+// ── error handling ────────────────────────────────────────────────
+//
+//  `throw msg` — the message pointer is in rax.  `km_throw` never
+//  returns: it _longjmps to the innermost protected call site, or prints
+//  the message and exits when there is none.
+mut X86Backend::throwErr()
+    ins("mov rdi, rax")
+    recordExtern("km_throw")
+    emitCall("km_throw")
+
+//  `f(args)?` brackets — `tryBegin` reserves a jmp_buf on the stack
+//  (glibc's is 200 bytes; 256 keeps 16-alignment parity), registers it
+//  with the runtime and arms it with `_setjmp`.  The guarded call is
+//  emitted by the caller between the two.  `_longjmp` restores rsp and
+//  rbx to their `_setjmp`-time values, so emitCall's trailing
+//  `mov rsp, rbx` still runs correctly on the caught return.
+mut X86Backend::tryBegin()
+    let catchL = newLabel()
+    let doneL = newLabel()
+    m_tryCatch += [catchL]
+    m_tryDone += [doneL]
+    ins("sub rsp, 256")
+    ins("lea rdi, [rsp]")
+    recordExtern("km_try_push")
+    emitCall("km_try_push")
+    ins("lea rdi, [rsp]")
+    recordExtern("_setjmp")
+    emitCall("_setjmp")
+    ins("test eax, eax")
+    ins("jnz " + catchL)
+
+mut X86Backend::tryEnd()
+    let catchL = m_tryCatch[#m_tryCatch - 1]
+    let doneL = m_tryDone[#m_tryDone - 1]
+    m_tryCatch = m_tryCatch[0 to (#m_tryCatch - 1)]
+    m_tryDone = m_tryDone[0 to (#m_tryDone - 1)]
+    // normal path: pop the landing pad, preserving the call's result
+    // (km_try_pop is a C call and would otherwise clobber rax)
+    ins("push rax")
+    recordExtern("km_try_pop")
+    emitCall("km_try_pop")
+    ins("pop rax")
+    ins("jmp " + doneL)
+    // caught path: km_throw already popped the pad; yield null
+    label(catchL)
+    ins("xor eax, eax")
+    label(doneL)
+    ins("add rsp, 256")
 
 // ── final assembly ─────────────────────────────────────────────────
 

@@ -22,6 +22,8 @@ private
     m_text: string = ""
     m_forInVi: int = 0     // frame offsets of the current for-in loop's
     m_forInVa: int = 0     // hidden cursor / handle locals
+    m_tryCatch: [string] = []  // protected-call: catch labels (nesting stack)
+    m_tryDone: [string] = []   // protected-call: done labels (nesting stack)
 
 // ── line buffer ────────────────────────────────────────────────────
 
@@ -293,6 +295,34 @@ void StackVMBackend::cCallEnd(name: string, classes: [string])
 
 void StackVMBackend::arrayDataPtr()
     op("ADATA")
+
+// ── error handling ────────────────────────────────────────────────
+//
+//  A VM interpreter must keep a stack of landing pads.  `TRY <catch>`
+//  pushes one targeting the catch label; `THROW` pops to the nearest pad
+//  (popping it) and jumps there; `ENDTRY` pops the pad on the normal
+//  path.  On the caught path a null (PUSHI 0) stands in for the call's
+//  result.
+void StackVMBackend::throwErr()
+    op("THROW")
+
+mut StackVMBackend::tryBegin()
+    let catchL = newLabel()
+    let doneL = newLabel()
+    m_tryCatch += [catchL]
+    m_tryDone += [doneL]
+    op("TRY " + catchL)
+
+mut StackVMBackend::tryEnd()
+    let catchL = m_tryCatch[#m_tryCatch - 1]
+    let doneL = m_tryDone[#m_tryDone - 1]
+    m_tryCatch = m_tryCatch[0 to (#m_tryCatch - 1)]
+    m_tryDone = m_tryDone[0 to (#m_tryDone - 1)]
+    op("ENDTRY")
+    op("JMP " + doneL)
+    emit(catchL + ":")
+    op("PUSHI 0")
+    emit(doneL + ":")
 
 // ── objects (structs + classes) ───────────────────────────────────
 

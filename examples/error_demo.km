@@ -1,0 +1,49 @@
+// Error handling: `throw "msg"` raises an error; a call written with a
+// trailing `?` catches any error thrown out of it and evaluates to null.
+
+import console
+
+fn safe_div(a: int, b: int) : int
+    if b == 0 then
+        throw "division by zero"
+    return a / b
+
+fn must_pos(n: int) : int
+    return n or throw "not positive"
+
+fn outer(n: int) : int
+    let inner = must_pos(n)?
+    if inner == null then
+        throw "outer: inner failed"
+    return inner * 2
+
+void main()
+    let a = safe_div(20, 4)?
+    if a == null then
+        console.print("20/4 caught")
+    else
+        console.print("20/4 =", a)
+
+    let b = safe_div(7, 0)?
+    if b == null then
+        console.print("7/0 caught")
+    else
+        console.print("7/0 =", b)
+
+    console.print("must_pos(5) =", must_pos(5))
+
+    let c = must_pos(0)?
+    if c == null then
+        console.print("must_pos(0) caught")
+
+    let d = outer(3)?
+    if d == null then
+        console.print("outer(3) caught")
+    else
+        console.print("outer(3) =", d)
+
+    let e = outer(0)?
+    if e == null then
+        console.print("outer(0) caught")
+    else
+        console.print("outer(0) =", e)

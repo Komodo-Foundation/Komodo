@@ -62,6 +62,17 @@ KmArray *km_array_new(long len);
 KmArray *km_array_append(KmArray *dst, KmArray *src);
 KmArray *km_array_slice(KmArray *a, long start, long end);
 
+/* error handling — `throw msg` and the `f(args)?` protected-call guard.
+ * `km_try_push` registers a jmp_buf reserved on the caller's stack;
+ * `km_throw` _longjmps to the innermost registered pad (popping it), or
+ * prints "Uncaught error: <msg>" and exit(1)s when there is none.  The
+ * generated code calls `_setjmp` itself. */
+struct __jmp_buf_tag;
+void        km_try_push(struct __jmp_buf_tag *b);
+void        km_try_pop(void);
+void        km_throw(const char *msg);
+const char *km_error_message(void);
+
 /* string operators:  a + b   #s   s * n   a == b */
 const char *km_str_concat(const char *a, const char *b);
 const char *km_str_repeat(const char *s, long n);

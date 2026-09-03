@@ -42,6 +42,10 @@ mut Codegen::returnsOnAllPaths(stmts): bool
     for s in stmts do
         if s is ReturnStmt then
             return true
+        // `throw` never falls through — it unwinds to a protected call
+        // site or aborts the program.
+        if s is ThrowStmt then
+            return true
         if s is IfStmt then
             if #s.elseBody > 0 and returnsOnAllPaths(s.thenBody) and returnsOnAllPaths(s.elseBody) then
                 return true

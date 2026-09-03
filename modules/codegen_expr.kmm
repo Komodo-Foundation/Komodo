@@ -24,7 +24,12 @@ void Codegen::genExpr(e)
         else
             m_backend.loadLocal(slotOf(e.name), typeOf(e.name))
     else if e is NewExpr then
-        genNew(e)
+        if e.protected then
+            m_backend.tryBegin()
+            genNew(e)
+            m_backend.tryEnd()
+        else
+            genNew(e)
     else if e is MemberExpr then
         let mt = exprType(e.object)
         if not isObjType(mt) then
@@ -45,9 +50,30 @@ void Codegen::genExpr(e)
     else if e is ArrayExpr then
         genArray(e)
     else if e is CallExpr then
-        genCall(e)
+        if e.protected then
+            m_backend.tryBegin()
+            genCall(e)
+            m_backend.tryEnd()
+        else
+            genCall(e)
+    else if e is ThrowExpr then
+        genThrow(e.message)
+    else if e is NullLiteral then
+        // `null` is the zero handle / value; also the result of a
+        // protected call (`f()?`) that caught an error.
+        m_backend.loadIntLit("0")
     else if e is StringLiteral then
         m_backend.loadStrLit(e.value)
+
+// `throw expr` — evaluate the message string into the accumulator and
+// hand it to the runtime, which longjmps to the innermost protected call
+// site or, with none, prints the message and exits.
+void Codegen::genThrow(msg)
+    if msg == null then
+        m_backend.loadStrLit("\"\"")
+    else
+        genExpr(msg)
+    m_backend.throwErr()
 
 // `obj[start to end]` — a fresh string or array holding the half-open
 // range.  A missing start is 0; a missing end is passed as -1 and the

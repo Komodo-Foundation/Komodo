@@ -85,6 +85,8 @@ void Codegen::genStmt(s)
         if #m_loopCont == 0 then
             throw "continue outside a loop"
         m_backend.jump(m_loopCont[#m_loopCont - 1])
+    else if s is ThrowStmt then
+        genThrow(s.message)
 
 void Codegen::storeVar(name: string)
     m_backend.storeLocal(slotOf(name), typeOf(name))

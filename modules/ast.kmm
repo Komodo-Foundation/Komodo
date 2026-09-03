@@ -59,6 +59,9 @@ struct UnaryOp : Expression
 struct CallExpr : Expression
     name: string
     args: [Expression] = []
+    // `name(args)?` — a protected call: yields null instead of
+    // propagating a thrown error out of the callee.
+    protected: bool = false
 
 // `receiver.method(args)`
 struct MethodCallExpr : Expression
@@ -101,6 +104,9 @@ struct RangeExpr : Expression
 struct NewExpr : Expression
     typeName: string
     args: [Expression] = []
+    // `new Type(args)?` — protected construction: yields null instead of
+    // propagating a thrown error out of the constructor.
+    protected: bool = false
 
 // `expr or throw "msg"` / `throw "msg"` used in expression position.
 struct ThrowExpr : Expression

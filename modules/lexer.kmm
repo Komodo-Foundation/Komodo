@@ -28,6 +28,7 @@ enum TokenType
     CONSTRUCTOR
     VOID
     RETURN
+    THROW
     BREAK
     CONTINUE
     STRUCT
@@ -73,6 +74,7 @@ enum TokenType
     SHL
     SHR
     SCOPE
+    QUESTION
 
 struct Token
     type: TokenType
@@ -228,6 +230,8 @@ private
                 type = TokenType::VOID
             case "return"
                 type = TokenType::RETURN
+            case "throw"
+                type = TokenType::THROW
             case "break"
                 type = TokenType::BREAK
             case "continue"
@@ -384,6 +388,9 @@ private
             case "#"
                 eat()
                 m_tokens += [new Token(TokenType::HASH, "#", m_line, m_col)]
+            case "?"
+                eat()
+                m_tokens += [new Token(TokenType::QUESTION, "?", m_line, m_col)]
             case "/"
                 eat()
                 if peek() == "/" then

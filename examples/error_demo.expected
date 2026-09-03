@@ -1,0 +1,6 @@
+20/4 = 5
+7/0 caught
+must_pos(5) = 5
+must_pos(0) caught
+outer(3) = 6
+outer(0) caught

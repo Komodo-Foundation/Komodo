@@ -46,6 +46,12 @@ module km_compiler
 //                 integer runtime type id, then nFields 8-byte slots.
 //                 `objTypeId` reads that word.  Methods/constructors are
 //                 ordinary functions with the receiver as argument 0.
+//    errors       throwErr() tryBegin() tryEnd()
+//                 — `throwErr` raises the error whose message is in the
+//                 accumulator (does not return).  `tryBegin`/`tryEnd`
+//                 bracket one guarded call (`f(args)?`): the call is
+//                 emitted between them, and on a thrown error `tryEnd`
+//                 leaves null in the accumulator instead of propagating.
 //    control      label(name) jump(name) branchIfZero(name) branchIfNonzero(name)
 //    loops        forCompareExit(endL, descending, inclusive) stepLocal(off, down)
 //                 forInInit(viOff, vaOff) forInHead(viOff, vaOff, endL)

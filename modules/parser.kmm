@@ -100,9 +100,15 @@ private
             let inner = parseType()
             if at(TokenType::CLOSE_BRACKET) then
                 eat()
+            if at(TokenType::QUESTION) then
+                eat()
             return "[" + inner + "]"
         let name = peek().lexeme
         eat()
+        // `T?` nullable annotation — nullability is nominal only, so the
+        // trailing `?` is consumed and dropped.
+        if at(TokenType::QUESTION) then
+            eat()
         return name
 
     // `extern fn name(params): type`  /  `extern void name(params)`
@@ -311,6 +317,10 @@ private
         if at(TokenType::CONTINUE) then
             eat()
             return new ContinueStmt()
+        if at(TokenType::THROW) then
+            eat()
+            let msg = parseExpression()
+            return new ThrowStmt(msg)
 
         let expr = parseExpression()
         if expr == null then
@@ -547,6 +557,11 @@ private
             eat()
             let operand = parseUnary()
             return new UnaryOp(op, operand)
+        // `throw expr` in expression position (covers `x or throw "msg"`).
+        if at(TokenType::THROW) then
+            eat()
+            let msg = parseUnary()
+            return new ThrowExpr(msg)
         return parsePostfix()
 
     mut parsePostfix(): Expression?
@@ -604,6 +619,12 @@ private
                         eat()
                 eat()
                 expr = new CallExpr(expr.name, args)
+            else if at(TokenType::QUESTION) and expr is CallExpr then
+                eat()
+                expr.protected = true
+            else if at(TokenType::QUESTION) and expr is NewExpr then
+                eat()
+                expr.protected = true
             else
                 break
 

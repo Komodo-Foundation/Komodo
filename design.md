@@ -177,6 +177,7 @@ multiplicative, unary, postfix.
 - Scope: `namespace::name` (e.g. `file::read_all`, `TokenType::EOF`)
 - Index: `arr[i]` — out-of-range throws; guard with `#arr`
 - Slice: `arr[start to end]`
+- Protected call: `name(args)?` — yields `null` if the call throws
 
 ### Strings
 
@@ -227,8 +228,31 @@ match text
 
 ### Errors
 
-- `throw "message"` — statement or expression position.
+- `throw <expr>` — raise an error carrying a message (a string). Valid in
+  statement or expression position. Control does not return from a `throw`.
 - `expr or throw "message"` — yield `expr`, or throw if it is null/false.
+- `f(args)?` — a **protected call**. If an error is thrown out of the callee
+  (transitively), the call expression evaluates to `null` instead of
+  propagating. The `?` binds to a call's closing `)` and also applies to
+  method calls (`obj.m(args)?`) and construction (`new T(args)?`).
+- An error that reaches the top of the program with no enclosing `?` prints
+  `Uncaught error: <message>` to stderr and exits with status 1.
+
+```
+fn parse_port(s: string) : int
+    let n = int(s)
+    if n < 1 or n > 65535 then
+        throw "port out of range"
+    return n
+
+let port = parse_port(userInput)?      // null if it threw
+if port == null then
+    port = 8080
+```
+
+x86: a runtime `jmp_buf` stack (`km_throw` / `km_try_push` / `km_try_pop`
+in `stdlib/km_error.c`, armed with `_setjmp` at each `?` site). The
+stackvm backend emits `THROW` / `TRY` / `ENDTRY` opcodes.
 
 ## Foreign functions (C FFI)
 
