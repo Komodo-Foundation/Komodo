@@ -18,9 +18,13 @@ module km_compiler
 class X86Backend : Backend
 private
     m_lines: [string] = []         // .text body, one entry per line
-    m_rodata: string = ""          // interned .rodata lines
+    m_rodata: string = ""          // .rodata lines (dq / db)
     m_doubleId: int = 0
     m_stringId: int = 0
+    // constant-pool dedup (enabled at optimisation level >= low)
+    m_intern: bool = false
+    m_poolKeys: [string] = []      // "d:<value>" / "s:<lexeme>"
+    m_poolLabels: [string] = []
     m_externs: [string] = []       // link-time symbols to `extern`
     m_usesMalloc: bool = false
     m_usesAppend: bool = false
@@ -54,17 +58,44 @@ void X86Backend::emitCall(sym: string)
 
 // ── .rodata interning ──────────────────────────────────────────────
 
+// enable / disable constant-pool deduplication
+void X86Backend::setIntern(on: bool)
+    m_intern = on
+
+mut X86Backend::poolFind(key: string): string
+    if not m_intern then
+        return ""
+    let i = 0
+    while i < #m_poolKeys do
+        if m_poolKeys[i] == key then
+            return m_poolLabels[i]
+        i += 1
+    return ""
+
+mut X86Backend::poolAdd(key: string, label: string)
+    if m_intern then
+        m_poolKeys += [key]
+        m_poolLabels += [label]
+
 mut X86Backend::addDouble(value: string): string
+    let hit = poolFind("d:" + value)
+    if hit != "" then
+        return hit
     m_doubleId += 1
     let name = "LC" + string(m_doubleId)
     m_rodata = m_rodata + name + ": dq " + value + "\n"
+    poolAdd("d:" + value, name)
     return name
 
 // `lexeme` still carries its quotes.  NASM back-quoted strings honour
 // the same \n \t \\ escapes as Komodo source, so the body passes through.
 mut X86Backend::addString(lexeme: string): string
+    let hit = poolFind("s:" + lexeme)
+    if hit != "" then
+        return hit
     m_stringId += 1
     let name = "LS" + string(m_stringId)
+    poolAdd("s:" + lexeme, name)
     let raw = lexeme[1 to (lexeme.length - 1)]
     // NASM back-quoted strings use `` ` `` as the delimiter, so any
     // backtick inside the literal has to be escaped.

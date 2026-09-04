@@ -1,0 +1,155 @@
+#!/usr/bin/env bash
+#
+# komodo — the Komodo compiler & runner CLI.
+#
+#   komodo file.km                  compile, link, run  (default)
+#   komodo -c file.km                compile + link only, don't run
+#   komodo -S file.km                emit assembly only, don't assemble/link
+#   komodo -o app file.km             name the output binary
+#   komodo -O max file.km             optimize (none|low|medium|max, 0-3)
+#   komodo --strict file.km           enable strict analysis diagnostics
+#   komodo -t stackvm -S file.km      target the stack-VM backend
+#   komodo file.km -- -lSDL2 -Ipath   extra flags/objects for the linker
+#
+# This is a thin wrapper around the native, self-hosted compiler `kmc`:
+# it drives kmc for the front end, then nasm + gcc for assembly and
+# linking, and finally runs the result. It resolves its own real path
+# (so it still finds kmc/stdlib/ when invoked through a symlink on your
+# PATH — see install.sh) and needs no interpreter at all.
+#
+set -uo pipefail
+
+# ── resolve our real location (works through a symlink) ──────────────
+self="${BASH_SOURCE[0]}"
+while [[ -L "$self" ]]; do
+    link="$(readlink "$self")"
+    case "$link" in
+        /*) self="$link" ;;
+        *)  self="$(dirname "$self")/$link" ;;
+    esac
+done
+here="$(cd "$(dirname "$self")" && pwd)"
+
+prog="komodo"
+version="Komodo (native, self-hosted) — kmc"
+
+usage() {
+    cat <<'EOF'
+usage: komodo [options] <file.km> [-- <extra linker args>]
+
+  -o, --output <path>   output binary path (default: <file> without .km)
+  -t, --target <name>   x86 (default) | stackvm
+  -O <level>             optimization level: none|low|medium|max, or 0-3
+                         (default: none)
+      --strict           enable the analyser's strict-mode diagnostics
+  -S, --emit-asm         stop after writing <file>.asm (no assemble/link/run)
+  -c, --compile          assemble + link, but do not run the result
+  -k, --kmc <path>       use this kmc binary instead of the one alongside
+                         komodo (same as $KMC)
+  -q, --quiet            only print the program's own output
+  -h, --help             show this help
+  -V, --version          show version info
+
+Anything after a literal `--` is passed to the linker (gcc): extra .c /
+.o / .a files, -l flags, -I/-L paths. $KM_CC_INPUTS is read the same way.
+
+Examples:
+  komodo hello.km
+  komodo -O max -o build/app src/main.km
+  komodo demos/sdl_window.km -- -lSDL2
+EOF
+}
+
+# ── defaults ───────────────────────────────────────────────────────
+target="x86"
+opt="none"
+strict=""
+mode="run"          # run | compile | emit-asm
+out=""
+quiet=0
+kmc="${KMC:-$here/kmc}"
+src=""
+extra_cc=( ${KM_CC_INPUTS:-} )
+
+normalize_opt() {
+    case "$1" in
+        none|0) echo none ;;
+        low|1)  echo low ;;
+        medium|2) echo medium ;;
+        max|3)  echo max ;;
+        *) echo "$prog: unknown optimization level '$1' (want none|low|medium|max or 0-3)" >&2; exit 2 ;;
+    esac
+}
+
+# ── parse flags ────────────────────────────────────────────────────
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -h|--help)    usage; exit 0 ;;
+        -V|--version) echo "$version"; exit 0 ;;
+        -o|--output)  out="$2"; shift 2 ;;
+        -t|--target)  target="$2"; shift 2 ;;
+        -O)           opt="$(normalize_opt "$2")"; shift 2 ;;
+        -O*)          opt="$(normalize_opt "${1#-O}")"; shift ;;
+        --opt=*)      opt="$(normalize_opt "${1#--opt=}")"; shift ;;
+        --strict)     strict="strict"; shift ;;
+        -S|--emit-asm) mode="emit-asm"; shift ;;
+        -c|--compile) mode="compile"; shift ;;
+        -k|--kmc)     kmc="$2"; shift 2 ;;
+        -q|--quiet)   quiet=1; shift ;;
+        --)           shift; extra_cc+=( "$@" ); break ;;
+        -*)
+            echo "$prog: unknown option '$1' (see -h)" >&2
+            exit 2
+            ;;
+        *)
+            if [[ -n "$src" ]]; then
+                echo "$prog: unexpected extra argument '$1' (extra files go after --)" >&2
+                exit 2
+            fi
+            src="$1"
+            shift
+            ;;
+    esac
+done
+
+[[ -n "$src" ]] || { usage >&2; exit 2; }
+[[ -f "$src" ]] || { echo "$prog: no such file: $src" >&2; exit 1; }
+[[ -x "$kmc" ]] || { echo "$prog: no native compiler at '$kmc' — build one with ./build-self.sh (or pass -k / set \$KMC)" >&2; exit 1; }
+
+out="${out:-${src%.km}}"
+asm="$src.asm"
+obj="$src.o"
+
+log() { [[ $quiet -eq 1 ]] || echo "$@" >&2; }
+
+# ── 1. Komodo front end + codegen ─────────────────────────────────
+log "compiling $src  (target: $target, -O$opt${strict:+, strict})"
+"$kmc" "$src" "$target" $strict $opt
+[[ -f "$asm" ]] || { echo "$prog: kmc produced no $asm" >&2; exit 1; }
+
+if [[ "$mode" == "emit-asm" ]]; then
+    exit 0
+fi
+if [[ "$target" != "x86" ]]; then
+    log "target '$target' has no assembler/runner — stopping after $asm"
+    exit 0
+fi
+
+# ── 2. assemble ────────────────────────────────────────────────────
+nasm -f elf64 "$asm" -o "$obj" || exit 1
+
+# ── 3. link ────────────────────────────────────────────────────────
+gcc -no-pie -I"$here/stdlib" -o "$out" "$obj" "$here"/stdlib/*.c \
+    ${extra_cc[@]+"${extra_cc[@]}"} -lm || exit 1
+log "built $out"
+
+if [[ "$mode" == "compile" ]]; then
+    exit 0
+fi
+
+# ── 4. run ─────────────────────────────────────────────────────────
+log "── running $out ──"
+case "$out" in */*|/*) "$out" ;; *) "./$out" ;; esac
+status=$?
+log "── exit $status ──"
+exit $status

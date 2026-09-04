@@ -65,8 +65,9 @@ interp="$(find_interp)" || {
 rm -rf "${HOME}/.km/cache"
 
 # 1. Komodo front-end + codegen  →  target text (always written to <src>.asm)
-echo "compiling $src  (target: $target)"
-python3 "$interp" "$here/main.km" "$src" "$target"
+# $KM_OPT (none|low|medium|max) selects the optimiser level.
+echo "compiling $src  (target: $target${KM_OPT:+, -O$KM_OPT})"
+python3 "$interp" "$here/main.km" "$src" "$target" ${KM_OPT:-}
 
 if [[ "$target" != "x86" ]]; then
     echo "built $asm  (target '$target' has no runner yet)"

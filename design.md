@@ -8,10 +8,14 @@ only, for keeping the implementation and sample code coherent.
 - `.km` — program (has a `main`). `.kmm` — module (library).
 - `module <name>` — first line of a module file. All files declaring the same
   module name are auto-merged into one namespace.
-- `import <name>` — pull in a module. The compiler resolves `<name>.kmm`
-  from the directory tree of the file being compiled, transitively, and
-  compiles every resolved source together as one unit. Modules with no
-  `.kmm` source (`console`, `math`, `file`, …) are left to the linker.
+- `import <name>` — pull in a module. `<name>.kmm` is resolved from the
+  directory tree of the file being compiled (and, as a fallback, the
+  compiler's own directory, which is where the standard library lives);
+  then every sibling `.km` / `.kmm` in that file's directory declaring
+  the same `module` is merged in too. Applied transitively, everything
+  reached is compiled as one unit. The interpreter and the self-hosted
+  compiler resolve modules the same way, so `kmc main.km` builds the
+  compiler straight from `modules/*.kmm` — no concatenation step.
 - Members are reached as `name::member` (scope) or `name.member`. After the
   merge namespaces are flat, so `name::member` resolves to `member`.
 - Entry point: `void main()` or `void main(args)`; `args` is a string array,
@@ -360,9 +364,31 @@ compilation.
 
 ### Strict mode
 
-Passing `strict` as the 4th argument to the driver
-(`main.km <file> <target> strict`) additionally reports, as hard errors:
-a binding with neither annotation nor initialiser, a local / parameter
-that is never used, unreachable code after a diverging statement, and a
-`match` on an enum that lacks an `else` and does not cover every variant.
-The default checks above always run.
+Passing `strict` as a driver argument (`main.km <file> <target> strict`)
+additionally reports, as hard errors: a binding with neither annotation
+nor initialiser, a local / parameter that is never used, unreachable
+code after a diverging statement, and a `match` on an enum that lacks an
+`else` and does not cover every variant.  The default checks above always
+run.
+
+## Optimization
+
+After analysis, an AST-rewriting pass (`modules/optimize.kmm`) runs at
+one of four levels, chosen by a driver argument
+(`main.km <file> <target> none|low|medium|max`, default `none`; `KM_OPT`
+env for `build.sh` / `krun.sh`):
+
+| Level | Adds |
+|---|---|
+| `none` | nothing — literals and branches pass through verbatim |
+| `low` | constant folding (`+ - * / %`, comparisons, string `+` / `*`, `not`, `#[…]`, `and` / `or` with a literal guard); the x86 backend also interns identical `.rodata` constants |
+| `medium` | + algebraic identities (`x+0`, `x*1`, `x*0`, `x-0`, `x/1`), dead-branch elimination (`if`/`while`/`match` on a constant), and dead code after a diverging statement |
+| `max` | + constant propagation of never-reassigned `let x = <literal>` bindings, then another fold |
+
+Every rewrite preserves observable behaviour.  Folds are skipped where
+the interpreter (which runs the pass at bootstrap) and the native runtime
+would disagree — division by zero, results outside a safe i64 range,
+string literals carrying backslash escapes, and the bitwise operators
+(`^` is exponentiation in interpreter expression context but XOR
+natively).  A folded boolean is emitted as the int `1` / `0`, so
+`print` still shows it the way the comparison it replaced was shown.

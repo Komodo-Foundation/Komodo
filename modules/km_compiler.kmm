@@ -4,7 +4,7 @@ import file
 // ═══════════════════════════════════════════════════════════════════════
 //  Komodo compiler — driver
 //
-//  Pipeline:  source ──Lexer──▶ tokens ──Parser──▶ AST ──Analyzer──▶ AST ──Codegen──▶ text
+//  Pipeline:  source ─Lexer▶ tokens ─Parser▶ AST ─Analyzer▶ ─Optimizer▶ AST ─Codegen▶ text
 //
 //  The compiler is split across sibling files, all `module km_compiler`:
 //
@@ -13,6 +13,7 @@ import file
 //      parser.kmm          tokens → AST
 //      types.kmm           Type: the static type lattice
 //      sema*.kmm           Analyzer: static type-checking + AST annotation
+//      optimize.kmm        Optimizer: constant folding / DCE (none..max)
 //      codegen.kmm         Codegen: target-independent lowering pass
 //      codegen_frame.kmm   stack-frame layout + static type inference
 //      codegen_stmt.kmm    statement lowering
@@ -29,11 +30,15 @@ import file
 // ═══════════════════════════════════════════════════════════════════════
 
 fn compile(source: string, target: string): string
-    return compileWith(source, target, false)
+    return compileOpt(source, target, false, "none")
 
 // `strict` turns on the analyser's lint-level diagnostics (implicit-any
 // bindings, dead code, …); the default checks always run.
 fn compileWith(source: string, target: string, strict: bool): string
+    return compileOpt(source, target, strict, "none")
+
+// `opt` is one of "none" / "low" / "medium" / "max" — see optimize.kmm.
+fn compileOpt(source: string, target: string, strict: bool, opt: string): string
     let lexer = new Lexer(source)
     let tokens = lexer.tokenize()
 
@@ -43,16 +48,22 @@ fn compileWith(source: string, target: string, strict: bool): string
     let analyzer = new Analyzer(strict)
     analyzer.analyze(ast)
 
-    let gen = new Codegen(selectBackend(target))
+    let optimizer = new Optimizer(opt)
+    optimizer.run(ast)
+
+    let gen = new Codegen(selectBackend(target, opt != "none"))
     return gen.compileProgram(ast)
 
 // The one place that knows the set of targets.  Add a case here after
-// writing a new `<T>Backend : Backend`.
-fn selectBackend(target: string): Backend
+// writing a new `<T>Backend : Backend`.  `intern` enables the x86
+// constant pool (optimiser level >= low).
+fn selectBackend(target: string, intern: bool): Backend
     if target == "stackvm" then
         return new StackVMBackend()
     if target == "x86" or target == "" then
-        return new X86Backend()
+        let b = new X86Backend()
+        b.setIntern(intern)
+        return b
     throw ("unknown target '" + target + "' (known: x86, stackvm)")
 
 void save(asm: string, path: string)

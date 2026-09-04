@@ -1,38 +1,79 @@
 # Komodo
 
-A self-hosting compiler for the **Komodo** language, written in Komodo itself.
+A **self-hosting** compiler for the **Komodo** language, written in Komodo
+itself: `./kmc` compiles `main.km` + `modules/*.kmm` to a byte-identical copy
+of itself. It lowers a program to native **x86-64** assembly (NASM) or to a
+textual **stack-VM** bytecode, links the result against a small C runtime in
+`stdlib/`, statically type-checks it first (`modules/sema*.kmm`), and can
+optimize it (`modules/optimize.kmm`, four levels).
 
-The compiler front-end and code generator live in `modules/*.kmm`; the driver
-is `main.km`. Until the compiler can build itself, it runs on the reference
-Komodo interpreter (a separate project, `KomodoPy`). It lowers a program to
-native **x86-64** assembly (NASM) or to a textual **stack-VM** bytecode, and
-links the result against a small C runtime in `stdlib/`.
+The reference Komodo interpreter (a separate project, `KomodoPy`) can also
+run the compiler directly — useful for bootstrapping `kmc` on a machine that
+doesn't have one yet, or for working on the compiler's own sources.
 
 For the language itself — syntax, types, semantics — see [`design.md`](design.md).
+
+## Installing
+
+```bash
+./install.sh                 # builds ./kmc if needed, symlinks it as `komodo`
+komodo --version
+```
+
+See [Requirements](#requirements) below for what `install.sh` needs the first
+time (it bootstraps `kmc` through the interpreter, once).
+
+## The `komodo` CLI
+
+```bash
+komodo file.km                    # compile, link, run  (default)
+komodo -O max -o app src/main.km  # optimize, name the output binary
+komodo -c file.km                  # compile + link only, don't run
+komodo -S file.km                  # emit file.km.asm only
+komodo file.km -- -lSDL2           # extra linker flags / objects
+komodo -h                          # full flag list
+```
+
+`komodo` is a thin wrapper: it drives `kmc` for the front end, then `nasm` +
+`gcc` for assembly and linking. It resolves its own real path, so installing
+it as a symlink on your `PATH` still finds this checkout's `kmc` / `stdlib/`.
 
 ## Layout
 
 | Path | What |
 |---|---|
-| `main.km` | driver: resolves `import`s, concatenates sources, invokes the compiler |
+| `komodo` | the CLI — compile/link/run wrapper around `kmc` (see above) |
+| `install.sh` | builds `kmc` if needed and puts `komodo` on your `PATH` |
+| `build-self.sh` | bootstraps `./kmc` (via the interpreter or an existing `kmc`) and checks the fixpoint |
+| `main.km` | compiler driver: resolves `import`s (mirrors the interpreter's module loader), invokes the compiler |
 | `modules/lexer.kmm` | tokenizer |
 | `modules/parser.kmm` | recursive-descent parser → AST |
 | `modules/ast.kmm` | AST node definitions |
-| `modules/codegen*.kmm` | target-independent lowering walk (frame layout, type inference, statements, expressions) |
+| `modules/types.kmm` | the static type lattice |
+| `modules/sema*.kmm` | `Analyzer`: static type-checking, flow narrowing, null-safety |
+| `modules/optimize.kmm` | `Optimizer`: constant folding / dead-code elimination, 4 levels |
+| `modules/codegen*.kmm` | target-independent lowering walk (frame layout, statements, expressions) |
 | `modules/backend.kmm` | the `Backend` interface every target implements |
 | `modules/backend_x86.kmm` | System V AMD64 / NASM backend (reference lowering) |
 | `modules/backend_stackvm.kmm` | textual stack-VM bytecode backend |
-| `modules/km_compiler.kmm` | `compile` / `save` entry points, `selectBackend` |
-| `stdlib/*.c` | C runtime: operator lowerings + the `console` / `math` / `algorithm` modules |
+| `modules/km_compiler.kmm` | `compileOpt` / `save` entry points, `selectBackend` |
+| `stdlib/*.c` | C runtime: operator lowerings, the `console` / `math` / `algorithm` / `file` libraries |
+| `stdlib/*.kmm` | signatures for the above — ordinary Komodo modules, no special-casing in the compiler |
 | `examples/*.km` | sample programs, each with a `.expected` output fixture |
 | `demos/` | larger standalone demos (e.g. an SDL window loop) |
+| `tests/sema/` | negative tests for the analyser's diagnostics (`run-sema-tests.sh`) |
 
 ## Requirements
 
-- Python 3 and the Komodo interpreter (`KomodoPy/main.py`)
-- `nasm` and `gcc` (for the x86 target)
+- `nasm` and `gcc` (for the x86 target — always needed)
+- Python 3 and the Komodo interpreter (`KomodoPy/main.py`) — only needed
+  once, to bootstrap `kmc` (`install.sh` / `build-self.sh`), or if you're
+  editing the compiler's own sources and want the interpreter's better error
+  messages while iterating. PyPy speeds the bootstrap up considerably if
+  it's on `PATH` (`build-self.sh` picks it up automatically).
 
-Point the build scripts at the interpreter:
+Point the build scripts at the interpreter if it isn't in one of the
+well-known locations they check:
 
 ```bash
 export KOMODO_MAIN="/path/to/KomodoPy/main.py"
@@ -40,34 +81,45 @@ export KOMODO_MAIN="/path/to/KomodoPy/main.py"
 
 ## Building a program
 
+The convenient way is the [`komodo` CLI](#the-komodo-cli) above. The
+lower-level pieces it's built from are also usable directly:
+
 ```bash
-./build.sh <file.km> [target] [output] [extra cc inputs...]
+./build-self.sh                              # bootstrap / rebuild ./kmc
+./krun.sh <file.km> [output] [cc inputs...]   # compile+link+run with kmc — no interpreter
+./build.sh <file.km> [target] [output] [cc inputs...]   # same, but via the interpreter
 ```
 
-- `target`: `x86` (default) or `stackvm`
+- `target` (build.sh only): `x86` (default) or `stackvm`
 - x86: compiles → `<file>.km.asm`, assembles, links `stdlib/*.c` + any trailing
   `.c` / `.o` / `-l` arguments (also read from `$KM_CC_INPUTS`), then runs it
 - `stackvm`: writes the bytecode text; there is no runner yet
+- `$KM_OPT` (`none`/`low`/`medium`/`max`) selects the optimizer level for
+  both scripts
 
 ```bash
-./build.sh examples/virtual_demo.km            # compile + run (x86)
-./build.sh demos/sdl_window.km x86 ./w -lSDL2   # link an external library
+./krun.sh examples/virtual_demo.km              # compile + run (native kmc)
+./build.sh demos/sdl_window.km x86 ./w -lSDL2    # link an external library
+KM_OPT=max ./krun.sh examples/stdlib_demo.km
 ```
 
-Under the hood: `python3 $KOMODO_MAIN main.km <file.km> <target>`. The
-interpreter caches parsed ASTs under `~/.km/cache`; `build.sh` clears it each
-run so edits to the `.kmm` sources always take effect.
+`build.sh` runs `python3 $KOMODO_MAIN main.km <file.km> <target>` and clears
+the interpreter's `~/.km/cache` each time, so edits to the `.kmm` sources
+always take effect.
 
 ## Testing
 
 ```bash
 ./run-tests.sh              # every examples/*.km
 ./run-tests.sh oop_demo     # a subset
+./run-sema-tests.sh         # the analyser's diagnostics (tests/sema/)
 ```
 
 Each example is compiled + run on the x86 target and its output diffed against
 `examples/<name>.expected`, then also compiled with the `stackvm` target to keep
-the target-independent path honest.
+the target-independent path honest. Both scripts run through the interpreter
+(`build.sh`); nothing currently drives them through `kmc`, though `komodo`
+compiles every example fine if you want to spot-check it by hand.
 
 ## Code generation
 
@@ -86,16 +138,19 @@ check.
 
 ## Status
 
+**Self-hosting**: `./kmc main.km x86` reproduces the exact assembly used to
+build `kmc` itself (`build-self.sh` checks this fixpoint on every run), and
+the resulting binary re-compiles itself again to the same output.
+
 Working: variables and macros, control flow, functions with the `fn` / `mut` /
 `void` contract, integers / floats / strings / bools / arrays, array & string
 **slices** (`a[i to j]`), structs and classes with single inheritance and
-virtual dispatch, `x is Type`, multi-file modules, and `extern fn` C FFI
-(full System V AMD64 ABI).
-
-Not yet self-hosting: the compiler's own parser still lacks a few constructs
-its sources use — `throw` in expression position (`x or throw "..."`), `match`
-statements — and a handful of runtime intrinsics. `python3 $KOMODO_MAIN
-main.km main.km` gets partway and then stops on the first of these.
+virtual dispatch, `x is Type`, `enum` / `match`, `throw` / `f(args)?` error
+handling, multi-file modules (with automatic sibling-module merging, like the
+interpreter), `extern fn` C FFI (full System V AMD64 ABI), body-less function
+*prototypes* and `...` variadic parameters (how the standard library declares
+itself), and a static analyser (`modules/sema*.kmm`) with flow-sensitive
+null-safety, ahead of an optional constant-folding / dead-code optimizer.
 
 ## License
 

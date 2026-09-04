@@ -1,15 +1,16 @@
 # ── build artifacts ──────────────────────────────────────────────────
-# `build.sh` writes <src>.asm / <src>.o next to the source and links an
-# executable at <src> without the .km suffix.
+# build.sh / krun.sh write <src>.asm / <src>.o next to the source and
+# link an executable at <src> without the .km suffix.
 *.asm
 *.o
 *.s
 
-# `build-self.sh` output: the bootstrapped compiler and its translation unit.
+# build-self.sh output: the self-hosted compiler, plus `krun.sh main.km`.
 /kmc
 /kmc.gen*
-/kmc_unit.km*
-/kmc_stage.asm
+/main
+/build.kmc.o
+/main.km.stage.asm
 
 # Compiled example / demo binaries land next to their .km source.  Keep
 # the sources and their expected-output fixtures; ignore everything else

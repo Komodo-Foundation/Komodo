@@ -3,13 +3,15 @@ import km_compiler
 
 // Komodo compiler driver.
 //
-//   source (+ every .kmm it imports, transitively) ──▶ merge ──▶ compile
+//   source + every module it reaches  ──▶ merge  ──▶ compile
 //
-// `import X` is resolved by searching the directory tree of the file
-// being compiled for `X.kmm` (via file::find); modules with no Komodo
-// source — `console`, `math`, `file`, … — resolve to nothing here and are
-// left for the linker.  All resolved sources are concatenated and handed
-// to the compiler as one translation unit (namespaces are flat).
+// Module loading mirrors the interpreter: `import X` is resolved to
+// `X.kmm` by searching the directory tree of the file being compiled
+// (and, as a fallback, the compiler's own directory for the standard
+// library); then *every* sibling `.km` / `.kmm` in that file's directory
+// that declares the same `module` is pulled in too.  All resolved
+// sources are concatenated into one translation unit — the parser
+// tolerates the repeated `module` / `import` lines.
 
 void main(args)
     let selfPath = args[0]
@@ -19,17 +21,23 @@ void main(args)
     if not file::exists(fileName) then
         throw "File not found"
 
-    // Optional 3rd argument selects the code-generation target
-    // ("x86", the default, or "stackvm").
+    // Trailing arguments, in any order:
+    //   x86 | stackvm            code-generation target      (default x86)
+    //   strict                   analyser lint-level checks   (default off)
+    //   none | low | medium | max   optimisation level        (default none)
     let target = "x86"
-    if #args > 2 then
-        target = args[2]
-
-    // Optional 4th argument "strict" turns on the analyser's lint-level
-    // diagnostics on top of the always-on static type checks.
     let strict = false
-    if #args > 3 and args[3] == "strict" then
-        strict = true
+    let opt = "none"
+    let ai = 2
+    while ai < #args do
+        let a = args[ai]
+        if a == "x86" or a == "stackvm" then
+            target = a
+        else if a == "strict" then
+            strict = true
+        else if a == "none" or a == "low" or a == "medium" or a == "max" then
+            opt = a
+        ai += 1
 
     // The standard library ships as `.kmm` declaration files under the
     // compiler's own directory (stdlib/console.kmm, …); probe that tree
@@ -39,7 +47,7 @@ void main(args)
     let stdlibProbe = dirOf(selfPath) + "/probe.km"
 
     let source = gather(fileName, stdlibProbe)
-    let asm = km_compiler::compileWith(source, target, strict)
+    let asm = km_compiler::compileOpt(source, target, strict, opt)
 
     let outputPath = fileName + ".asm"
     km_compiler::save(asm, outputPath)
@@ -50,7 +58,7 @@ fn listHas(xs: [string], v: string) : bool
             return true
     return false
 
-// Everything in `path` before the last "/".  "" when there is none.
+// Everything in `path` before the last "/".  "." when there is none.
 fn dirOf(path: string) : string
     let cut = 0 - 1
     let i = 0
@@ -62,10 +70,51 @@ fn dirOf(path: string) : string
         return "."
     return path[0 to cut]
 
-// Read `rootPath` and every `.kmm` reachable from its `import` lines
-// (breadth-first, each file once); return all their sources joined.
-// `stdlibProbe` is a throwaway path inside the standard-library
-// directory, used as a second search root for unresolved imports.
+// True when `s` ends with `suffix`.
+fn endsWith(s: string, suffix: string) : bool
+    if suffix.length > s.length then
+        return false
+    return s[(s.length - suffix.length) to s.length] == suffix
+
+// A Komodo source file? (`.km` / `.kmm`)
+fn isSource(name: string) : bool
+    return endsWith(name, ".km") or endsWith(name, ".kmm")
+
+// The name on the first `module <name>` line of `src`, or "".
+fn moduleOf(src: string) : string
+    let i = 0
+    let lineStart = 0
+    while i <= src.length do
+        if i == src.length or src[i] == "\n" then
+            let m = moduleOnLine(src[lineStart to i])
+            if m != "" then
+                return m
+            lineStart = i + 1
+        i += 1
+    return ""
+
+fn moduleOnLine(line: string) : string
+    let a = 0
+    while a < line.length and (line[a] == " " or line[a] == "\t") do
+        a += 1
+    let rest = line[a to line.length]
+    if rest.length < 8 then
+        return ""
+    if rest[0 to 7] != "module " then
+        return ""
+    let b = 7
+    while b < rest.length and rest[b] == " " do
+        b += 1
+    let s = b
+    while s < rest.length and rest[s] != " " and rest[s] != "\r" and rest[s] != "\n" do
+        s += 1
+    return rest[b to s]
+
+// Read `rootPath`, everything reachable from its `import` lines, and —
+// for every module file pulled in — every sibling file declaring that
+// same module (breadth-first, each file once).  All sources joined.
+// `stdlibProbe` is a throwaway path inside the compiler's own directory,
+// a second search root for the standard library.
 fn gather(rootPath: string, stdlibProbe: string) : string
     let seen: [string] = []
     let queue: [string] = [rootPath]
@@ -81,12 +130,23 @@ fn gather(rootPath: string, stdlibProbe: string) : string
         let src = file::read_all(p)
         out = out + src + "\n"
 
+        // 1. follow `import` lines to other modules
         for name in importNames(src) do
             let resolved = file::find(name, rootPath)
             if resolved == null then
                 resolved = file::find(name, stdlibProbe)
             if resolved != null and not listHas(seen, resolved) then
                 queue += [resolved]
+
+        // 2. merge sibling files of this file's own module
+        let mod = moduleOf(src)
+        if mod != "" then
+            let dir = dirOf(p)
+            for entry in file::list_dir(dir) do
+                if isSource(entry) then
+                    let sib = dir + "/" + entry
+                    if not listHas(seen, sib) and moduleOf(file::read_all(sib)) == mod then
+                        queue += [sib]
 
     return out
 

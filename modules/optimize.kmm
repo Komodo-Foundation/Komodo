@@ -1,0 +1,618 @@
+module km_compiler
+
+// ═══════════════════════════════════════════════════════════════════════
+//  Optimizer — a small AST-rewriting pass between the analyser and the
+//  code generator.  Four levels:
+//
+//      none    — the pass does not run; the backend keeps every literal
+//      low     — constant folding (int / string / bool / logical); the
+//                backend also interns identical .rodata constants
+//      medium  — low + algebraic identities, dead-branch elimination
+//                (`if false`, `while false`, constant `match`) and
+//                dead code after a diverging statement
+//      max     — medium + constant propagation of never-reassigned
+//                `let x = <literal>` bindings, then another fold
+//
+//  Every rewrite preserves observable behaviour.  New literal nodes are
+//  re-stamped with `resolvedType` so codegen's fast path still applies.
+//  Folding is skipped whenever the exact runtime result cannot be
+//  reproduced: division by zero, i64-range overflow, or a string literal
+//  carrying backslash escapes (whose decoded length / value differs from
+//  its raw text).
+// ═══════════════════════════════════════════════════════════════════════
+
+// Widest magnitude we fold to — comfortably inside a signed 64-bit int
+// on the native compiler, so the interpreter and self-hosted builds
+// agree on the result.
+fn FOLD_LIMIT(): int
+    return 1000000000000000000
+
+// Longest string a `"x" * n` fold is allowed to materialise.
+fn REPEAT_LIMIT(): int
+    return 4096
+
+class Optimizer
+public
+    constructor(level: string)
+        m_level = level
+        m_fold = level != "none"
+        m_dce = level == "medium" or level == "max"
+        m_prop = level == "max"
+
+    void run(prog: Program)
+        if not m_fold then
+            return
+        for mac in prog.macros do
+            mac.init = foldExpr(mac.init)
+        for fd in prog.functions do
+            optFunction(fd)
+        for cl in prog.classes do
+            for m in cl.methods do
+                optFunction(m)
+
+    // ── per function ──────────────────────────────────────────────
+
+    void optFunction(fd: FunctionDecl)
+        m_constNames = []
+        m_constVals = []
+        if m_prop then
+            m_assigned = collectAssigned(fd.body)
+        else
+            m_assigned = []
+        fd.body = optBlock(fd.body)
+
+    // names that are the target of an assignment / are a loop variable
+    fn collectAssigned(stmts: [Statement]): [string]
+        let out: [string] = []
+        for s in stmts do
+            if s is AssignStmt then
+                out = addUniq(out, s.name)
+            else if s is ForStmt then
+                out = addUniq(out, s.varName)
+                out = mergeStr(out, collectAssigned(s.body))
+            else if s is ForInStmt then
+                out = addUniq(out, s.varName)
+                out = mergeStr(out, collectAssigned(s.body))
+            else if s is IfStmt then
+                out = mergeStr(out, collectAssigned(s.thenBody))
+                out = mergeStr(out, collectAssigned(s.elseBody))
+            else if s is WhileStmt then
+                out = mergeStr(out, collectAssigned(s.body))
+            else if s is MatchStmt then
+                for c in s.cases do
+                    out = mergeStr(out, collectAssigned(c.body))
+        return out
+
+    // ── statement rewriting ──────────────────────────────────────
+
+    fn optBlock(stmts: [Statement]): [Statement]
+        let out: [Statement] = []
+        let dead = false
+        for s in stmts do
+            if not dead then
+                let batch = optStmt(s)
+                for r in batch do
+                    out += [r]
+                if m_dce and blockDiverges(batch) then
+                    dead = true
+        return out
+
+    // returns 0, 1 or several statements
+    mut optStmt(s: Statement): [Statement]
+        if s is VarDecl then
+            if s.init != null then
+                s.init = foldExpr(s.init)
+            if m_prop and not s.immutable and isLiteral(s.init) and not listHas(m_assigned, s.name) then
+                m_constNames += [s.name]
+                m_constVals += [needExpr(s.init)]
+            return [s]
+
+        if s is AssignStmt then
+            s.value = foldExpr(s.value)
+            return [s]
+        if s is FieldAssignStmt then
+            s.object = foldExpr(s.object)
+            s.value = foldExpr(s.value)
+            return [s]
+        if s is IndexAssignStmt then
+            s.object = foldExpr(s.object)
+            s.index = foldExpr(s.index)
+            s.value = foldExpr(s.value)
+            return [s]
+
+        if s is ExprStmt then
+            s.expr = foldExpr(s.expr)
+            if m_dce and isLiteral(s.expr) then
+                return []              // a bare constant does nothing
+            return [s]
+
+        if s is ReturnStmt then
+            if s.value != null then
+                s.value = foldExpr(s.value)
+            return [s]
+        if s is ThrowStmt then
+            if s.message != null then
+                s.message = foldExpr(s.message)
+            return [s]
+
+        if s is IfStmt then
+            s.cond = foldExpr(s.cond)
+            s.thenBody = optBlock(s.thenBody)
+            s.elseBody = optBlock(s.elseBody)
+            if m_dce then
+                let c = condClass(s.cond)
+                if c == 1 then
+                    return s.thenBody
+                if c == 0 - 1 then
+                    return s.elseBody
+            return [s]
+
+        if s is WhileStmt then
+            s.cond = foldExpr(s.cond)
+            if m_dce and condClass(s.cond) == 0 - 1 then
+                return []
+            s.body = optBlock(s.body)
+            return [s]
+
+        if s is ForStmt then
+            s.start = foldExpr(s.start)
+            s.end = foldExpr(s.end)
+            s.body = optBlock(s.body)
+            return [s]
+        if s is ForInStmt then
+            s.iterable = foldExpr(s.iterable)
+            s.body = optBlock(s.body)
+            return [s]
+
+        if s is MatchStmt then
+            return optMatch(s)
+
+        return [s]
+
+    mut optMatch(s: MatchStmt): [Statement]
+        s.subject = foldExpr(s.subject)
+        for c in s.cases do
+            if c.pattern != null then
+                c.pattern = foldExpr(c.pattern)
+            c.body = optBlock(c.body)
+        if m_dce and isLiteral(s.subject) then
+            let chosen: [Statement] = []
+            let found = false
+            let dflt: [Statement] = []
+            let hasDflt = false
+            for c in s.cases do
+                if c.isDefault then
+                    dflt = c.body
+                    hasDflt = true
+                else if not found and litEquals(s.subject, c.pattern) then
+                    chosen = c.body
+                    found = true
+            if found then
+                return chosen
+            if hasDflt then
+                return dflt
+        return [s]
+
+    // ── expression folding ───────────────────────────────────────
+
+    mut foldExpr(e: Expression?): Expression?
+        if e == null then
+            return null
+
+        if e is UnaryOp then
+            e.operand = foldExpr(e.operand)
+            return foldUnary(e)
+        if e is BinaryOp then
+            e.left = foldExpr(e.left)
+            e.right = foldExpr(e.right)
+            return foldBinary(e)
+        if e is Identifier then
+            if m_prop then
+                let v = constOf(e.name)
+                if v != null then
+                    return cloneLit(v)
+            return e
+
+        if e is CallExpr then
+            e.args = foldList(e.args)
+            return e
+        if e is NewExpr then
+            e.args = foldList(e.args)
+            return e
+        if e is ArrayExpr then
+            e.elements = foldList(e.elements)
+            return e
+        if e is MemberExpr then
+            e.object = foldExpr(e.object)
+            return e
+        if e is IndexExpr then
+            e.object = foldExpr(e.object)
+            e.index = foldExpr(e.index)
+            return e
+        if e is SliceExpr then
+            e.object = foldExpr(e.object)
+            e.start = foldExpr(e.start)
+            e.end = foldExpr(e.end)
+            return e
+        if e is RangeExpr then
+            e.start = foldExpr(e.start)
+            e.end = foldExpr(e.end)
+            return e
+        if e is ThrowExpr then
+            e.message = foldExpr(e.message)
+            return e
+        return e
+
+    mut foldList(xs: [Expression]): [Expression]
+        let out: [Expression] = []
+        for x in xs do
+            out += [needExpr(foldExpr(x))]
+        return out
+
+    fn foldUnary(e: UnaryOp): Expression?
+        let x = e.operand
+        if x == null then
+            return e
+        if e.op == "not" or e.op == "!" then
+            if x is BoolLiteral then
+                return mkBoolInt(not x.value)
+            if x is IntLiteral then
+                return mkBoolInt(parseIntStr(x.value) == 0)
+            if x is UnaryOp and (x.op == "not" or x.op == "!") and x.operand != null then
+                return x.operand
+            return e
+        if e.op == "-" then
+            if x is IntLiteral then
+                return mkInt(0 - parseIntStr(x.value))
+            return e
+        if e.op == "#" then
+            if x is ArrayExpr then
+                return mkInt(#x.elements)
+            return e
+        return e
+
+    fn foldBinary(e: BinaryOp): Expression?
+        let l = e.left
+        let r = e.right
+        if l == null or r == null or e.op == "is" then
+            return e
+
+        if e.op == "and" or e.op == "or" then
+            return foldLogical(e, l, r)
+
+        if l is IntLiteral and r is IntLiteral then
+            let folded = foldIntInt(e.op, parseIntStr(l.value), parseIntStr(r.value))
+            if folded != null then
+                return folded
+
+        if l is StringLiteral and r is StringLiteral and plainStr(l.value) and plainStr(r.value) then
+            let sf = foldStrStr(e.op, l.value, r.value)
+            if sf != null then
+                return sf
+
+        if e.op == "*" and l is StringLiteral and r is IntLiteral and plainStr(l.value) then
+            let n = parseIntStr(r.value)
+            let bodyLen = l.value.length - 2
+            if n >= 0 and n * bodyLen < REPEAT_LIMIT() then
+                return mkStr(repeatStr(strBody(l.value), n))
+
+        if m_dce then
+            let alg = algebraic(e, l, r)
+            if alg != null then
+                return alg
+        return e
+
+    // `a and b` / `a or b` where `a` is a classifiable literal.  Only
+    // `false` and `null` are falsy in Komodo (ints and strings are not).
+    fn foldLogical(e: BinaryOp, l: Expression, r: Expression): Expression?
+        let t = truthy(l)
+        if t == 0 then
+            return e
+        if e.op == "and" then
+            if t == 1 then
+                return r
+            return l
+        if t == 1 then
+            return l
+        return r
+
+    // ── literal arithmetic ──────────────────────────────────────
+
+    // Only the operators whose result is identical under the interpreter
+    // (which runs this pass at bootstrap) and the native runtime.  The
+    // bitwise operators are deliberately left out: `^` in particular is
+    // exponentiation in interpreter expression context but XOR natively,
+    // so folding them here would bake in a wrong constant.
+    fn foldIntInt(op: string, a: int, b: int): Expression?
+        if absGE(a, FOLD_LIMIT()) or absGE(b, FOLD_LIMIT()) then
+            return null
+        if op == "+" then
+            return guardInt(a + b)
+        if op == "-" then
+            return guardInt(a - b)
+        if op == "*" then
+            return guardInt(a * b)
+        if op == "/" then
+            if b == 0 then
+                return null
+            return guardInt(a / b)
+        if op == "%" then
+            if b == 0 then
+                return null
+            return guardInt(a % b)
+        if op == "==" then
+            return mkBoolInt(a == b)
+        if op == "!=" then
+            return mkBoolInt(a != b)
+        if op == "<" then
+            return mkBoolInt(a < b)
+        if op == "<=" then
+            return mkBoolInt(a <= b)
+        if op == ">" then
+            return mkBoolInt(a > b)
+        if op == ">=" then
+            return mkBoolInt(a >= b)
+        return null
+
+    fn guardInt(v: int): Expression?
+        if v >= FOLD_LIMIT() or v <= (0 - FOLD_LIMIT()) then
+            return null
+        return mkInt(v)
+
+    fn absGE(v: int, limit: int): bool
+        if v >= limit then
+            return true
+        if v <= (0 - limit) then
+            return true
+        return false
+
+    fn foldStrStr(op: string, a: string, b: string): Expression?
+        if op == "+" then
+            return mkStr(strBody(a) + strBody(b))
+        if op == "==" then
+            return mkBoolInt(a == b)
+        if op == "!=" then
+            return mkBoolInt(a != b)
+        return null
+
+    // ── algebraic identities (medium+) ──────────────────────────
+
+    fn algebraic(e: BinaryOp, l: Expression, r: Expression): Expression?
+        let lz = isIntConst(l, 0)
+        let rz = isIntConst(r, 0)
+        let lo = isIntConst(l, 1)
+        let ro = isIntConst(r, 1)
+        if e.op == "+" then
+            if lz then
+                return r
+            if rz then
+                return l
+        if e.op == "-" and rz then
+            return l
+        if e.op == "*" then
+            if lo then
+                return r
+            if ro then
+                return l
+            if (lz and pure(r)) or (rz and pure(l)) then
+                return mkInt(0)
+        if e.op == "/" and ro then
+            return l
+        return null
+
+    // ── predicates / helpers ────────────────────────────────────
+
+    fn isLiteral(e: Expression?): bool
+        if e == null then
+            return false
+        if e is IntLiteral then
+            return true
+        if e is StringLiteral then
+            return true
+        if e is BoolLiteral then
+            return true
+        if e is FloatLiteral then
+            return true
+        return false
+
+    fn isIntConst(e: Expression?, v: int): bool
+        if e == null then
+            return false
+        if e is IntLiteral then
+            return parseIntStr(e.value) == v
+        return false
+
+    // side-effect-free enough to duplicate or drop
+    fn pure(e: Expression?): bool
+        if e == null then
+            return false
+        if e is Identifier then
+            return true
+        return isLiteral(e)
+
+    // 1 = always truthy, -1 = always falsy, 0 = not a classifiable literal.
+    // At the machine level falsy == zero: `false`, `null` and the int `0`
+    // all branch as false; a string is a non-null pointer, so truthy.
+    fn truthy(e: Expression): int
+        if e is BoolLiteral then
+            if e.value then
+                return 1
+            return 0 - 1
+        if e is NullLiteral then
+            return 0 - 1
+        if e is IntLiteral then
+            if parseIntStr(e.value) == 0 then
+                return 0 - 1
+            return 1
+        if e is StringLiteral then
+            return 1
+        return 0
+
+    // condClass for a possibly-null condition expression
+    fn condClass(e: Expression?): int
+        if e == null then
+            return 0
+        return truthy(e)
+
+    fn litEquals(a: Expression?, b: Expression?): bool
+        if a == null or b == null then
+            return false
+        if a is IntLiteral and b is IntLiteral then
+            return parseIntStr(a.value) == parseIntStr(b.value)
+        if a is StringLiteral and b is StringLiteral then
+            return a.value == b.value
+        if a is BoolLiteral and b is BoolLiteral then
+            return a.value == b.value
+        return false
+
+    // no backslash escapes → raw text length / bytes == decoded
+    fn plainStr(lexeme: string): bool
+        let i = 0
+        while i < lexeme.length do
+            if lexeme[i] == "\\" then
+                return false
+            i += 1
+        return true
+
+    // contents of a string lexeme, the surrounding quotes removed
+    fn strBody(lexeme: string): string
+        return lexeme[1 to (lexeme.length - 1)]
+
+    fn repeatStr(body: string, n: int): string
+        let out = ""
+        let k = 0
+        while k < n do
+            out = out + body
+            k += 1
+        return out
+
+    // digits, with an optional leading '-'
+    fn parseIntStr(s: string): int
+        if s.length == 0 then
+            return 0
+        let neg = false
+        let i = 0
+        if s[0] == "-" then
+            neg = true
+            i = 1
+        let v = 0
+        while i < s.length do
+            v = v * 10 + digit(s[i])
+            i += 1
+        if neg then
+            return 0 - v
+        return v
+
+    fn digit(c: char): int
+        if c == "1" then
+            return 1
+        if c == "2" then
+            return 2
+        if c == "3" then
+            return 3
+        if c == "4" then
+            return 4
+        if c == "5" then
+            return 5
+        if c == "6" then
+            return 6
+        if c == "7" then
+            return 7
+        if c == "8" then
+            return 8
+        if c == "9" then
+            return 9
+        return 0
+
+    fn needExpr(e: Expression?): Expression
+        if e == null then
+            return mkInt(0)
+        return e
+
+    fn listHas(xs: [string], v: string): bool
+        for x in xs do
+            if x == v then
+                return true
+        return false
+
+    fn addUniq(xs: [string], v: string): [string]
+        if listHas(xs, v) then
+            return xs
+        xs += [v]
+        return xs
+
+    fn mergeStr(a: [string], b: [string]): [string]
+        let out = a
+        for v in b do
+            out = addUniq(out, v)
+        return out
+
+    fn constOf(name: string): Expression?
+        let i = 0
+        while i < #m_constNames do
+            if m_constNames[i] == name then
+                return m_constVals[i]
+            i += 1
+        return null
+
+    // fresh literal nodes, carrying the coarse type codegen expects
+    mut mkInt(v: int): Expression
+        let n = new IntLiteral(string(v))
+        n.resolvedType = "int"
+        return n
+
+    mut mkStr(body: string): Expression
+        let n = new StringLiteral("\"" + body + "\"")
+        n.resolvedType = "string"
+        return n
+
+    // A folded boolean is emitted as the int 1 / 0, not a BoolLiteral —
+    // codegen lowers both to `mov rax, 1/0`, but `print` tags a
+    // BoolLiteral as a bool ("true"/"false") whereas the comparison it
+    // replaced was tagged int ("1"/"0").  Keeping it int preserves output.
+    mut mkBoolInt(v: bool): Expression
+        if v then
+            return mkInt(1)
+        return mkInt(0)
+
+    mut cloneLit(e: Expression): Expression
+        if e is IntLiteral then
+            return mkInt(parseIntStr(e.value))
+        if e is StringLiteral then
+            let n = new StringLiteral(e.value)
+            n.resolvedType = "string"
+            return n
+        if e is BoolLiteral then
+            let b = new BoolLiteral(e.value)
+            b.resolvedType = "int"
+            return b
+        if e is FloatLiteral then
+            let f = new FloatLiteral(e.value)
+            f.resolvedType = "float"
+            return f
+        return e
+
+    // a statement list that cannot fall through to its end
+    fn blockDiverges(stmts: [Statement]): bool
+        for s in stmts do
+            if s is ReturnStmt then
+                return true
+            if s is ThrowStmt then
+                return true
+            if s is BreakStmt then
+                return true
+            if s is ContinueStmt then
+                return true
+            if s is IfStmt then
+                if #s.elseBody > 0 and blockDiverges(s.thenBody) and blockDiverges(s.elseBody) then
+                    return true
+        return false
+
+private
+    m_level: string = "none"
+    m_fold: bool = false
+    m_dce: bool = false
+    m_prop: bool = false
+    m_constNames: [string] = []
+    m_constVals: [Expression] = []
+    m_assigned: [string] = []
