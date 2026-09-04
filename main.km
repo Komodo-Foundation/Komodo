@@ -12,6 +12,7 @@ import km_compiler
 // to the compiler as one translation unit (namespaces are flat).
 
 void main(args)
+    let selfPath = args[0]
     let path = args[1]
     let fileName: string = path or throw "File name not provided"
 
@@ -24,8 +25,21 @@ void main(args)
     if #args > 2 then
         target = args[2]
 
-    let source = gather(fileName)
-    let asm = km_compiler::compile(source, target)
+    // Optional 4th argument "strict" turns on the analyser's lint-level
+    // diagnostics on top of the always-on static type checks.
+    let strict = false
+    if #args > 3 and args[3] == "strict" then
+        strict = true
+
+    // The standard library ships as `.kmm` declaration files under the
+    // compiler's own directory (stdlib/console.kmm, …); probe that tree
+    // so `import console` resolves no matter where the user's file is.
+    // `file::find` walks recursively, so the executable's directory is
+    // enough whether `stdlib/` is a subdirectory or holds kmc itself.
+    let stdlibProbe = dirOf(selfPath) + "/probe.km"
+
+    let source = gather(fileName, stdlibProbe)
+    let asm = km_compiler::compileWith(source, target, strict)
 
     let outputPath = fileName + ".asm"
     km_compiler::save(asm, outputPath)
@@ -36,9 +50,23 @@ fn listHas(xs: [string], v: string) : bool
             return true
     return false
 
+// Everything in `path` before the last "/".  "" when there is none.
+fn dirOf(path: string) : string
+    let cut = 0 - 1
+    let i = 0
+    while i < path.length do
+        if path[i] == "/" then
+            cut = i
+        i += 1
+    if cut < 0 then
+        return "."
+    return path[0 to cut]
+
 // Read `rootPath` and every `.kmm` reachable from its `import` lines
 // (breadth-first, each file once); return all their sources joined.
-fn gather(rootPath: string) : string
+// `stdlibProbe` is a throwaway path inside the standard-library
+// directory, used as a second search root for unresolved imports.
+fn gather(rootPath: string, stdlibProbe: string) : string
     let seen: [string] = []
     let queue: [string] = [rootPath]
     let out = ""
@@ -55,6 +83,8 @@ fn gather(rootPath: string) : string
 
         for name in importNames(src) do
             let resolved = file::find(name, rootPath)
+            if resolved == null then
+                resolved = file::find(name, stdlibProbe)
             if resolved != null and not listHas(seen, resolved) then
                 queue += [resolved]
 

@@ -5,6 +5,12 @@
 *.o
 *.s
 
+# `build-self.sh` output: the bootstrapped compiler and its translation unit.
+/kmc
+/kmc.gen*
+/kmc_unit.km*
+/kmc_stage.asm
+
 # Compiled example / demo binaries land next to their .km source.  Keep
 # the sources and their expected-output fixtures; ignore everything else
 # that shows up in these dirs.

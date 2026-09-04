@@ -1,0 +1,679 @@
+module km_compiler
+
+// ═══════════════════════════════════════════════════════════════════════
+//  Analyzer — Komodo's static semantic-analysis / type-checking pass.
+//
+//  Runs between the parser and the code generator:
+//
+//      tokens ──Parser──▶ AST ──Analyzer──▶ (checked, type-annotated AST) ──Codegen──▶ text
+//
+//  Responsibilities, all of which used to be tangled into `Codegen`:
+//
+//    • build the type registry (structs / classes / enums, parent-
+//      flattened fields) and the function-signature registry
+//    • resolve every identifier to a declaration and every call to a
+//      target; reject the unresolved ones
+//    • infer a single static `Type` for every expression, with
+//      flow-sensitive narrowing (`== null`, `is T`, diverging branches)
+//    • enforce the language rules: arity, assignability, null-safety,
+//      "returns on every path", the `fn` / `mut` mutation contract,
+//      abstract instantiation, loop-only `break` / `continue`, …
+//    • stamp `Expression.resolvedType` (and `CallExpr.resolvedSym`) so
+//      the code generator only reads results
+//
+//  Work is spread across sibling files, all `module km_compiler`:
+//
+//      types.kmm       the `Type` lattice + declared-string parsing
+//      sema.kmm        this file — class state, driver, registries
+//      sema_expr.kmm   `inferExpr` — the inference engine
+//      sema_stmt.kmm   `checkStmt` + flow narrowing + body-level checks
+//
+//  `analyze` throws a "<line>:<col>: <message>" string on the first
+//  semantic error, matching the rest of the compiler's error style.
+// ═══════════════════════════════════════════════════════════════════════
+
+class Analyzer
+public
+    constructor(strict: bool)
+        m_strict = strict
+
+    mut analyze(prog: Program)
+        // ── Pass 0: register enums, then types parent-before-child ──
+        for en in prog.enums do
+            registerEnum(en)
+        for d in orderTypes(prog) do
+            if d is StructDecl then
+                registerStruct(d)
+            else if d is ClassDecl then
+                registerClass(d)
+
+        // ── Pass 1: free-function + method signatures ──────────────
+        for fd in prog.functions do
+            if listHas(m_fnNames, fd.name) then
+                err(fd, "duplicate function '" + fd.name + "'")
+            registerFn(fd.name, "", fd)
+        for cl in prog.classes do
+            for m in cl.methods do
+                registerFn(methodSym(cl.name, m), cl.name, m)
+
+        // ── Pass 2: top-level macros ──────────────────────────────
+        for mac in prog.macros do
+            if isMacro(mac.name) then
+                err(mac, "duplicate macro '" + mac.name + "'")
+            pushMacro(mac.name, mac.init)
+
+        // ── Pass 3: check + annotate every body ───────────────────
+        for fd in prog.functions do
+            checkFunction(fd, "")
+        for cl in prog.classes do
+            for m in cl.methods do
+                checkFunction(m, cl.name)
+
+        prog.analyzed = true
+
+    // ── diagnostics ───────────────────────────────────────────────
+
+    void err(node: ASTNode, msg: string)
+        throw (string(node.line) + ":" + string(node.column) + ": " + msg)
+
+    // A strict-mode-only diagnostic: hard error under `strict`, silent
+    // otherwise.
+    void warn(node: ASTNode, msg: string)
+        if m_strict then
+            throw (string(node.line) + ":" + string(node.column) + ": " + msg)
+
+    // ── type registry ────────────────────────────────────────────
+
+    fn methodSym(className: string, m: FunctionDecl): string
+        if m.isConstructor then
+            return className + "__ctor"
+        return className + "__" + m.name
+
+    mut parentOrEmpty(p: string?): string
+        return stripOpt(p) or ""
+
+    // `parent` / `name` live on `StructDecl` / `ClassDecl`, not their
+    // common `Declaration` base — reach them through a narrowing helper.
+    mut declParentName(d: Declaration): string
+        if d is StructDecl then
+            return parentOrEmpty(d.parent)
+        if d is ClassDecl then
+            return parentOrEmpty(d.parent)
+        return ""
+
+    mut declName(d: Declaration): string
+        if d is StructDecl then
+            return d.name
+        if d is ClassDecl then
+            return d.name
+        return ""
+
+    // structs + classes ordered so a type always follows its parent
+    mut orderTypes(prog: Program): [Declaration]
+        let work: [Declaration] = []
+        for st in prog.structs do
+            work += [st]
+        for cl in prog.classes do
+            work += [cl]
+        let ordered: [Declaration] = []
+        let done: [string] = []
+        let guard = 0
+        while #work > 0 do
+            let remaining: [Declaration] = []
+            let progressed = false
+            for d in work do
+                let par = declParentName(d)
+                if par == "" or listHas(done, par) then
+                    ordered += [d]
+                    done += [declName(d)]
+                    progressed = true
+                else
+                    remaining += [d]
+            work = remaining
+            if not progressed then
+                err(work[0], "cyclic or unresolved inheritance near '" + declName(work[0]) + "'")
+            guard += 1
+            if guard > 100000 then
+                throw "inheritance ordering did not converge"
+        return ordered
+
+    mut registerEnum(en: EnumDecl)
+        if listHas(m_typeNames, en.name) then
+            err(en, "duplicate type '" + en.name + "'")
+        m_typeNames += [en.name]
+        m_typeIsClass += [false]
+        m_typeIsEnum += [true]
+        m_typeIsAbstract += [false]
+        m_typeParent += [""]
+        m_typeFieldNames += [[]]
+        m_typeFieldTypes += [[]]
+        m_typeFieldHasDef += [[]]
+        m_typeOwnMethods += [[]]
+        m_enumVariants += [en.variants]
+
+    mut registerStruct(d: StructDecl)
+        let names: [string] = []
+        let types: [string] = []
+        let hasDef: [bool] = []
+        for m in d.members do
+            names += [m.name]
+            types += [m.declaredType or "int"]
+            hasDef += [m.defaultValue != null]
+        registerType(d.name, d.parent, d, false, d.isAbstract, names, types, hasDef)
+
+    mut registerClass(d: ClassDecl)
+        let names: [string] = []
+        let types: [string] = []
+        let hasDef: [bool] = []
+        for f in d.fields do
+            names += [f.name]
+            types += [f.declaredType or "int"]
+            hasDef += [f.defaultValue != null]
+        registerType(d.name, d.parent, d, true, d.isAbstract, names, types, hasDef)
+        let ti = typeIndex(d.name)
+        for m in d.methods do
+            if not m.isConstructor then
+                m_typeOwnMethods[ti] += [m.name]
+
+    mut registerType(name: string, parent: string?, node: ASTNode, isClass: bool, isAbs: bool, fnames: [string], ftypes: [string], fdef: [bool])
+        if listHas(m_typeNames, name) then
+            err(node, "duplicate type '" + name + "'")
+        let par = parentOrEmpty(parent)
+        let allNames: [string] = []
+        let allTypes: [string] = []
+        let allDef: [bool] = []
+        if par != "" then
+            let pi = typeIndex(par)
+            if pi < 0 then
+                err(node, "type '" + name + "' inherits unknown type '" + par + "'")
+            for x in m_typeFieldNames[pi] do
+                allNames += [x]
+            for x in m_typeFieldTypes[pi] do
+                allTypes += [x]
+            for x in m_typeFieldHasDef[pi] do
+                allDef += [x]
+        let k = 0
+        while k < #fnames do
+            allNames += [fnames[k]]
+            allTypes += [ftypes[k]]
+            allDef += [fdef[k]]
+            k += 1
+        m_typeNames += [name]
+        m_typeIsClass += [isClass]
+        m_typeIsEnum += [false]
+        m_typeIsAbstract += [isAbs]
+        m_typeParent += [par]
+        m_typeFieldNames += [allNames]
+        m_typeFieldTypes += [allTypes]
+        m_typeFieldHasDef += [allDef]
+        m_typeOwnMethods += [[]]
+        m_enumVariants += [[]]
+
+    mut typeIndex(name: string): int
+        let i = 0
+        while i < #m_typeNames do
+            if m_typeNames[i] == name then
+                return i
+            i += 1
+        return 0 - 1
+
+    mut isObjType(name: string): bool
+        return typeIndex(name) >= 0
+
+    mut isEnumType(name: string): bool
+        let ti = typeIndex(name)
+        return ti >= 0 and m_typeIsEnum[ti]
+
+    mut isClassType(name: string): bool
+        let ti = typeIndex(name)
+        return ti >= 0 and m_typeIsClass[ti]
+
+    mut isAbstractType(name: string): bool
+        let ti = typeIndex(name)
+        return ti >= 0 and m_typeIsAbstract[ti]
+
+    mut typeParentOf(name: string): string
+        let ti = typeIndex(name)
+        if ti < 0 then
+            return ""
+        return m_typeParent[ti]
+
+    mut isDescendantOf(t: string, ancestor: string): bool
+        let cur = typeParentOf(t)
+        let guard = 0
+        while cur != "" do
+            if cur == ancestor then
+                return true
+            cur = typeParentOf(cur)
+            guard += 1
+            if guard > 100000 then
+                return false
+        return false
+
+    // structural: `src` usable where `dst` (an object type) is wanted
+    mut objAssignable(dst: string, src: string): bool
+        if dst == src then
+            return true
+        return isDescendantOf(src, dst)
+
+    mut fieldNamesOf(typeName: string): [string]
+        let ti = typeIndex(typeName)
+        if ti < 0 then
+            return []
+        return m_typeFieldNames[ti]
+
+    mut hasField(typeName: string, field: string): bool
+        return listHas(fieldNamesOf(typeName), field)
+
+    // the declared type string of a field (may carry a trailing "?")
+    mut fieldDeclType(typeName: string, field: string): string
+        let ti = typeIndex(typeName)
+        if ti < 0 then
+            return "int"
+        let names = m_typeFieldNames[ti]
+        let i = 0
+        while i < #names do
+            if names[i] == field then
+                return m_typeFieldTypes[ti][i]
+            i += 1
+        return "int"
+
+    mut fieldHasDefault(typeName: string, field: string): bool
+        let ti = typeIndex(typeName)
+        if ti < 0 then
+            return false
+        let names = m_typeFieldNames[ti]
+        let i = 0
+        while i < #names do
+            if names[i] == field then
+                return m_typeFieldHasDef[ti][i]
+            i += 1
+        return false
+
+    // The static type of reading `obj.field`.  A *struct* field of object
+    // type with no non-null default is implicitly nullable — `new T()`
+    // zero-fills it.  *Class* fields are trusted to be set by the
+    // constructor, so they stay non-null unless annotated `T?`.
+    mut fieldReadType(typeName: string, field: string): Type
+        let raw = fieldDeclType(typeName, field)
+        let t = parseTypeStr(raw)
+        if isClassType(typeName) then
+            return t
+        if t.kind == "object" and not isEnumType(t.name) and not fieldHasDefault(typeName, field) then
+            return tNullable(t)
+        return t
+
+    mut fieldCount(typeName: string): int
+        return #fieldNamesOf(typeName)
+
+    // the class that declares `method` for a receiver statically `className`
+    mut methodOwner(className: string, method: string): string
+        let cur = className
+        let guard = 0
+        while cur != "" do
+            let ti = typeIndex(cur)
+            if ti >= 0 and listHas(m_typeOwnMethods[ti], method) then
+                return cur
+            cur = typeParentOf(cur)
+            guard += 1
+            if guard > 100000 then
+                return ""
+        // an interface method a subclass supplies but the (abstract) base
+        // does not declare — resolve it against the first such subclass so
+        // the signature is known; codegen dispatches it virtually.
+        let ci = typeIndex(className)
+        if ci >= 0 and m_typeIsAbstract[ci] then
+            let d = 0
+            while d < #m_typeNames do
+                if isDescendantOf(m_typeNames[d], className) and listHas(m_typeOwnMethods[d], method) then
+                    return m_typeNames[d]
+                d += 1
+        return ""
+
+    // ── function-signature registry ──────────────────────────────
+
+    mut registerFn(sym: string, owner: string, fd: FunctionDecl)
+        m_fnNames += [sym]
+        m_fnOwner += [owner]
+        let ptypes: [string] = []
+        if owner != "" then
+            ptypes += [owner]                 // implicit `self` / receiver
+        for p in fd.params do
+            ptypes += [p.declaredType or "any"]
+        m_fnParamTypes += [ptypes]
+        m_fnRet += [retDeclOf(fd)]
+        m_fnKind += [kindOf(fd)]
+        m_fnVariadic += [fd.variadic]
+        m_fnLinked += [fd.isPrototype or fd.isExtern]
+
+    mut retDeclOf(fd: FunctionDecl): string
+        if fd.isVoid or fd.returnType == null then
+            return "void"
+        return fd.returnType or "void"
+
+    mut kindOf(fd: FunctionDecl): string
+        if fd.isExtern then
+            return "extern"
+        if fd.isVoid or fd.returnType == null then
+            return "void"
+        if fd.isMut then
+            return "mut"
+        return "fn"
+
+    mut fnIndex(sym: string): int
+        let i = 0
+        while i < #m_fnNames do
+            if m_fnNames[i] == sym then
+                return i
+            i += 1
+        return 0 - 1
+
+    mut hasFn(sym: string): bool
+        return fnIndex(sym) >= 0
+
+    mut fnParamTypes(sym: string): [string]
+        let i = fnIndex(sym)
+        if i < 0 then
+            return []
+        return m_fnParamTypes[i]
+
+    mut fnRetType(sym: string): string
+        let i = fnIndex(sym)
+        if i < 0 then
+            return "void"
+        return m_fnRet[i]
+
+    mut fnKindOf(sym: string): string
+        let i = fnIndex(sym)
+        if i < 0 then
+            return ""
+        return m_fnKind[i]
+
+    mut fnIsVariadic(sym: string): bool
+        let i = fnIndex(sym)
+        if i < 0 then
+            return false
+        return m_fnVariadic[i]
+
+    // A link-time symbol (prototype / extern): its body is not visible,
+    // so the "a pure `fn` may not call a void procedure" rule — a proxy
+    // for hidden mutation — does not apply to it.
+    mut fnIsLinked(sym: string): bool
+        let i = fnIndex(sym)
+        if i < 0 then
+            return false
+        return m_fnLinked[i]
+
+    // `console.print` → `console_print` (dotted stdlib calls carry their
+    // module in the name; the linked symbol is the "_"-joined form).
+    mut mangleDotted(name: string): string
+        let out = ""
+        let i = 0
+        while i < name.length do
+            if name[i] == "." then
+                out = out + "_"
+            else
+                out = out + name[i]
+            i += 1
+        return out
+
+    // ── macro registry (block-scoped stack, mirrors Codegen) ─────
+
+    mut isMacro(name: string): bool
+        return listHas(m_macroNames, name)
+
+    mut macroExprOf(name: string): Expression?
+        let i = #m_macroNames - 1
+        while i >= 0 do
+            if m_macroNames[i] == name then
+                return m_macroExprs[i]
+            i -= 1
+        return null
+
+    mut macroMark(): int
+        return #m_macroNames
+
+    void macroRestore(mark: int)
+        while #m_macroNames > mark do
+            m_macroNames = m_macroNames[0 to (#m_macroNames - 1)]
+            m_macroExprs = m_macroExprs[0 to (#m_macroExprs - 1)]
+
+    void pushMacro(name: string, e: Expression?)
+        if e == null then
+            throw ("macro '" + name + "' has no value")
+        m_macroNames += [name]
+        m_macroExprs += [e]
+
+    // ── lexical scope for locals / params (flat per function) ────
+    //
+    //  Komodo locals do not lexically shadow one another (only macros
+    //  do), so a single flat table per function is faithful to codegen's
+    //  frame model.  `m_scopeType` is the *current, possibly narrowed*
+    //  type; `m_scopeDecl` is the declared one narrowing may not exceed.
+
+    void scopeReset()
+        m_scopeNames = []
+        m_scopeDecl = []
+        m_scopeType = []
+        m_scopeImmut = []
+        m_scopeUsed = []
+        m_pathKeys = []
+        m_pathTypes = []
+
+    mut scopeHas(name: string): bool
+        return listHas(m_scopeNames, name)
+
+    mut scopeAdd(name: string, t: Type, immut: bool)
+        if scopeHas(name) then
+            return
+        m_scopeNames += [name]
+        m_scopeDecl += [t]
+        m_scopeType += [t]
+        m_scopeImmut += [immut]
+        m_scopeUsed += [false]
+
+    mut scopeIndex(name: string): int
+        let i = 0
+        while i < #m_scopeNames do
+            if m_scopeNames[i] == name then
+                return i
+            i += 1
+        return 0 - 1
+
+    mut scopeType(name: string): Type
+        let i = scopeIndex(name)
+        if i < 0 then
+            return tPrim("int")
+        m_scopeUsed[i] = true
+        return m_scopeType[i]
+
+    mut scopeDeclType(name: string): Type
+        let i = scopeIndex(name)
+        if i < 0 then
+            return tPrim("int")
+        return m_scopeDecl[i]
+
+    mut scopeImmut(name: string): bool
+        let i = scopeIndex(name)
+        if i < 0 then
+            return false
+        return m_scopeImmut[i]
+
+    // set the current (narrowed or reassigned) type of a binding
+    mut scopeNarrow(name: string, t: Type)
+        let i = scopeIndex(name)
+        if i >= 0 then
+            m_scopeType[i] = t
+
+    // snapshot / restore narrowings around a branch
+    mut scopeSnapshot(): [Type]
+        let out: [Type] = []
+        for t in m_scopeType do
+            out += [t]
+        return out
+
+    mut scopeApply(snap: [Type])
+        let i = 0
+        while i < #snap and i < #m_scopeType do
+            m_scopeType[i] = snap[i]
+            i += 1
+
+    // ── member-path narrowing (`e.right`, `func.ownerClass`, …) ──────
+    //
+    //  A limited, TypeScript-style refinement of `receiver.field` accesses
+    //  after `x.f == null` / `x.f is T` guards.  Keyed by a dotted path
+    //  string; invalidated when anything on that path is written.
+
+    mut pathIndex(key: string): int
+        let i = 0
+        while i < #m_pathKeys do
+            if m_pathKeys[i] == key then
+                return i
+            i += 1
+        return 0 - 1
+
+    mut pathType(key: string): Type?
+        let i = pathIndex(key)
+        if i < 0 then
+            return null
+        return m_pathTypes[i]
+
+    mut pathNarrow(key: string, t: Type)
+        if key == "" then
+            return
+        let i = pathIndex(key)
+        if i >= 0 then
+            m_pathTypes[i] = t
+        else
+            m_pathKeys += [key]
+            m_pathTypes += [t]
+
+    // Drop `key` and any deeper path rooted at it (a write invalidates
+    // every refinement that assumed the old value).
+    mut pathClear(key: string)
+        if key == "" then
+            return
+        let nk: [string] = []
+        let nt: [Type] = []
+        let pfx = key + "."
+        let i = 0
+        while i < #m_pathKeys do
+            let k = m_pathKeys[i]
+            let deeper = #k > #pfx and k[0 to #pfx] == pfx
+            if k != key and not deeper then
+                nk += [k]
+                nt += [m_pathTypes[i]]
+            i += 1
+        m_pathKeys = nk
+        m_pathTypes = nt
+
+    mut pathMark(): int
+        return #m_pathKeys
+
+    mut pathSnap(): [Type]
+        let out: [Type] = []
+        for t in m_pathTypes do
+            out += [t]
+        return out
+
+    mut pathRestore(mark: int, snap: [Type])
+        while #m_pathKeys > mark do
+            m_pathKeys = m_pathKeys[0 to (#m_pathKeys - 1)]
+            m_pathTypes = m_pathTypes[0 to (#m_pathTypes - 1)]
+        let i = 0
+        while i < #snap and i < #m_pathTypes do
+            m_pathTypes[i] = snap[i]
+            i += 1
+
+    // Dotted path of an lvalue-ish expression, or "" if not narrowable.
+    mut pathOf(e: Expression?): string
+        if e == null then
+            return ""
+        if e is Identifier then
+            return e.name
+        if e is MemberExpr then
+            let base = pathOf(e.object)
+            if base == "" then
+                return ""
+            return base + "." + e.member
+        return ""
+
+    // ── current-function context ────────────────────────────────
+
+    mut curClassFieldType(name: string): Type
+        if m_curClass == "" then
+            return tPrim("int")
+        return fieldReadType(m_curClass, name)
+
+    mut isCurField(name: string): bool
+        if m_curClass == "" then
+            return false
+        return hasField(m_curClass, name)
+
+    // ── misc helpers ───────────────────────────────────────────
+
+    mut listHas(xs: [string], v: string): bool
+        let i = 0
+        while i < #xs do
+            if xs[i] == v then
+                return true
+            i += 1
+        return false
+
+    mut dotIndex(s: string): int
+        let i = 0
+        while i < s.length do
+            if s[i] == "." then
+                return i
+            i += 1
+        return 0 - 1
+
+private
+    m_strict: bool = false
+
+    // type registry
+    m_typeNames: [string] = []
+    m_typeIsClass: [bool] = []
+    m_typeIsEnum: [bool] = []
+    m_typeIsAbstract: [bool] = []
+    m_typeParent: [string] = []
+    m_typeFieldNames: [[string]] = []
+    m_typeFieldTypes: [[string]] = []
+    m_typeFieldHasDef: [[bool]] = []
+    m_typeOwnMethods: [[string]] = []
+    m_enumVariants: [[string]] = []
+
+    // function-signature registry
+    m_fnNames: [string] = []
+    m_fnOwner: [string] = []
+    m_fnParamTypes: [[string]] = []
+    m_fnRet: [string] = []
+    m_fnKind: [string] = []
+    m_fnVariadic: [bool] = []
+    m_fnLinked: [bool] = []
+
+    // macros
+    m_macroNames: [string] = []
+    m_macroExprs: [Expression?] = []
+    // number of (top-level) macros present before any function body ran
+    m_macroBase: int = 0
+    m_macroBaseSet: bool = false
+
+    // lexical scope
+    m_scopeNames: [string] = []
+    m_scopeDecl: [Type] = []
+    m_scopeType: [Type] = []
+    m_scopeImmut: [bool] = []
+    m_scopeUsed: [bool] = []
+
+    // member-path narrowings
+    m_pathKeys: [string] = []
+    m_pathTypes: [Type] = []
+
+    // current function
+    m_curClass: string = ""
+    m_curFnName: string = ""
+    m_curRet: Type? = null
+    m_curVoid: bool = false
+    m_curKind: string = "fn"
+    m_loopDepth: int = 0

@@ -1,0 +1,6 @@
+import console
+fn maybe(n: int): int
+    return n or throw "no"
+void main()
+    let a = maybe(0)?
+    console.print(a + 1)

@@ -4,13 +4,15 @@ import file
 // ═══════════════════════════════════════════════════════════════════════
 //  Komodo compiler — driver
 //
-//  Pipeline:  source ──Lexer──▶ tokens ──Parser──▶ AST ──Codegen──▶ text
+//  Pipeline:  source ──Lexer──▶ tokens ──Parser──▶ AST ──Analyzer──▶ AST ──Codegen──▶ text
 //
 //  The compiler is split across sibling files, all `module km_compiler`:
 //
 //      ast.kmm             AST node definitions
 //      lexer.kmm           source text → tokens
 //      parser.kmm          tokens → AST
+//      types.kmm           Type: the static type lattice
+//      sema*.kmm           Analyzer: static type-checking + AST annotation
 //      codegen.kmm         Codegen: target-independent lowering pass
 //      codegen_frame.kmm   stack-frame layout + static type inference
 //      codegen_stmt.kmm    statement lowering
@@ -27,11 +29,19 @@ import file
 // ═══════════════════════════════════════════════════════════════════════
 
 fn compile(source: string, target: string): string
+    return compileWith(source, target, false)
+
+// `strict` turns on the analyser's lint-level diagnostics (implicit-any
+// bindings, dead code, …); the default checks always run.
+fn compileWith(source: string, target: string, strict: bool): string
     let lexer = new Lexer(source)
     let tokens = lexer.tokenize()
 
     let parser = new Parser(tokens)
     let ast = parser.parseProgram()
+
+    let analyzer = new Analyzer(strict)
+    analyzer.analyze(ast)
 
     let gen = new Codegen(selectBackend(target))
     return gen.compileProgram(ast)

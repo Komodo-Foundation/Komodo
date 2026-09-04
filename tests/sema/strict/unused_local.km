@@ -1,0 +1,5 @@
+import console
+void main()
+    let used = 1
+    let dead = 2
+    console.print(used)

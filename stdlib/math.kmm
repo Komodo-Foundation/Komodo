@@ -1,0 +1,10 @@
+module math
+
+// Linked from stdlib/math.c.
+
+fn math_abs(n: int): int
+fn math_min(a: int, b: int): int
+fn math_max(a: int, b: int): int
+fn math_pow(base: int, exp: int): int
+fn math_gcd(a: int, b: int): int
+fn math_sqrt(x: float): float

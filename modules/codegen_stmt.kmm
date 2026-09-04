@@ -13,20 +13,17 @@ void Codegen::genFunction(func: FunctionDecl)
     // Offset 8 is reserved by the x86 backend for the saved rbx; locals
     // start below it.  Other backends simply ignore the gap.
     m_frame = 8
+    m_matchTmp = 0
     m_curRet = retTypeOf(func.returnType)
     m_curVoid = isVoidFn(func)
     m_curKind = funcKind(func)
-    if func.ownerClass == null then
-        m_curClass = ""
-    else
-        m_curClass = func.ownerClass
+    m_curClass = func.ownerClass or ""
 
     for p in func.params do
         let pty = "int"
-        if p.declaredType == "float" or p.declaredType == "string" then
-            pty = p.declaredType
-        else if p.declaredType != null and isObjType(p.declaredType) then
-            pty = p.declaredType
+        let dt = typeOrInt(p.declaredType)
+        if dt == "float" or dt == "string" or isObjType(dt) or isArrayType(dt) then
+            pty = dt
         addLocal(p.name, pty, false)
 
     collectLocals(func.body)
@@ -49,7 +46,7 @@ void Codegen::genFunction(func: FunctionDecl)
 
     m_backend.endFunction()
 
-void Codegen::genStmt(s)
+void Codegen::genStmt(s: Statement?)
     if s is VarDecl then
         if s.immutable then
             // `let x be expr` — register a macro in the current block
@@ -87,65 +84,170 @@ void Codegen::genStmt(s)
         m_backend.jump(m_loopCont[#m_loopCont - 1])
     else if s is ThrowStmt then
         genThrow(s.message)
+    else if s is MatchStmt then
+        genMatch(s)
 
 void Codegen::storeVar(name: string)
     m_backend.storeLocal(slotOf(name), typeOf(name))
 
-void Codegen::genAssign(s)
+// `match subject` — evaluate the subject once into its hidden local, then
+// try each `case` in order (`==` for ints / enums, string-equality when
+// the pattern is a string literal).  `else` is the default arm.
+void Codegen::genMatch(s: MatchStmt)
+    genExpr(s.subject)
+    m_backend.storeLocal(slotOf(s.tmpName), "int")
+    let endL = m_backend.newLabel()
+    let subjStr = exprType(s.subject) == "string"
+    for c in s.cases do
+        let macroMark = macroScopeMark()
+        if c.isDefault then
+            for st in c.body do
+                genStmt(st)
+            macroScopeRestore(macroMark)
+            m_backend.jump(endL)
+        else
+            let nextL = m_backend.newLabel()
+            let useStr = subjStr or c.pattern is StringLiteral
+            m_backend.loadLocal(slotOf(s.tmpName), "int")
+            m_backend.pushAcc()
+            genExpr(c.pattern)
+            if useStr then
+                m_backend.strEquals(false)
+            else
+                m_backend.compareInt("==")
+            m_backend.branchIfZero(nextL)
+            for st in c.body do
+                genStmt(st)
+            macroScopeRestore(macroMark)
+            m_backend.jump(endL)
+            m_backend.label(nextL)
+    m_backend.label(endL)
+
+void Codegen::genAssign(s: AssignStmt)
     // unqualified assignment to a field of the enclosing method's class
     if not hasLocal(s.name) and isCurField(s.name) then
-        if s.op != "=" then
-            throw ("compound assignment to field '" + s.name + "' is not supported")
         let idx = fieldIndexOf(m_curClass, s.name)
+        if s.op == "=" then
+            m_backend.loadLocal(slotOf("self"), "int")
+            m_backend.pushAcc()
+            genExpr(s.value)
+            m_backend.storeField(idx)
+            return
+        // compound `field += v` / `field -= v` against the receiver
+        let fieldIsArray = isArrayType(fieldTypeOf(m_curClass, s.name))
+        if s.op == "+=" and fieldIsArray then
+            m_backend.loadLocal(slotOf("self"), "int")
+            m_backend.pushAcc()
+            genExpr(s.value)
+            m_backend.arrayAppendToField(idx)
+            return
+        // numeric `field += v` / `field -= v`:  field = field <op> v
         m_backend.loadLocal(slotOf("self"), "int")
         m_backend.pushAcc()
+        m_backend.loadLocal(slotOf("self"), "int")
+        m_backend.loadField(idx)
+        m_backend.pushAcc()
         genExpr(s.value)
+        if s.op == "-=" then
+            m_backend.binaryInt("-")
+        else
+            m_backend.binaryInt("+")
         m_backend.storeField(idx)
         return
     if not hasLocal(s.name) then
         throw ("assignment to undeclared variable '" + s.name + "'")
     if immutOf(s.name) then
         throw ("cannot reassign immutable variable '" + s.name + "' (declared with `be`)")
-    if s.op == "+=" then
-        // array concat:  dst += src
+    if s.op == "+=" and isArrayType(typeOf(s.name)) then
+        // array concat / append:  dst += src
         genExpr(s.value)
         m_backend.arrayAppendTo(slotOf(s.name))
     else if s.op == "-=" then
         genExpr(s.value)
         m_backend.subFromLocal(slotOf(s.name))
+    else if s.op == "+=" then
+        // numeric (or string) `x += v`  →  x = x + v
+        let st = typeOf(s.name) == "string"
+        m_backend.loadLocal(slotOf(s.name), typeOf(s.name))
+        m_backend.pushAcc()
+        genExpr(s.value)
+        if st then
+            m_backend.strBinOp("km_str_concat")
+        else
+            m_backend.binaryInt("+")
+        storeVar(s.name)
     else
         genExpr(s.value)
         storeVar(s.name)
 
-// `obj.field = value`
-void Codegen::genFieldAssign(s)
-    if s.op != "=" then
-        throw "compound assignment to a field is not supported"
+// `obj.field = value`  /  `obj.field += value`  /  `obj.field -= value`
+void Codegen::genFieldAssign(s: FieldAssignStmt)
     let objType = exprType(s.object)
     if not isObjType(objType) then
         throw ("field assignment on a non-object (type '" + objType + "')")
     let idx = fieldIndexOf(objType, s.field)
+
+    if s.op == "=" then
+        genExpr(s.object)
+        m_backend.pushAcc()
+        genExpr(s.value)
+        m_backend.storeField(idx)
+        return
+
+    if s.op == "+=" and isArrayType(fieldTypeOf(objType, s.field)) then
+        genExpr(s.object)
+        m_backend.pushAcc()
+        genExpr(s.value)
+        m_backend.arrayAppendToField(idx)
+        return
+
+    // numeric `obj.field <op>= value`:  obj.field = obj.field <op> value
     genExpr(s.object)
-    m_backend.pushAcc()
+    m_backend.pushAcc()          // receiver for the eventual storeField
+    genExpr(s.object)
+    m_backend.loadField(idx)
+    m_backend.pushAcc()          // current field value
     genExpr(s.value)
+    if s.op == "-=" then
+        m_backend.binaryInt("-")
+    else
+        m_backend.binaryInt("+")
     m_backend.storeField(idx)
 
-// `arr[i] = value`
-void Codegen::genIndexAssign(s)
-    if s.op != "=" then
-        throw "compound assignment to an array element is not supported"
+// `arr[i] = value`  /  `arr[i] += value`  /  `arr[i] -= value`
+void Codegen::genIndexAssign(s: IndexAssignStmt)
+    if s.op == "=" then
+        genExpr(s.object)
+        m_backend.pushAcc()
+        genExpr(s.index)
+        m_backend.pushAcc()
+        genExpr(s.value)
+        m_backend.indexAssign()
+        return
+
+    // compound: arr[i] = arr[i] <op> value
+    let elemIsArray = isArrayType(elemTypeOf(exprType(s.object)))
     genExpr(s.object)
     m_backend.pushAcc()
     genExpr(s.index)
     m_backend.pushAcc()
+    // recompute arr[i] for the left-hand operand
+    genExpr(s.object)
+    m_backend.pushAcc()
+    genExpr(s.index)
+    m_backend.indexAcc()
+    m_backend.pushAcc()
     genExpr(s.value)
+    if s.op == "+=" and elemIsArray then
+        m_backend.arrayAppendAcc()
+    else if s.op == "-=" then
+        m_backend.binaryInt("-")
+    else
+        m_backend.binaryInt("+")
     m_backend.indexAssign()
 
-void Codegen::genReturn(s)
-    if m_curVoid and s.value != null then
-        throw "a void function cannot return a value"
-    if not m_curVoid and s.value == null then
-        throw "a value function must return a value"
+void Codegen::genReturn(s: ReturnStmt)
+    // void/value mismatch is caught by the semantic analyser.
     if s.value != null then
         genExpr(s.value)
         let vt = exprType(s.value)
@@ -155,7 +257,7 @@ void Codegen::genReturn(s)
             m_backend.cvtFloatToInt()
     m_backend.epilogue()
 
-void Codegen::genIf(s)
+void Codegen::genIf(s: IfStmt)
     let elseL = m_backend.newLabel()
     let endL = m_backend.newLabel()
     genExpr(s.cond)
@@ -180,7 +282,7 @@ void Codegen::popLoop()
     m_loopCont = m_loopCont[0 to (#m_loopCont - 1)]
     m_loopBreak = m_loopBreak[0 to (#m_loopBreak - 1)]
 
-void Codegen::genWhile(s)
+void Codegen::genWhile(s: WhileStmt)
     let topL = m_backend.newLabel()
     let endL = m_backend.newLabel()
     pushLoop(topL, endL)
@@ -196,7 +298,7 @@ void Codegen::genWhile(s)
     popLoop()
 
 // `for i = a to b`  /  `for i = a down to b`  /  `... until b`
-void Codegen::genFor(s)
+void Codegen::genFor(s: ForStmt)
     genExpr(s.start)
     m_backend.storeLocal(slotOf(s.varName), "int")
     let topL = m_backend.newLabel()
@@ -219,7 +321,7 @@ void Codegen::genFor(s)
     popLoop()
 
 // `for x in arr` — arrays only.  #a/#i are hidden per-loop locals.
-void Codegen::genForIn(s)
+void Codegen::genForIn(s: ForInStmt)
     let vi = s.varName + "#i"
     let va = s.varName + "#a"
     genExpr(s.iterable)

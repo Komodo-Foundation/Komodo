@@ -1,0 +1,3 @@
+import console
+void main()
+    console.print(mystery + 1)

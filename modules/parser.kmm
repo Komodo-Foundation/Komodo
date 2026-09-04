@@ -15,11 +15,18 @@ public
             if at(TokenType::EXTERN) then
                 prog.functions += [parseExtern()]
             else if at(TokenType::FN) or at(TokenType::MUT) or at(TokenType::VOID) then
-                prog.functions += [parseFunction()]
+                let fdecl = parseFunction()
+                if fdecl.ownerClass == null then
+                    prog.functions += [fdecl]
+                else
+                    // `void Class::method(...)` written outside the class
+                    m_pendingMethods += [fdecl]
             else if at(TokenType::STRUCT) then
                 prog.structs += [parseStruct()]
             else if at(TokenType::CLASS) then
                 prog.classes += [parseClass()]
+            else if at(TokenType::ENUM) then
+                prog.enums += [parseEnum()]
             else if at(TokenType::IDENT) and (peek().lexeme == "abstract" or peek().lexeme == "shared") then
                 // leading type modifiers: `abstract` / `shared` before
                 // `struct` / `class`.  `shared` is parsed and ignored
@@ -57,10 +64,28 @@ public
             else
                 throw ("Unexpected top-level token: " + string(peek().lexeme))
             skipNewlines()
+
+        // Re-attach every `Class::method` body to its class, so the rest
+        // of the pipeline sees it exactly as an in-body method.
+        for m in m_pendingMethods do
+            let cls = findClass(prog, m.ownerClass)
+            if cls == null then
+                throw ("method defined for unknown class '" + string(m.ownerClass) + "'")
+            m.ownerClass = null
+            cls.methods += [m]
         return prog
+
+    mut findClass(prog: Program, name: string?): ClassDecl?
+        for c in prog.classes do
+            if c.name == name then
+                return c
+        return null
 private
     m_tokens: [Token]
     m_pos: int = 0
+    // `Class::method` bodies collected during the top-level sweep and
+    // re-attached to their classes once parsing finishes.
+    m_pendingMethods: [FunctionDecl] = []
             
     mut peek(): Token
         if m_pos >= #m_tokens then
@@ -83,6 +108,15 @@ private
     mut parseParams(): [Param]
         let params: [Param] = []
         while not at(TokenType::CLOSE_PAREN) and not at(TokenType::EOF) do
+            // `...` — a variadic marker (three DOT tokens), recorded as a
+            // pseudo-parameter named "..." and stripped by the caller.
+            if at(TokenType::DOT) then
+                while at(TokenType::DOT) do
+                    eat()
+                params += [new Param("...", null)]
+                if at(TokenType::COMMA) then
+                    eat()
+                continue
             let pname = peek().lexeme
             eat()
             let ptype: string? = null
@@ -94,21 +128,27 @@ private
                 eat()
         return params
 
+    // A declared type is carried as a string: "int", "[Token]", and now
+    // "int?" / "[Token]?" — a trailing "?" marks the type nullable and is
+    // kept so the semantic analyser can enforce null-safety.  Codegen
+    // strips it (see `stripOpt` in types.kmm) since its lowering never
+    // depended on nullability.
     mut parseType(): string
         if at(TokenType::OPEN_BRACKET) then
             eat()
             let inner = parseType()
             if at(TokenType::CLOSE_BRACKET) then
                 eat()
+            let arr = "[" + inner + "]"
             if at(TokenType::QUESTION) then
                 eat()
-            return "[" + inner + "]"
+                arr = arr + "?"
+            return arr
         let name = peek().lexeme
         eat()
-        // `T?` nullable annotation — nullability is nominal only, so the
-        // trailing `?` is consumed and dropped.
         if at(TokenType::QUESTION) then
             eat()
+            name = name + "?"
         return name
 
     // `extern fn name(params): type`  /  `extern void name(params)`
@@ -135,17 +175,35 @@ private
         return decl
 
     mut parseFunction(): FunctionDecl
-        let isVoid = at(TokenType::VOID)
-        let isMut = at(TokenType::MUT)
-        eat()                       // fn | void | mut  (single leading keyword)
+        // one or two leading keywords: `fn` / `void` / `mut`, and the
+        // combination `mut void` (a mutating procedure).
+        let isVoid = false
+        let isMut = false
+        while at(TokenType::FN) or at(TokenType::VOID) or at(TokenType::MUT) do
+            if at(TokenType::VOID) then
+                isVoid = true
+            if at(TokenType::MUT) then
+                isMut = true
+            eat()
 
         let name = peek().lexeme
         eat()
-        eat()
+
+        // `void Codegen::genExpr(e)` — a method body written outside its
+        // class.  The name before `::` is the owning class; `parseProgram`
+        // re-attaches the decl to that class.
+        let owner: string? = null
+        if at(TokenType::SCOPE) then
+            eat()
+            owner = name
+            name = peek().lexeme
+            eat()
+
+        eat()                       // (
 
         let params = parseParams()
 
-        eat()
+        eat()                       // )
 
         let returnType: string? = null
         if at(TokenType::COLON) then
@@ -153,21 +211,45 @@ private
             returnType = parseType()
 
         skipNewlines()
+
+        // A body-less `fn name(params): T` is a prototype — the signature
+        // is declared here, the definition is linked in (this is how the
+        // standard-library modules declare themselves).
+        let body: [Statement] = []
+        let isProto = true
         if at(TokenType::INDENT) then
             eat()
-
-        let body = parseStatements()
-        skipNewlines()
-        if at(TokenType::DEDENT) then
-            eat()
+            isProto = false
+            body = parseStatements()
+            skipNewlines()
+            if at(TokenType::DEDENT) then
+                eat()
 
         let decl = new FunctionDecl(name)
-        decl.params = params
+        decl.params = trimVariadic(params)
+        decl.variadic = paramsAreVariadic(params)
         decl.body = body
         decl.isVoid = isVoid
         decl.isMut = isMut
+        decl.isPrototype = isProto and owner == null
         decl.returnType = returnType
+        decl.ownerClass = owner
         return decl
+
+    // A `...` in the parameter list makes the function variadic; it is
+    // not itself a real parameter.
+    mut paramsAreVariadic(params: [Param]): bool
+        for p in params do
+            if p.name == "..." then
+                return true
+        return false
+
+    mut trimVariadic(params: [Param]): [Param]
+        let out: [Param] = []
+        for p in params do
+            if p.name != "..." then
+                out += [p]
+        return out
 
     mut parseStruct(): StructDecl
         eat()
@@ -179,35 +261,96 @@ private
             parent = peek().lexeme
             eat()
         skipNewlines()
+
+        // An `abstract` base can have an empty body (no members) — then no
+        // INDENT follows and the member loop must be skipped entirely.
+        let members: [StructMember] = []
         if at(TokenType::INDENT) then
             eat()
-
-        let members: [StructMember] = []
-        while not at(TokenType::DEDENT) and not at(TokenType::EOF) do
-            skipNewlines()
-            if at(TokenType::DEDENT) or at(TokenType::EOF) then
-                break
-            let memberName = peek().lexeme
-            eat()
-            if at(TokenType::COLON) then
+            while not at(TokenType::DEDENT) and not at(TokenType::EOF) do
+                skipNewlines()
+                if at(TokenType::DEDENT) or at(TokenType::EOF) then
+                    break
+                let memberName = peek().lexeme
                 eat()
-            let memberType = parseType()
-            let mdefault: Expression? = null
-            if at(TokenType::EQUALS) then
+                if at(TokenType::COLON) then
+                    eat()
+                let memberType = parseType()
+                let mdefault: Expression? = null
+                if at(TokenType::EQUALS) then
+                    eat()
+                    mdefault = parseExpression()
+                let sm = new StructMember(memberName, memberType)
+                sm.defaultValue = mdefault
+                members += [sm]
+                skipNewlines()
+            if at(TokenType::DEDENT) then
                 eat()
-                mdefault = parseExpression()
-            let sm = new StructMember(memberName, memberType)
-            sm.defaultValue = mdefault
-            members += [sm]
-            skipNewlines()
-
-        if at(TokenType::DEDENT) then
-            eat()
 
         let decl = new StructDecl(name)
         decl.members = members
         decl.parent = parent
         return decl
+
+    // `enum Name` then an indented list of bare variant names.
+    mut parseEnum(): EnumDecl
+        eat()                       // enum
+        let name = peek().lexeme
+        eat()
+        skipNewlines()
+        let variants: [string] = []
+        if at(TokenType::INDENT) then
+            eat()
+            while not at(TokenType::DEDENT) and not at(TokenType::EOF) do
+                skipNewlines()
+                if at(TokenType::DEDENT) or at(TokenType::EOF) then
+                    break
+                variants += [peek().lexeme]
+                eat()
+                skipNewlines()
+            if at(TokenType::DEDENT) then
+                eat()
+        let decl = new EnumDecl(name)
+        decl.variants = variants
+        return decl
+
+    // `match subject` then `case <expr>` / `else` arms, each with an
+    // indented body.
+    mut parseMatch(): MatchStmt
+        eat()                       // match
+        let subject = parseExpression()
+        skipNewlines()
+        let cases: [MatchCase] = []
+        if at(TokenType::INDENT) then
+            eat()
+            while not at(TokenType::DEDENT) and not at(TokenType::EOF) do
+                skipNewlines()
+                if at(TokenType::DEDENT) or at(TokenType::EOF) then
+                    break
+                let mc = new MatchCase()
+                if at(TokenType::CASE) then
+                    eat()
+                    mc.pattern = parseExpression()
+                else if at(TokenType::ELSE) then
+                    eat()
+                    mc.isDefault = true
+                else
+                    throw ("expected `case` or `else` in match, got " + string(peek().lexeme))
+                skipNewlines()
+                if at(TokenType::INDENT) then
+                    eat()
+                    mc.body = parseStatements()
+                    skipNewlines()
+                    if at(TokenType::DEDENT) then
+                        eat()
+                cases += [mc]
+                skipNewlines()
+            if at(TokenType::DEDENT) then
+                eat()
+        let stmt = new MatchStmt()
+        stmt.subject = subject
+        stmt.cases = cases
+        return stmt
 
     // `constructor(params)` + body — lowered like a void method.
     mut parseCtor(): FunctionDecl
@@ -229,9 +372,11 @@ private
         decl.isConstructor = true
         return decl
 
-    // class body: one indent level; `public` / `private` labels optional;
-    // `constructor`, `fn` / `mut` / `void` methods, and `name: type`
-    // fields, in any order.
+    // class body.  Two layouts are accepted:
+    //   • members indented straight under `class X` (labels, if any, sit
+    //     at the same indent as the members)
+    //   • a `public` / `private` label at the class's own column, with
+    //     that section's members indented under it (repeated per section)
     mut parseClass(): ClassDecl
         eat()
         let name = peek().lexeme
@@ -242,9 +387,26 @@ private
             decl.parent = peek().lexeme
             eat()
         skipNewlines()
-        if at(TokenType::INDENT) then
-            eat()
 
+        let guard = 0
+        while true do
+            skipNewlines()
+            // a section label sitting at the class column (no indent)
+            if at(TokenType::IDENT) and (peek().lexeme == "public" or peek().lexeme == "private") then
+                eat()
+                skipNewlines()
+            if not at(TokenType::INDENT) then
+                break
+            eat()
+            parseClassMembers(decl)
+            if at(TokenType::DEDENT) then
+                eat()
+            guard += 1
+            if guard > 1000 then
+                break
+        return decl
+
+    void parseClassMembers(decl: ClassDecl)
         while not at(TokenType::DEDENT) and not at(TokenType::EOF) do
             skipNewlines()
             if at(TokenType::DEDENT) or at(TokenType::EOF) then
@@ -280,10 +442,6 @@ private
             decl.fields += [cf]
             skipNewlines()
 
-        if at(TokenType::DEDENT) then
-            eat()
-        return decl
-
 
     mut parseStatements(): [Statement]
         let stmts: [Statement] = []
@@ -301,6 +459,15 @@ private
         return stmts
 
     mut parseStatement(): Statement?
+        let ln = peek().line
+        let col = peek().column
+        let st = parseStatementInner()
+        if st != null and st.line == 0 then
+            st.line = ln
+            st.column = col
+        return st
+
+    mut parseStatementInner(): Statement?
         if at(TokenType::LET) then
             return parseVarDecl()
         if at(TokenType::RETURN) then
@@ -321,6 +488,8 @@ private
             eat()
             let msg = parseExpression()
             return new ThrowStmt(msg)
+        if at(TokenType::MATCH) then
+            return parseMatch()
 
         let expr = parseExpression()
         if expr == null then
@@ -393,16 +562,26 @@ private
         if at(TokenType::DEDENT) then
             eat()
 
+        // A blank or comment-only line between the `then` block and
+        // `else` shows up as stray newlines here — skip them so the
+        // `else` still binds.
+        skipNewlines()
+
         let elseBody: [Statement] = []
         if at(TokenType::ELSE) then
             eat()
-            skipNewlines()
-            if at(TokenType::INDENT) then
-                eat()
-            elseBody = parseStatements()
-            skipNewlines()
-            if at(TokenType::DEDENT) then
-                eat()
+            // `else if …` — the else-branch is a single nested `if`, with
+            // no indented block of its own.
+            if at(TokenType::IF) then
+                elseBody = [parseIf()]
+            else
+                skipNewlines()
+                if at(TokenType::INDENT) then
+                    eat()
+                elseBody = parseStatements()
+                skipNewlines()
+                if at(TokenType::DEDENT) then
+                    eat()
 
         let stmt = new IfStmt()
         stmt.cond = cond
@@ -485,7 +664,13 @@ private
     // `cond and whenTrue or whenFalse`, built from short-circuit and/or,
     // which yield operand values (not coerced booleans).
     mut parseExpression(): Expression?
-        return parseOr()
+        let ln = peek().line
+        let col = peek().column
+        let ex = parseOr()
+        if ex != null and ex.line == 0 then
+            ex.line = ln
+            ex.column = col
+        return ex
 
     mut parseOr(): Expression?
         let left = parseAnd()
@@ -586,6 +771,9 @@ private
                     if expr is Identifier then
                         base = expr.name
                     expr = new CallExpr(base + "." + member, cargs)
+                else if member == "length" then
+                    // `.length` on a string / array is the same as `#x`.
+                    expr = new UnaryOp("#", expr)
                 else
                     expr = new MemberExpr(expr, member)
             else if at(TokenType::OPEN_BRACKET) then

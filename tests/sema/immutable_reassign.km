@@ -1,0 +1,5 @@
+import console
+void main()
+    for i = 1 to 3
+        i = 9
+    console.print(0)

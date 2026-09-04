@@ -33,6 +33,9 @@ enum TokenType
     CONTINUE
     STRUCT
     CLASS
+    ENUM
+    MATCH
+    CASE
     NEW
     LET
     OPEN_PAREN
@@ -240,6 +243,12 @@ private
                 type = TokenType::STRUCT
             case "class"
                 type = TokenType::CLASS
+            case "enum"
+                type = TokenType::ENUM
+            case "match"
+                type = TokenType::MATCH
+            case "case"
+                type = TokenType::CASE
             case "new"
                 type = TokenType::NEW
             case "let"

@@ -1,0 +1,4 @@
+import console
+void main()
+    break
+    console.print(1)

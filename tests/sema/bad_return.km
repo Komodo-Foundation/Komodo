@@ -1,0 +1,5 @@
+import console
+fn f(): int
+    return "not an int"
+void main()
+    console.print(f())

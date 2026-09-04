@@ -1,0 +1,639 @@
+module km_compiler
+
+// ═══════════════════════════════════════════════════════════════════════
+//  Analyzer — statement checking, lexical scope, and flow narrowing.
+//
+//  `checkFunction` sets up the per-function context (params, `self`
+//  fields, return type) and walks the body.  `checkStmt` type-checks one
+//  statement, threads the narrowed scope through `if` branches, and
+//  records the resolved type on every expression it touches.
+// ═══════════════════════════════════════════════════════════════════════
+
+mut Analyzer::checkFunction(fd: FunctionDecl, owner: string)
+    if fd.isExtern or fd.isPrototype then
+        return
+
+    scopeReset()
+    macroRestoreToBase()
+
+    m_curClass = owner
+    m_curFnName = displayName(fd, owner)
+    m_curKind = kindOf(fd)
+    m_curVoid = (fd.isVoid or fd.returnType == null)
+    if m_curVoid then
+        m_curRet = tVoid()
+    else
+        m_curRet = parseTypeStr(fd.returnType)
+    m_loopDepth = 0
+
+    // implicit receiver
+    if owner != "" then
+        scopeAdd("self", tObject(owner), true)
+
+    for p in fd.params do
+        let pt = tAny()
+        if p.declaredType != null then
+            pt = parseTypeStr(p.declaredType)
+        else
+            warn(fd, "parameter '" + p.name + "' has no type annotation (implicit any)")
+        scopeAdd(p.name, pt, false)
+        if p.defaultValue != null then
+            inferExpr(p.defaultValue)
+
+    checkBlock(fd.body)
+
+    // value functions must return on every path
+    if not m_curVoid and not blockReturns(fd.body) then
+        err(fd, "function '" + displayName(fd, owner) + "' must return a value on every path")
+
+    // the `fn` / `mut` mutation contract
+    checkMutationContract(fd, owner)
+
+    // strict: unused bindings
+    if m_strict then
+        let i = 0
+        while i < #m_scopeNames do
+            let nm = m_scopeNames[i]
+            if not m_scopeUsed[i] and nm != "self" and not nameHasHash(nm) then
+                err(fd, "'" + nm + "' is declared but never used")
+            i += 1
+
+mut Analyzer::nameHasHash(s: string): bool
+    let i = 0
+    while i < s.length do
+        if s[i] == "#" then
+            return true
+        i += 1
+    return false
+
+mut Analyzer::displayName(fd: FunctionDecl, owner: string): string
+    if owner == "" then
+        return fd.name
+    if fd.isConstructor then
+        return owner + ".constructor"
+    return owner + "." + fd.name
+
+// A statement list that returns (or otherwise never falls through) on
+// every path.  An `if` counts only with an `else` where both arms do;
+// loops are treated as possibly zero-iteration.
+mut Analyzer::blockReturns(stmts: [Statement]): bool
+    let i = 0
+    while i < #stmts do
+        let s = stmts[i]
+        if s is ReturnStmt then
+            return true
+        if s is ThrowStmt then
+            return true
+        if s is IfStmt then
+            if #s.elseBody > 0 and blockReturns(s.thenBody) and blockReturns(s.elseBody) then
+                return true
+        if s is MatchStmt then
+            if matchReturns(s) then
+                return true
+        i += 1
+    return false
+
+mut Analyzer::matchReturns(s: MatchStmt): bool
+    let sawDefault = false
+    for c in s.cases do
+        if not blockReturns(c.body) then
+            return false
+        if c.isDefault then
+            sawDefault = true
+    return sawDefault
+
+// "Mutating code" the caller can observe: a field write (`obj.f = v`, or
+// bare `field = v` against the receiver) or an array-element write.  A
+// pure `fn` may not contain any; a `mut` function/method must.  `void`
+// and constructors are unconstrained.  Analysis does not follow calls.
+mut Analyzer::checkMutationContract(fd: FunctionDecl, owner: string)
+    if fd.isExtern or fd.isConstructor then
+        return
+    let fields: [string] = []
+    if owner != "" then
+        fields = fieldNamesOf(owner)
+    let muts = bodyMutates(fd.body, fields)
+    // `mut` is permission to mutate, not an obligation — a redundant
+    // `mut` is only a strict-mode lint.
+    if fd.isMut and not muts then
+        warn(fd, "`mut " + displayName(fd, owner) + "` has no mutating code — could be `fn` or `void`")
+    // A pure `fn` mutating caller-visible state is always an error.
+    let pure = not fd.isMut and not fd.isVoid and fd.returnType != null
+    if pure and muts then
+        err(fd, "pure `fn " + displayName(fd, owner) + "` mutates state — declare it `mut`")
+
+mut Analyzer::bodyMutates(stmts: [Statement], fields: [string]): bool
+    let i = 0
+    while i < #stmts do
+        let s = stmts[i]
+        if s is FieldAssignStmt then
+            return true
+        if s is IndexAssignStmt then
+            return true
+        if s is AssignStmt then
+            if listHas(fields, s.name) then
+                return true
+        if s is IfStmt then
+            if bodyMutates(s.thenBody, fields) or bodyMutates(s.elseBody, fields) then
+                return true
+        if s is WhileStmt then
+            if bodyMutates(s.body, fields) then
+                return true
+        if s is ForStmt then
+            if bodyMutates(s.body, fields) then
+                return true
+        if s is ForInStmt then
+            if bodyMutates(s.body, fields) then
+                return true
+        if s is MatchStmt then
+            for c in s.cases do
+                if bodyMutates(c.body, fields) then
+                    return true
+        i += 1
+    return false
+
+// The macro stack holds the top-level macros permanently; a function body
+// must not see another function's block-local macros.  Truncate to the
+// count present before any function body ran.
+mut Analyzer::macroRestoreToBase()
+    if not m_macroBaseSet then
+        m_macroBase = #m_macroNames
+        m_macroBaseSet = true
+    macroRestore(m_macroBase)
+
+mut Analyzer::checkBlock(stmts: [Statement])
+    let mark = macroMark()
+    let dead = false
+    for s in stmts do
+        if dead then
+            warn(s, "unreachable code")
+            dead = true
+        checkStmt(s)
+        if stmtDiverges(s) then
+            dead = true
+    macroRestore(mark)
+
+mut Analyzer::checkStmt(s: Statement?)
+    if s is VarDecl then
+        checkVarDecl(s)
+    else if s is AssignStmt then
+        checkAssign(s)
+    else if s is FieldAssignStmt then
+        checkFieldAssign(s)
+    else if s is IndexAssignStmt then
+        checkIndexAssign(s)
+    else if s is ExprStmt then
+        inferExpr(s.expr)
+    else if s is ReturnStmt then
+        checkReturn(s)
+    else if s is IfStmt then
+        checkIf(s)
+    else if s is WhileStmt then
+        checkWhile(s)
+    else if s is ForStmt then
+        checkFor(s)
+    else if s is ForInStmt then
+        checkForIn(s)
+    else if s is MatchStmt then
+        checkMatch(s)
+    else if s is ThrowStmt then
+        if s.message != null then
+            inferExpr(s.message)
+    else if s is BreakStmt then
+        if m_loopDepth == 0 then
+            err(s, "`break` outside a loop")
+    else if s is ContinueStmt then
+        if m_loopDepth == 0 then
+            err(s, "`continue` outside a loop")
+
+// ── declarations & assignment ─────────────────────────────────────
+
+mut Analyzer::checkVarDecl(s: VarDecl)
+    if s.immutable then
+        // `let NAME be EXPR` — a block-scoped macro, no storage.
+        if s.init == null then
+            err(s, "`let " + s.name + " be` needs a value")
+        pushMacro(s.name, s.init)
+        return
+
+    let declared: Type? = null
+    if s.declaredType != null then
+        declared = parseTypeStr(s.declaredType)
+
+    let initT: Type? = null
+    if s.init != null then
+        initT = inferExpr(s.init)
+
+    let bound = tPrim("int")
+    if declared != null then
+        bound = declared
+        if initT != null then
+            checkAssignable(s, declared, initT, "initialiser for '" + s.name + "'")
+    else if initT != null then
+        bound = widenForBinding(initT)
+    else
+        warn(s, "'" + s.name + "' has no type annotation and no initialiser")
+
+    s.resolvedType = typeToLegacy(bound)
+    scopeAdd(s.name, bound, false)
+
+// A binding with no annotation takes the initialiser's type, but a bare
+// `null` widens to nothing useful — keep it nullable-unknown as int?.
+mut Analyzer::widenForBinding(t: Type): Type
+    if t.kind == "null" then
+        return tNullable(tPrim("int"))
+    if t.kind == "never" then
+        return tPrim("int")
+    if t.kind == "array" then
+        let el = t.elem or tPrim("int")
+        if el.kind == "never" then
+            return tArray(tPrim("int"))
+    return t
+
+mut Analyzer::checkAssign(s: AssignStmt)
+    let vt = inferExpr(s.value)
+    pathClear(s.name)
+
+    // unqualified assignment to a field of the enclosing class
+    if not scopeHas(s.name) and isCurField(s.name) then
+        pathClear("self." + s.name)
+        if s.op == "=" then
+            checkAssignable(s, curClassFieldType(s.name), vt, "field '" + s.name + "'")
+        // `field += v` (array append or numeric) / `field -= v` — permissive,
+        // mirrors codegen's two lowerings.
+        return
+
+    if not scopeHas(s.name) then
+        err(s, "assignment to undeclared variable '" + s.name + "'")
+    if scopeImmut(s.name) then
+        err(s, "cannot reassign immutable binding '" + s.name + "' (declared with `be`)")
+
+    let decl = scopeDeclType(s.name)
+    if s.op == "+=" or s.op == "-=" then
+        // numeric `-=`, or array/string append `+=` — permissive, matches
+        // codegen's two lowerings.
+        scopeNarrow(s.name, decl)
+        return
+    checkAssignable(s, decl, vt, "'" + s.name + "'")
+    // a plain `=` re-widens the binding to (at most) its declared type
+    scopeNarrow(s.name, narrowTo(decl, vt))
+
+mut Analyzer::checkFieldAssign(s: FieldAssignStmt)
+    let ot = inferExpr(s.object)
+    let base = stripNull(ot)
+    if base.kind == "any" then
+        inferExpr(s.value)
+        return
+    if base.kind != "object" or isEnumType(base.name) then
+        err(s, "field assignment on a non-object (type '" + typeToString(ot) + "')")
+    if not hasField(base.name, s.field) then
+        err(s, "type '" + base.name + "' has no field '" + s.field + "'")
+    let op = pathOf(s.object)
+    if op != "" then
+        pathClear(op + "." + s.field)
+    let vt = inferExpr(s.value)
+    if s.op == "=" then
+        checkAssignable(s, fieldReadType(base.name, s.field), vt, "field '" + s.field + "'")
+    // `field += v` (append or numeric) / `field -= v` — permissive.
+
+mut Analyzer::checkIndexAssign(s: IndexAssignStmt)
+    let ot = inferExpr(s.object)
+    inferExpr(s.index)
+    let vt = inferExpr(s.value)
+    let base = stripNull(ot)
+    if s.op == "=" and base.kind == "array" then
+        checkAssignable(s, base.elem or tPrim("int"), vt, "array element")
+    // `arr[i] += v` (append or numeric) / `arr[i] -= v` — permissive.
+
+// ── return ────────────────────────────────────────────────────────
+
+mut Analyzer::checkReturn(s: ReturnStmt)
+    if m_curVoid then
+        if s.value != null then
+            err(s, "a void function cannot return a value")
+        return
+    if s.value == null then
+        err(s, "a value function must return a value")
+    let vt = inferExpr(s.value)
+    let want = m_curRet or tVoid()
+    checkAssignable(s, want, vt, "return value of '" + m_curFnName + "'")
+
+// ── control flow with narrowing ───────────────────────────────────
+
+mut Analyzer::checkIf(s: IfStmt)
+    let cond = s.cond
+    inferExpr(cond)
+
+    let snap = scopeSnapshot()
+    let pm = pathMark()
+    let ps = pathSnap()
+    applyNarrowing(cond, true)
+    checkBlock(s.thenBody)
+    let thenDiverges = blockDiverges(s.thenBody)
+    scopeApply(snap)
+    pathRestore(pm, ps)
+
+    if #s.elseBody > 0 then
+        let snap2 = scopeSnapshot()
+        let pm2 = pathMark()
+        let ps2 = pathSnap()
+        applyNarrowing(cond, false)
+        checkBlock(s.elseBody)
+        let elseDiverges = blockDiverges(s.elseBody)
+        scopeApply(snap2)
+        pathRestore(pm2, ps2)
+        // both sides restored; if exactly one arm fell through, keep its
+        // guard-implied narrowing for the rest of the block
+        if thenDiverges and not elseDiverges then
+            applyNarrowing(cond, false)
+        else if elseDiverges and not thenDiverges then
+            applyNarrowing(cond, true)
+    else
+        if thenDiverges then
+            applyNarrowing(cond, false)
+
+mut Analyzer::checkWhile(s: WhileStmt)
+    inferExpr(s.cond)
+    m_loopDepth += 1
+    let snap = scopeSnapshot()
+    let pm = pathMark()
+    let ps = pathSnap()
+    applyNarrowing(s.cond, true)
+    checkBlock(s.body)
+    scopeApply(snap)
+    pathRestore(pm, ps)
+    m_loopDepth -= 1
+
+mut Analyzer::checkFor(s: ForStmt)
+    inferExpr(s.start)
+    inferExpr(s.end)
+    scopeAdd(s.varName, tPrim("int"), true)
+    m_loopDepth += 1
+    let snap = scopeSnapshot()
+    let pm = pathMark()
+    let ps = pathSnap()
+    checkBlock(s.body)
+    scopeApply(snap)
+    pathRestore(pm, ps)
+    m_loopDepth -= 1
+
+mut Analyzer::checkForIn(s: ForInStmt)
+    let it = inferExpr(s.iterable)
+    let base = stripNull(it)
+    let elem = tPrim("int")
+    if base.kind == "any" then
+        elem = tAny()
+    else if base.kind == "array" then
+        elem = base.elem or tPrim("int")
+    else if base.kind == "string" then
+        elem = tPrim("char")
+    scopeAdd(s.varName, elem, true)
+    scopeAdd(s.varName + "#i", tPrim("int"), false)
+    scopeAdd(s.varName + "#a", tPrim("int"), false)
+    m_loopDepth += 1
+    let snap = scopeSnapshot()
+    let pm = pathMark()
+    let ps = pathSnap()
+    checkBlock(s.body)
+    scopeApply(snap)
+    pathRestore(pm, ps)
+    m_loopDepth -= 1
+
+mut Analyzer::checkMatch(s: MatchStmt)
+    let subjT = inferExpr(s.subject)
+    let hasDefault = false
+    let covered: [string] = []
+    for c in s.cases do
+        if c.isDefault then
+            hasDefault = true
+        let pat = c.pattern
+        if pat != null then
+            inferExpr(pat)
+            if pat is Identifier then
+                covered += [pat.name]
+        checkBlock(c.body)
+
+    let base = stripNull(subjT)
+    let allCovered = false
+    if base.kind == "object" and isEnumType(base.name) then
+        let missing = enumMissing(base.name, covered)
+        if missing == "" then
+            allCovered = true
+        else
+            // strict: an enum `match` with no `else` must cover every variant
+            if m_strict and not hasDefault then
+                err(s, "match on enum '" + base.name + "' is not exhaustive — missing: " + missing)
+
+    s.exhaustive = hasDefault or allCovered
+
+// Comma-joined enum variants of `enumName` not present in `covered`.
+mut Analyzer::enumMissing(enumName: string, covered: [string]): string
+    let ti = typeIndex(enumName)
+    if ti < 0 then
+        return ""
+    let missing = ""
+    for v in m_enumVariants[ti] do
+        if not listHas(covered, v) then
+            if missing != "" then
+                missing = missing + ", "
+            missing = missing + v
+    return missing
+
+// ── flow-divergence & narrowing primitives ───────────────────────
+
+// A statement list that cannot fall through to its end.
+mut Analyzer::blockDiverges(stmts: [Statement]): bool
+    let i = 0
+    while i < #stmts do
+        if stmtDiverges(stmts[i]) then
+            return true
+        i += 1
+    return false
+
+mut Analyzer::stmtDiverges(s: Statement?): bool
+    if s is ReturnStmt then
+        return true
+    if s is ThrowStmt then
+        return true
+    if s is BreakStmt then
+        return true
+    if s is ContinueStmt then
+        return true
+    if s is ExprStmt then
+        return exprDiverges(s.expr)
+    if s is IfStmt then
+        return #s.elseBody > 0 and blockDiverges(s.thenBody) and blockDiverges(s.elseBody)
+    return false
+
+mut Analyzer::exprDiverges(e: Expression?): bool
+    if e == null then
+        return false
+    if e is ThrowExpr then
+        return true
+    return false
+
+// Apply the type refinement implied by `cond` being true (`sense=true`)
+// or false to the live scope.  Recognises `x == null`, `x != null`,
+// `x is T`, `not (...)`, and `A and B` (both refinements on the true
+// branch).
+mut Analyzer::applyNarrowing(cond: Expression?, sense: bool)
+    if cond == null then
+        return
+    if cond is UnaryOp then
+        if cond.op == "not" or cond.op == "!" then
+            applyNarrowing(cond.operand, not sense)
+        return
+    if cond is BinaryOp then
+        if cond.op == "and" then
+            if sense then
+                applyNarrowing(cond.left, true)
+                applyNarrowing(cond.right, true)
+            return
+        if cond.op == "or" then
+            if not sense then
+                applyNarrowing(cond.left, false)
+                applyNarrowing(cond.right, false)
+            return
+        if cond.op == "==" or cond.op == "!=" then
+            let nm = nullCmpTarget(cond)
+            if nm != "" then
+                let isNullBranch = (cond.op == "==") == sense
+                if isNullBranch then
+                    narrowKey(nm, tNull())
+                else
+                    narrowKeyNonNull(nm)
+            return
+        if cond.op == "is" then
+            let lp = pathOf(cond.left)
+            let rhs = cond.right
+            if lp != "" and rhs is Identifier then
+                if sense then
+                    narrowKey(lp, tObject(rhs.name))
+                else
+                    narrowKeyNonNull(lp)
+            return
+
+// dotted path compared against `null` in `x == null` / `null == x`, else "".
+mut Analyzer::nullCmpTarget(cond: BinaryOp): string
+    let lhs = cond.left
+    let rhs = cond.right
+    if rhs is NullLiteral then
+        return pathOf(lhs)
+    if lhs is NullLiteral then
+        return pathOf(rhs)
+    return ""
+
+// Narrow a scope local or a member path by key.
+mut Analyzer::narrowKey(key: string, t: Type)
+    if scopeIndex(key) >= 0 then
+        scopeNarrow(key, t)
+    else
+        pathNarrow(key, t)
+
+mut Analyzer::narrowKeyNonNull(key: string)
+    if scopeIndex(key) >= 0 then
+        scopeNarrow(key, stripNull(scopeType(key)))
+        return
+    let cur = pathType(key)
+    if cur != null then
+        pathNarrow(key, stripNull(cur))
+        return
+    let ft = pathFieldType(key)
+    if ft != null then
+        pathNarrow(key, stripNull(ft))
+
+// Declared field type for a one-level `root.field` path (`root` a local
+// or `self` field), or null when it can't be resolved cheaply.
+mut Analyzer::pathFieldType(key: string): Type?
+    let dot = lastDot(key)
+    if dot <= 0 then
+        return null
+    let root = key[0 to dot]
+    let field = key[(dot + 1) to #key]
+    let rootT = tPrim("int")
+    if scopeIndex(root) >= 0 then
+        rootT = stripNull(scopeDeclType(root))
+    else if isCurField(root) then
+        rootT = stripNull(curClassFieldType(root))
+    else
+        return null
+    if rootT.kind != "object" then
+        return null
+    if not hasField(rootT.name, field) then
+        return null
+    return fieldReadType(rootT.name, field)
+
+mut Analyzer::lastDot(s: string): int
+    let i = #s - 1
+    while i >= 0 do
+        if s[i] == "." then
+            return i
+        i -= 1
+    return 0 - 1
+
+mut Analyzer::narrowName(name: string, t: Type)
+    narrowKey(name, t)
+
+mut Analyzer::narrowNameNonNull(name: string)
+    narrowKeyNonNull(name)
+
+// Constrain `decl` by an observed value type `vt` (used after `x = v`).
+mut Analyzer::narrowTo(decl: Type, vt: Type): Type
+    if vt.kind == "never" or vt.kind == "null" then
+        return decl
+    return decl
+
+// ── assignability ─────────────────────────────────────────────────
+
+mut Analyzer::checkAssignable(node: ASTNode, dst: Type, src: Type, what: string)
+    if isAssignable(dst, src) then
+        return
+    err(node, what + ": type '" + typeToString(src) + "' is not assignable to '" + typeToString(dst) + "'")
+
+mut Analyzer::isAssignable(dst: Type, src: Type): bool
+    if src.kind == "never" then
+        return true
+    if dst.kind == "any" or src.kind == "any" then
+        return true
+
+    if dst.kind == "nullable" then
+        if src.kind == "null" then
+            return true
+        if src.kind == "nullable" then
+            return isAssignable(dst.elem or tPrim("int"), src.elem or tPrim("int"))
+        return isAssignable(dst.elem or tPrim("int"), src)
+    if src.kind == "null" then
+        return false
+    if src.kind == "nullable" then
+        // a T? where T is wanted — only sound if it was narrowed away;
+        // by this point it wasn't, so reject.
+        return false
+
+    if typeToString(dst) == typeToString(src) then
+        return true
+
+    if isNumeric(dst) and isNumeric(src) then
+        // permit widening/among-integers and int→float, matching the
+        // conversions codegen already performs
+        if dst.kind == "float" then
+            return true
+        return isIntKind(src.kind) and isIntKind(dst.kind)
+
+    if dst.kind == "bool" and src.kind == "bool" then
+        return true
+
+    if dst.kind == "object" and src.kind == "object" then
+        return objAssignable(dst.name, src.name)
+
+    if dst.kind == "array" and src.kind == "array" then
+        let de = dst.elem or tPrim("int")
+        let se = src.elem or tPrim("int")
+        if se.kind == "never" then
+            return true
+        return isAssignable(de, se)
+
+    // char/string interplay and anything else the language treats loosely
+    if dst.kind == "string" and src.kind == "string" then
+        return true
+
+    return false

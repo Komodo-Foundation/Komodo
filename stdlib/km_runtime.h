@@ -60,6 +60,8 @@ static inline long km_from_float(double d)
 /* ── compiler-internal runtime (operator lowerings, not Komodo calls) ── */
 KmArray *km_array_new(long len);
 KmArray *km_array_append(KmArray *dst, KmArray *src);
+KmArray *km_array_grow(KmArray *dst, KmArray *src);
+const char *km_str_join(KmArray *parts, const char *sep);
 KmArray *km_array_slice(KmArray *a, long start, long end);
 
 /* error handling — `throw msg` and the `f(args)?` protected-call guard.
@@ -79,6 +81,9 @@ const char *km_str_repeat(const char *s, long n);
 long        km_str_len(const char *s);
 long        km_str_eq(const char *a, const char *b);
 const char *km_str_slice(const char *s, long start, long end);
+const char *km_str_char(const char *s, long i);
+long        km_str_cmp(const char *a, const char *b);
+const char *km_to_string(long tag, long value);
 
 /* ── module: console ── */
 void console_print(long argc, KmArg *items);

@@ -6,7 +6,7 @@ module km_compiler
 //  result on the backend's operand stack (see backend.kmm).
 // ═══════════════════════════════════════════════════════════════════════
 
-void Codegen::genExpr(e)
+void Codegen::genExpr(e: Expression?)
     if e is IntLiteral then
         m_backend.loadIntLit(e.value)
     else if e is BoolLiteral then
@@ -19,6 +19,8 @@ void Codegen::genExpr(e)
             m_backend.loadField(fieldIndexOf(m_curClass, e.name))
         else if not hasLocal(e.name) and isMacro(e.name) then
             genExpr(macroExprOf(e.name))
+        else if not hasLocal(e.name) and isEnumVariant(e.name) then
+            m_backend.loadIntLit(string(enumOrdinal(e.name)))
         else if not hasLocal(e.name) then
             throw ("undefined variable '" + e.name + "'")
         else
@@ -33,7 +35,7 @@ void Codegen::genExpr(e)
     else if e is MemberExpr then
         let mt = exprType(e.object)
         if not isObjType(mt) then
-            throw ("field access on a non-object (type '" + mt + "')")
+            throw (string(e.line) + ": field access '." + e.member + "' on a non-object (type '" + mt + "')")
         genExpr(e.object)
         m_backend.loadField(fieldIndexOf(mt, e.member))
     else if e is UnaryOp then
@@ -41,10 +43,14 @@ void Codegen::genExpr(e)
     else if e is BinaryOp then
         genBinary(e)
     else if e is IndexExpr then
+        let strIdx = exprType(e.object) == "string"
         genExpr(e.object)
         m_backend.pushAcc()
         genExpr(e.index)
-        m_backend.indexAcc()
+        if strIdx then
+            m_backend.strIndexAcc()
+        else
+            m_backend.indexAcc()
     else if e is SliceExpr then
         genSlice(e)
     else if e is ArrayExpr then
@@ -64,11 +70,14 @@ void Codegen::genExpr(e)
         m_backend.loadIntLit("0")
     else if e is StringLiteral then
         m_backend.loadStrLit(e.value)
+    else if e is CharLiteral then
+        // a char literal is a one-character string; `'a'` → `"a"`
+        m_backend.loadStrLit("\"" + e.value[1 to (#e.value - 1)] + "\"")
 
 // `throw expr` — evaluate the message string into the accumulator and
 // hand it to the runtime, which longjmps to the innermost protected call
 // site or, with none, prints the message and exits.
-void Codegen::genThrow(msg)
+void Codegen::genThrow(msg: Expression?)
     if msg == null then
         m_backend.loadStrLit("\"\"")
     else
@@ -78,7 +87,7 @@ void Codegen::genThrow(msg)
 // `obj[start to end]` — a fresh string or array holding the half-open
 // range.  A missing start is 0; a missing end is passed as -1 and the
 // runtime helper clamps it to the length.
-void Codegen::genSlice(e)
+void Codegen::genSlice(e: SliceExpr)
     let isStr = exprType(e.object) == "string"
     genExpr(e.object)
     m_backend.pushAcc()
@@ -99,7 +108,7 @@ void Codegen::genSlice(e)
 // `expr is TypeName` — evaluate the handle, then let the backend load its
 // header type id and test it against `TypeName` + every descendant id.
 // A null handle is never an instance of anything.
-void Codegen::genIsCheck(e)
+void Codegen::genIsCheck(e: BinaryOp)
     let rn = ""
     if e.right is Identifier then
         rn = e.right.name
@@ -110,7 +119,7 @@ void Codegen::genIsCheck(e)
     genExpr(e.left)
     m_backend.isTypeCheck(descendantIds(rn))
 
-void Codegen::genUnary(e)
+void Codegen::genUnary(e: UnaryOp)
     if e.op == "#" then
         genExpr(e.operand)
         if exprType(e.operand) == "string" then
@@ -127,7 +136,7 @@ void Codegen::genUnary(e)
         genExpr(e.operand)
         m_backend.notBool()
 
-void Codegen::genBinary(e)
+void Codegen::genBinary(e: BinaryOp)
     if e.op == "is" then
         genIsCheck(e)
         return
@@ -138,6 +147,8 @@ void Codegen::genBinary(e)
     let rs = exprType(e.right) == "string"
     if (e.op == "==" or e.op == "!=") and (ls or rs) then
         genStrEquals(e)
+    else if isCompareOp(e.op) and (ls or rs) then
+        genStrCompare(e)
     else if isCompareOp(e.op) then
         genCompare(e)
     else if e.op == "+" and (ls or rs) then
@@ -151,27 +162,34 @@ void Codegen::genBinary(e)
 
 // `a + b` (concat) and `s * n` (repeat) share a shape: evaluate both
 // operands, then hand the runtime-helper name to the backend.
-void Codegen::genStrOp(e, helper: string)
+void Codegen::genStrOp(e: BinaryOp, helper: string)
     genExpr(e.left)
     m_backend.pushAcc()
     genExpr(e.right)
     m_backend.strBinOp(helper)
 
-void Codegen::genStrEquals(e)
+void Codegen::genStrEquals(e: BinaryOp)
     genExpr(e.left)
     m_backend.pushAcc()
     genExpr(e.right)
     m_backend.strEquals(e.op == "!=")
 
-void Codegen::genCompare(e)
+void Codegen::genCompare(e: BinaryOp)
     genExpr(e.left)
     m_backend.pushAcc()
     genExpr(e.right)
     m_backend.compareInt(e.op)
 
+// `s1 < s2` etc. — lexicographic, via km_str_cmp (like C strcmp).
+void Codegen::genStrCompare(e: BinaryOp)
+    genExpr(e.left)
+    m_backend.pushAcc()
+    genExpr(e.right)
+    m_backend.strCompare(e.op)
+
 // Short-circuit `and` / `or`: the right operand is only evaluated when
 // the left doesn't already decide the result.
-void Codegen::genLogical(e)
+void Codegen::genLogical(e: BinaryOp)
     let endL = m_backend.newLabel()
     genExpr(e.left)
     if e.op == "and" then
@@ -181,25 +199,25 @@ void Codegen::genLogical(e)
     genExpr(e.right)
     m_backend.label(endL)
 
-void Codegen::genIntArith(e)
+void Codegen::genIntArith(e: BinaryOp)
     genExpr(e.left)
     m_backend.pushAcc()
     genExpr(e.right)
     m_backend.binaryInt(e.op)
 
-void Codegen::genFloatArith(e)
+void Codegen::genFloatArith(e: BinaryOp)
     genOperandAsFloat(e.left)
     m_backend.pushAccFloat()
     genOperandAsFloat(e.right)
     m_backend.binaryFloat(e.op)
 
-void Codegen::genOperandAsFloat(e)
+void Codegen::genOperandAsFloat(e: Expression?)
     genExpr(e)
     if exprType(e) != "float" then
         m_backend.cvtIntToFloat()
 
 // Array literal → target-defined  [ len | cap | elems… ]  handle.
-void Codegen::genArray(e)
+void Codegen::genArray(e: ArrayExpr)
     let n = #e.elements
     m_backend.arrayBegin(n)
     let i = 0
@@ -211,7 +229,7 @@ void Codegen::genArray(e)
 
 // Runtime type tag for a call argument (see km_runtime.h):
 //   0 int / pointer   1 float   2 string   3 bool
-mut Codegen::argTag(a): int
+mut Codegen::argTag(a: Expression?): int
     if a is BoolLiteral then
         return 3
     let t = exprType(a)
@@ -224,7 +242,7 @@ mut Codegen::argTag(a): int
 // Every Komodo call is lowered the same way: an argc-long (tag, value)[]
 // buffer, filled one pair at a time.  `print`, `algorithm.sort`, … are
 // just calls whose symbol is resolved by the target's linker / loader.
-void Codegen::genCall(e)
+void Codegen::genCall(e: CallExpr)
     // `data(arr)` — the element pointer of a Komodo array (handle + 16),
     // for handing a writable buffer to an `extern fn` (out-params, event
     // structs, …).  Read results back with ordinary `arr[i]`.
@@ -233,6 +251,28 @@ void Codegen::genCall(e)
             throw "data(arr) takes exactly one argument"
         genExpr(e.args[0])
         m_backend.arrayDataPtr()
+        return
+
+    // `join(parts, sep)` — concatenate a [string] with `sep` between,
+    // in one pass (avoids O(n^2) `s = s + line` when building big text).
+    if e.name == "join" then
+        if #e.args != 2 then
+            throw "join(parts, sep) takes exactly two arguments"
+        genExpr(e.args[0])
+        m_backend.pushAcc()
+        genExpr(e.args[1])
+        m_backend.strBinOp("km_str_join")
+        return
+
+    // `string(x)` — convert any tagged value to its text form.
+    if e.name == "string" then
+        if #e.args != 1 then
+            throw "string(x) takes exactly one argument"
+        let tg = argTag(e.args[0])
+        genExpr(e.args[0])
+        if exprType(e.args[0]) == "float" then
+            m_backend.floatToBits()
+        m_backend.toStringOf(tg)
         return
 
     // `recv.method(args)` where `recv` is an object-typed local, a field
@@ -244,6 +284,14 @@ void Codegen::genCall(e)
         let meth = e.name[(dot + 1) to e.name.length]
         if isMethodReceiver(recv) then
             genMethodCall(recv, meth, e.args)
+            return
+
+    // an unqualified call inside a method that names a sibling method —
+    // `foo(x)` means `self.foo(x)`.
+    if dot < 0 and m_curClass != "" and not hasFn(e.name) then
+        let owner = resolveMethodOwner(m_curClass, e.name)
+        if owner != "" then
+            genMethodCall("self", e.name, e.args)
             return
 
     let kind = fnKind(e.name)
@@ -309,7 +357,7 @@ mut Codegen::dotIndex(s: string): int
 // `new T(args)` — allocate a zeroed handle, then either run the class
 // constructor (receiver as implicit arg 0) or store the args positionally
 // into the fields (struct / constructor-less class).  Result: the handle.
-void Codegen::genNew(e)
+void Codegen::genNew(e: NewExpr)
     if not isObjType(e.typeName) then
         throw ("`new` of unknown type '" + e.typeName + "'")
     if isAbstractType(e.typeName) then
@@ -320,14 +368,30 @@ void Codegen::genNew(e)
     let ctor = resolveCtorSym(e.typeName)
     let hasCtor = typeIsClass(e.typeName) and hasFn(ctor)
 
+    // Positional `new T(a, b, …)` on a struct / ctor-less class binds args
+    // to fields in *constructor order* (required fields first, then this
+    // type's own defaulted fields, then inherited defaulted ones — the
+    // interpreter's `reorder_constructible_fields`), not raw declaration
+    // order.
+    let order = ctorFieldOrder(e.typeName)
+    let filled: [bool] = []
+    let fi = 0
+    while fi < nfields do
+        filled += [false]
+        fi += 1
+    if not hasCtor then
+        let k = 0
+        while k < #e.args and k < #order do
+            filled[order[k]] = true
+            k += 1
+
     // Field default initializers run first (interpreter order): before the
     // constructor for a class, and for the slots a positional `new` on a
     // struct / ctor-less class doesn't fill.
     let di = 0
     while di < nfields do
         let dflt = fieldDefaultAt(e.typeName, di)
-        let filledPositionally = not hasCtor and di < #e.args
-        if dflt != null and not filledPositionally then
+        if dflt != null and not filled[di] then
             genExpr(dflt)
             m_backend.objSetField(di)
         di += 1
@@ -353,7 +417,7 @@ void Codegen::genNew(e)
         let i = 0
         for a in e.args do
             genExpr(a)
-            m_backend.objSetField(i)
+            m_backend.objSetField(order[i])
             i += 1
     m_backend.objFinishNew()
 

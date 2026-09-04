@@ -1,0 +1,10 @@
+module file
+
+// Linked from stdlib/file.c.  These are reached as `file::name`, which
+// the parser resolves to the bare symbol.
+
+fn exists(path: string): int
+fn read_all(path: string): string
+void write_all(path: string, data: string)
+fn find(name: string, from: string): string?
+fn list_dir(path: string): [string]

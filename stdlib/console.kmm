@@ -1,0 +1,9 @@
+module console
+
+// The console library.  Bodies are linked from stdlib/console.c; these
+// declarations give the compiler the call signatures.  Variadic: any
+// number of values of any type may follow.
+
+void console_print(...)
+void console_write(...)
+void console_error(...)

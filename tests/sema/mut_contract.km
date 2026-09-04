@@ -1,0 +1,8 @@
+import console
+struct Box
+    v: int = 0
+fn poke(b: Box): int
+    b.v = 9
+    return b.v
+void main()
+    console.print(poke(new Box()))

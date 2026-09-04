@@ -173,6 +173,12 @@ void StackVMBackend::strEquals(negate: bool)
     if negate then
         op("NOT")
 
+void StackVMBackend::strIndexAcc()
+    op("SIDX")
+
+void StackVMBackend::strCompare(op_: string)
+    op("SCMP " + op_)
+
 void StackVMBackend::strLen()
     op("SLEN")
 
@@ -195,6 +201,15 @@ void StackVMBackend::arrayEnd()
 
 void StackVMBackend::arrayAppendTo(off: int)
     op("AAPPEND " + string(off))
+
+void StackVMBackend::arrayAppendToField(idx: int)
+    op("AAPPENDF " + string(idx))
+
+void StackVMBackend::arrayAppendAcc()
+    op("AAPPENDX")
+
+void StackVMBackend::toStringOf(tag: int)
+    op("TOSTR " + string(tag))
 
 void StackVMBackend::subFromLocal(off: int)
     op("DECV " + string(off))
@@ -236,8 +251,8 @@ void StackVMBackend::forCompareExit(endL: string, descending: bool, inclusive: b
             op("GE")
     op("JNZ " + endL)
 
-void StackVMBackend::stepLocal(off: int, down: bool)
-    if down then
+void StackVMBackend::stepLocal(off: int, desc: bool)
+    if desc then
         op("DEC " + string(off))
     else
         op("INC " + string(off))

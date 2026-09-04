@@ -38,10 +38,20 @@ public
         // outermost macro scope. They are not lowered here — each use
         // site re-lowers the expression. Nested `be` bindings push
         // further scopes as their blocks are lowered (see genStmt).
+        // The semantic analyser has already rejected duplicates.
         for mac in prog.macros do
-            if listHas(m_macroNames, mac.name) then
-                throw ("duplicate macro '" + mac.name + "'")
             pushMacro(mac.name, mac.init)
+
+        // Enum variants become plain integer constants: `Color::RED` (which
+        // the parser has already reduced to the bare name `RED`) lowers to
+        // its 0-based ordinal within its enum.
+        for en in prog.enums do
+            let ord = 0
+            for v in en.variants do
+                if not listHas(m_enumNames, v) then
+                    m_enumNames += [v]
+                    m_enumOrdinals += [ord]
+                ord += 1
 
         // Pass 0: register every struct / class as an object type (name →
         // ordered fields) and lower each method / constructor to a free
@@ -52,7 +62,7 @@ public
         for d in ordered do
             if d is StructDecl then
                 registerTypeFull(d.name, false, d.isAbstract, d.parent, memberNames(d.members), memberTypes(d.members), memberDefaults(d.members))
-            else
+            else if d is ClassDecl then
                 registerTypeFull(d.name, true, d.isAbstract, d.parent, fieldNames(d.fields), fieldTypes(d.fields), fieldDefaults(d.fields))
                 for m in d.methods do
                     let mfn = new FunctionDecl(methodSym(d.name, m))
@@ -74,27 +84,25 @@ public
         buildVtables()
 
         // Pass 1: collect every function's signature (forward references
-        // and recursion are allowed) and reject duplicates.
+        // and recursion are allowed).  Duplicates were rejected by the
+        // semantic analyser.
         for func in prog.functions do
-            if listHas(m_fnNames, func.name) then
-                throw ("duplicate function '" + func.name + "'")
             m_fnNames += [func.name]
             m_fnRets += [retTypeOf(func.returnType)]
             m_fnKinds += [funcKind(func)]
             m_fnArity += [#func.params]
-            // An extern is resolved by the linker under its raw C name;
-            // don't register it as a program-local symbol.
-            if not func.isExtern then
+            // An `extern` (C ABI) or a body-less prototype (Komodo ABI,
+            // e.g. the standard library) is resolved by the linker — do
+            // not register it as a program-local symbol or emit it.
+            if not func.isExtern and not func.isPrototype then
                 m_backend.declareFn(func.name)
 
-        // Pass 2: enforce "returns on every path" for value functions and
-        // the `fn` / `mut` mutability contract, then lower each body.
+        // Pass 2: lower each body.  "Returns on every path" and the
+        // `fn` / `mut` mutation contract were enforced by the semantic
+        // analyser (sema*.kmm).
         for func in prog.functions do
-            if func.isExtern then
+            if func.isExtern or func.isPrototype then
                 continue
-            if not isVoidFn(func) and not returnsOnAllPaths(func.body) then
-                throw ("function '" + func.name + "' must return a value on every path")
-            checkMutability(func)
             genFunction(func)
 
         // Emit the per-class vtables + the type-id → vtable index table.
@@ -168,10 +176,13 @@ public
             out += [f.defaultValue]
         return out
 
-    fn typeOrInt(t: string?): string
-        if t == null then
+    // A declared-type string reduced to codegen's coarse form: `?` (which
+    // codegen never depended on) dropped, `null` → "int".
+    mut typeOrInt(t: string?): string
+        let s = stripOpt(t)
+        if s == null then
             return "int"
-        return t
+        return s
 
     fn parentOrEmpty(p: string?): string
         if p == null then
@@ -193,20 +204,35 @@ public
             let remaining: [Declaration] = []
             let progressed = false
             for d in work do
-                let par = parentOrEmpty(d.parent)
+                let par = declParent(d)
                 if par == "" or listHas(done, par) then
                     ordered += [d]
-                    done += [d.name]
+                    done += [declName(d)]
                     progressed = true
                 else
                     remaining += [d]
             work = remaining
             if not progressed then
-                throw ("cyclic or unresolved type inheritance near '" + work[0].name + "'")
+                throw ("cyclic or unresolved type inheritance near '" + declName(work[0]) + "'")
             guard += 1
             if guard > 10000 then
                 throw "type inheritance ordering did not converge"
         return ordered
+
+    // `parent` / `name` are on `StructDecl` / `ClassDecl`, not `Declaration`.
+    mut declParent(d: Declaration): string
+        if d is StructDecl then
+            return parentOrEmpty(d.parent)
+        if d is ClassDecl then
+            return parentOrEmpty(d.parent)
+        return ""
+
+    mut declName(d: Declaration): string
+        if d is StructDecl then
+            return d.name
+        if d is ClassDecl then
+            return d.name
+        return ""
 
     // Register a type, prepending its parent's flattened fields (names,
     // types and default-value expressions) ahead of its own.
@@ -331,8 +357,31 @@ public
                 for mn in m_typeOwnMethods[i] do
                     if mn != "constructor" and not listHas(slots, mn) then
                         slots += [mn]
+                // An abstract base that never declares an interface method
+                // itself still needs a slot for it, so a `base.method()`
+                // call through a subclass instance dispatches virtually.
+                // Only methods every concrete subclass supplies count as
+                // the interface (a helper unique to one backend does not).
+                if m_typeIsAbstract[i] then
+                    let d = 0
+                    while d < #m_typeNames do
+                        if isDescendantOf(m_typeNames[d], m_typeNames[i]) and not m_typeIsAbstract[d] then
+                            for mn in m_typeOwnMethods[d] do
+                                if mn != "constructor" and not listHas(slots, mn) and allConcreteHave(m_typeNames[i], mn) then
+                                    slots += [mn]
+                        d += 1
                 m_typeSlotNames[i] = slots
             i += 1
+
+    // Does every concrete (non-abstract) descendant of `base` define `mn`?
+    mut allConcreteHave(base: string, mn: string): bool
+        let d = 0
+        while d < #m_typeNames do
+            if isDescendantOf(m_typeNames[d], base) and not m_typeIsAbstract[d] then
+                if not listHas(m_typeOwnMethods[d], mn) and resolveMethodOwner(m_typeNames[d], mn) == "" then
+                    return false
+            d += 1
+        return true
 
     // Vtable slot of `method` for a receiver statically typed `className`,
     // or -1 when the call can be a direct (non-virtual) one.
@@ -354,7 +403,9 @@ public
         m_backend.beginVtables(#m_typeNames)
         let i = 0
         while i < #m_typeNames do
-            if #m_typeSlotNames[i] > 0 then
+            // An abstract class is never instantiated, so its own vtable
+            // is dead — and some slots may have no concrete owner yet.
+            if #m_typeSlotNames[i] > 0 and not m_typeIsAbstract[i] then
                 let labels: [string] = []
                 for slotName in m_typeSlotNames[i] do
                     let owner = resolveMethodOwner(m_typeNames[i], slotName)
@@ -363,7 +414,9 @@ public
             i += 1
 
     // The class that actually declares `method` for a receiver statically
-    // typed `className` — walk up the parent chain.  "" if none.
+    // typed `className` — walk up the parent chain, then (for an abstract
+    // base that leaves an interface method to its subclasses) the first
+    // descendant that supplies it.  "" if none.
     mut resolveMethodOwner(className: string, method: string): string
         let cur = className
         let guard = 0
@@ -375,10 +428,75 @@ public
             guard += 1
             if guard > 10000 then
                 return ""
+        let ci = typeIndex(className)
+        if ci >= 0 and m_typeIsAbstract[ci] then
+            let d = 0
+            while d < #m_typeNames do
+                if isDescendantOf(m_typeNames[d], className) and listHas(m_typeOwnMethods[d], method) then
+                    return m_typeNames[d]
+                d += 1
         return ""
 
     mut isObjType(name: string): bool
         return listHas(m_typeNames, name)
+
+    // ── enum variants (name → ordinal) ────────────────────────────
+
+    mut isEnumVariant(name: string): bool
+        return listHas(m_enumNames, name)
+
+    fn isArrayType(t: string): bool
+        return #t > 0 and t[0] == "["
+
+    // `"[[string]]"` → `"[string]"`, `"[int]"` → `"int"`, else unchanged.
+    fn elemTypeOf(t: string): string
+        if #t >= 2 and t[0] == "[" and t[#t - 1] == "]" then
+            return t[1 to (#t - 1)]
+        return t
+
+    // Field-slot indices in positional-constructor order, matching the
+    // interpreter's `reorder_constructible_fields`: required fields first
+    // (declaration order), then this type's own defaulted fields, then
+    // inherited defaulted ones.
+    mut ctorFieldOrder(typeName: string): [int]
+        let ti = typeIndex(typeName)
+        if ti < 0 then
+            return []
+        let defs = m_typeFieldDefaults[ti]
+        let par = typeParentOf(typeName)
+        let pc = 0
+        if par != "" then
+            let pi = typeIndex(par)
+            if pi >= 0 then
+                pc = #m_typeFieldNames[pi]
+        let req: [int] = []
+        let ownOpt: [int] = []
+        let inhOpt: [int] = []
+        let i = 0
+        while i < #defs do
+            if defs[i] == null then
+                req += [i]
+            else if i >= pc then
+                ownOpt += [i]
+            else
+                inhOpt += [i]
+            i += 1
+        let out: [int] = []
+        for x in req do
+            out += [x]
+        for x in ownOpt do
+            out += [x]
+        for x in inhOpt do
+            out += [x]
+        return out
+
+    mut enumOrdinal(name: string): int
+        let i = 0
+        while i < #m_enumNames do
+            if m_enumNames[i] == name then
+                return m_enumOrdinals[i]
+            i += 1
+        return 0
 
     mut hasFn(name: string): bool
         return listHas(m_fnNames, name)
@@ -483,68 +601,8 @@ public
     fn isVoidFn(func: FunctionDecl): bool
         return func.isVoid or func.returnType == null
 
-    // ── `fn` / `mut` mutability contract ──────────────────────────
-    //
-    //  "Mutating code" = a write the caller can observe: a field write
-    //  (`obj.f = v`, or a bare `field = v` against `self`), or an array
-    //  element write (`arr[i] = v`).  Reassigning the function's own
-    //  locals doesn't count, and analysis does not follow calls.
-    //
-    //    • a pure `fn` (has a return type, not `mut`) may NOT mutate
-    //    • a `mut` function / method MUST mutate
-    //    • `void` procedures and constructors are unconstrained
-
-    fn isPureFn(func: FunctionDecl): bool
-        if func.isExtern or func.isMut or func.isConstructor then
-            return false
-        return func.returnType != null
-
-    mut ownerFields(func: FunctionDecl): [string]
-        if func.ownerClass == null then
-            return []
-        let ti = typeIndex(func.ownerClass)
-        if ti < 0 then
-            return []
-        return m_typeFieldNames[ti]
-
-    mut bodyMutates(stmts, fields: [string]): bool
-        for s in stmts do
-            if s is FieldAssignStmt then
-                return true
-            if s is IndexAssignStmt then
-                return true
-            if s is AssignStmt then
-                if listHas(fields, s.name) then
-                    return true
-            if s is IfStmt then
-                if bodyMutates(s.thenBody, fields) or bodyMutates(s.elseBody, fields) then
-                    return true
-            if s is WhileStmt then
-                if bodyMutates(s.body, fields) then
-                    return true
-            if s is ForStmt then
-                if bodyMutates(s.body, fields) then
-                    return true
-            if s is ForInStmt then
-                if bodyMutates(s.body, fields) then
-                    return true
-        return false
-
-    // `Box__peek` → `Box.peek` for diagnostics.
-    fn displayName(func: FunctionDecl): string
-        if func.ownerClass == null then
-            return func.name
-        let pfx = func.ownerClass + "__"
-        if #func.name > #pfx and func.name[0 to #pfx] == pfx then
-            return func.ownerClass + "." + func.name[#pfx to #func.name]
-        return func.name
-
-    mut checkMutability(func: FunctionDecl)
-        let muts = bodyMutates(func.body, ownerFields(func))
-        if func.isMut and not muts then
-            throw ("`mut " + displayName(func) + "` has no mutating code — declare it `fn` or `void`")
-        if isPureFn(func) and muts then
-            throw ("pure `fn " + displayName(func) + "` mutates state — declare it `mut`")
+    // The `fn` / `mut` mutation contract and "returns on every path" are
+    // now enforced by the semantic analyser (sema_stmt.kmm), not here.
 
     fn funcKind(func: FunctionDecl): string
         if func.isExtern then
@@ -593,6 +651,13 @@ private
     m_macroNames: [string] = []
     m_macroExprs: [Expression?] = []
 
+    // ── enum variants → 0-based ordinal ──────────────────────────
+    m_enumNames: [string] = []
+    m_enumOrdinals: [int] = []
+
+    // per-function counter handing out hidden `match#N` subject slots
+    m_matchTmp: int = 0
+
     // ── object-type registry (structs + classes) ──────────────────
     m_typeNames: [string] = []
     m_typeIsClass: [bool] = []
@@ -627,28 +692,30 @@ private
     // ── function-signature registry ────────────────────────────────
 
     fn retTypeOf(declared: string?): string
-        if declared == "float" then
+        let d = stripOpt(declared)
+        if d == "float" then
             return "float"
-        if declared == "string" then
+        if d == "string" then
             return "string"
         return "int"
 
-    // Return type of a call target: a function defined in this program,
-    // else a known standard-library symbol, else assume "int".
+    // Return type of a call target: a function/prototype known to this
+    // translation unit (by its own name or its "_"-joined dotted form),
+    // else assume int / pointer.  The semantic analyser has already put
+    // the real type on `resolvedType` for every call it saw; this is the
+    // fallback for synthesised nodes.
     mut fnRet(name: string): string
         let i = 0
         while i < #m_fnNames do
             if m_fnNames[i] == name then
                 return m_fnRets[i]
             i += 1
-        return stdlibRet(m_backend.mangle(name))
-
-    // The handful of standard-library symbols whose result is not a
-    // plain integer.  Everything else (and every unknown symbol) is
-    // treated as returning an int / pointer.
-    fn stdlibRet(sym: string): string
-        if sym == "math_sqrt" then
-            return "float"
+        let mangled = m_backend.mangle(name)
+        let j = 0
+        while j < #m_fnNames do
+            if m_fnNames[j] == mangled then
+                return m_fnRets[j]
+            j += 1
         return "int"
 
     fn isCompareOp(op: string): bool

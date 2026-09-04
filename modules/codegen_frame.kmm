@@ -35,22 +35,6 @@ mut Codegen::immutOf(name: string): bool
         i += 1
     return false
 
-// A value function must return on every path.  An `if` counts only when
-// it has an `else` and both arms return; loops are treated as possibly
-// zero-iteration (conservative).
-mut Codegen::returnsOnAllPaths(stmts): bool
-    for s in stmts do
-        if s is ReturnStmt then
-            return true
-        // `throw` never falls through — it unwinds to a protected call
-        // site or aborts the program.
-        if s is ThrowStmt then
-            return true
-        if s is IfStmt then
-            if #s.elseBody > 0 and returnsOnAllPaths(s.thenBody) and returnsOnAllPaths(s.elseBody) then
-                return true
-    return false
-
 mut Codegen::slotOf(name: string): int
     let i = 0
     while i < #m_names do
@@ -70,7 +54,18 @@ mut Codegen::typeOf(name: string): string
 // Coarse "float" / "string" / "int" classification of an expression's
 // result — enough to pick between the integer and SSE code paths and to
 // tag call arguments.
-mut Codegen::exprType(e): string
+//
+// The semantic analyser (sema*.kmm) has already resolved a static type
+// for every expression it saw and left the coarse form on
+// `resolvedType`; trust it.  The fall-through below still runs for nodes
+// the analyser never visited — chiefly the fresh lowerings a macro use
+// re-synthesises here at codegen time.
+mut Codegen::exprType(e: Expression?): string
+    if e == null then
+        return "int"
+    let rt = e.resolvedType
+    if rt != null then
+        return rt
     if e is FloatLiteral then
         return "float"
     if e is StringLiteral then
@@ -119,17 +114,16 @@ mut Codegen::exprType(e): string
 
 // Pre-scan a statement list, reserving a slot for every variable it (or a
 // nested block) declares.
-void Codegen::collectLocals(stmts)
+void Codegen::collectLocals(stmts: [Statement])
     for s in stmts do
         if s is VarDecl and not s.immutable then
             let ty = "int"
-            if s.declaredType == "float" or s.declaredType == "string" then
-                ty = s.declaredType
-            else if s.declaredType != null and isObjType(s.declaredType) then
-                ty = s.declaredType
+            let dt = typeOrInt(s.declaredType)
+            if dt == "float" or dt == "string" or isObjType(dt) or isArrayType(dt) then
+                ty = dt
             else if s.init != null then
                 let it = exprType(s.init)
-                if it == "float" or it == "string" or isObjType(it) then
+                if it == "float" or it == "string" or isObjType(it) or isArrayType(it) then
                     ty = it
             addLocal(s.name, ty, s.immutable)
         // `let x be expr` is a scoped macro, not a stack local — no slot.
@@ -142,7 +136,17 @@ void Codegen::collectLocals(stmts)
             addLocal(s.varName, "int", true)
             collectLocals(s.body)
         else if s is ForInStmt then
-            addLocal(s.varName, "int", true)
+            let et = elemTypeOf(exprType(s.iterable))
+            let evt = "int"
+            if et == "float" or et == "string" or isObjType(et) then
+                evt = et
+            addLocal(s.varName, evt, true)
             addLocal(s.varName + "#i", "int", false)
             addLocal(s.varName + "#a", "int", false)
             collectLocals(s.body)
+        else if s is MatchStmt then
+            s.tmpName = "match#" + string(m_matchTmp)
+            m_matchTmp += 1
+            addLocal(s.tmpName, "int", false)
+            for c in s.cases do
+                collectLocals(c.body)

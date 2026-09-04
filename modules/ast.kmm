@@ -21,6 +21,11 @@ abstract shared struct ASTNode
 // ─── Expressions ──────────────────────────────────────────────────────
 
 abstract struct Expression : ASTNode
+    // Coarse static type filled in by the semantic analyser (sema*.kmm):
+    // one of "int" / "float" / "string" / "[T]" / an object-type name.
+    // Codegen reads this instead of re-deriving it; null on nodes the
+    // analyser never saw (e.g. macro expansions synthesised at codegen).
+    resolvedType: string? = null
 
 abstract struct Literal : Expression
 
@@ -62,6 +67,11 @@ struct CallExpr : Expression
     // `name(args)?` — a protected call: yields null instead of
     // propagating a thrown error out of the callee.
     protected: bool = false
+    // Filled in by the semantic analyser: the resolved, owner-qualified
+    // target symbol for a method call (e.g. `Shape__area`), so codegen
+    // does not re-run method-owner resolution.  null for a plain call.
+    resolvedSym: string? = null
+    isMethod: bool = false
 
 // `receiver.method(args)`
 struct MethodCallExpr : Expression
@@ -121,6 +131,9 @@ struct VarDecl : Statement
     declaredType: string? = null
     init: Expression? = null
     immutable: bool = false
+    // The analyser's inferred/declared type for this binding (coarse
+    // string form), so frame layout does not re-infer it.
+    resolvedType: string? = null
 
 struct AssignStmt : Statement
     name: string
@@ -177,6 +190,11 @@ struct MatchCase
 struct MatchStmt : Statement
     subject: Expression? = null
     cases: [MatchCase] = []
+    // codegen: name of the hidden local holding the evaluated subject
+    // (assigned by `collectLocals`).
+    tmpName: string = ""
+    // sema: true when the arms are provably exhaustive.
+    exhaustive: bool = false
 
 struct ThrowStmt : Statement
     message: Expression? = null
@@ -208,6 +226,14 @@ struct FunctionDecl : Declaration
     // `extern fn` — a foreign C function, no body; calls use the native
     // System V AMD64 C ABI instead of Komodo's (tag,value)[] ABI.
     isExtern: bool = false
+    // A body-less declaration (`fn name(params): T` with no indented
+    // block): the signature is known to the compiler but the definition
+    // is supplied at link time, using the ordinary Komodo call ABI (this
+    // is how the standard library — `console`, `math`, … — is declared).
+    isPrototype: bool = false
+    // A trailing `...` parameter: the call may pass any number of extra
+    // arguments after the fixed ones (e.g. `console::print`).
+    variadic: bool = false
     // For a method / constructor lowered to a free function: the class it
     // came from (so an unqualified field name resolves against `self`).
     ownerClass: string? = null
@@ -248,6 +274,8 @@ struct ImportDecl : Declaration
 // ─── Program ──────────────────────────────────────────────────────────
 
 struct Program
+    // Set once the semantic analyser has walked and annotated the tree.
+    analyzed: bool = false
     moduleName: string? = null
     imports: [ImportDecl] = []
     enums: [EnumDecl] = []

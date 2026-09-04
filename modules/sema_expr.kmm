@@ -1,0 +1,489 @@
+module km_compiler
+
+// ═══════════════════════════════════════════════════════════════════════
+//  Analyzer — the expression inference engine.
+//
+//  `inferExpr` returns the single static `Type` of an expression and, as
+//  a side effect, stamps `e.resolvedType` with the coarse string the code
+//  generator consumes.  It reads the *narrowed* scope (`m_scopeType`), so
+//  a caller that has entered a narrowing branch (see sema_stmt.kmm) gets
+//  the refined type automatically.
+// ═══════════════════════════════════════════════════════════════════════
+
+mut Analyzer::inferExpr(e: Expression?): Type
+    if e == null then
+        return tPrim("int")
+    let t = inferRaw(e)
+    // a protected call / construction (`f()?`, `new T()?`) yields null
+    if e is CallExpr then
+        if e.protected then
+            t = tNullable(t)
+    else if e is NewExpr then
+        if e.protected then
+            t = tNullable(t)
+    // When the analyser genuinely can't pin a type (an `any` flowing out
+    // of an un-annotated binding), leave `resolvedType` null so codegen
+    // falls back to its own classification instead of trusting "any".
+    if stripNull(t).kind != "any" then
+        e.resolvedType = typeToLegacy(t)
+    return t
+
+mut Analyzer::inferRaw(e: Expression?): Type
+
+    if e is IntLiteral then
+        return tPrim("int")
+    if e is FloatLiteral then
+        return tPrim("float")
+    if e is BoolLiteral then
+        return tPrim("bool")
+    if e is StringLiteral then
+        return tPrim("string")
+    if e is CharLiteral then
+        return tPrim("char")
+    if e is NullLiteral then
+        return tNull()
+
+    if e is Identifier then
+        return inferIdentifier(e)
+    if e is BinaryOp then
+        return inferBinary(e)
+    if e is UnaryOp then
+        return inferUnary(e)
+    if e is CallExpr then
+        return inferCall(e)
+    if e is MethodCallExpr then
+        // parser lowers method calls to CallExpr("recv.m", …); this node
+        // is not produced today, but stay total.
+        return tPrim("int")
+    if e is NewExpr then
+        return inferNew(e)
+    if e is MemberExpr then
+        return inferMember(e)
+    if e is IndexExpr then
+        return inferIndex(e)
+    if e is SliceExpr then
+        inferExpr(e.start)
+        inferExpr(e.end)
+        return inferExpr(e.object)
+    if e is ArrayExpr then
+        return inferArray(e)
+    if e is RangeExpr then
+        inferExpr(e.start)
+        inferExpr(e.end)
+        return tArray(tPrim("int"))
+    if e is ThrowExpr then
+        if e.message != null then
+            inferExpr(e.message)
+        return tNever()
+
+    return tPrim("int")
+
+// ── identifiers: local → param → self-field → macro → error ──────────
+
+mut Analyzer::inferIdentifier(e: Identifier): Type
+    if scopeHas(e.name) then
+        return scopeType(e.name)
+    if isCurField(e.name) then
+        return curClassFieldType(e.name)
+    if isMacro(e.name) then
+        let m = macroExprOf(e.name)
+        if m == null then
+            return tPrim("int")
+        return inferExpr(m)
+    if isEnumType(e.name) then
+        return tObject(e.name)
+    // an `Enum::VARIANT` collapses to a bare Identifier in the parser;
+    // accept a name that is a variant of some known enum.
+    let en = enumOfVariant(e.name)
+    if en != "" then
+        return tObject(en)
+    err(e, "undefined name '" + e.name + "'")
+    return tPrim("int")
+
+mut Analyzer::enumOfVariant(name: string): string
+    let i = 0
+    while i < #m_typeNames do
+        if m_typeIsEnum[i] and listHas(m_enumVariants[i], name) then
+            return m_typeNames[i]
+        i += 1
+    return ""
+
+// ── binary operators ───────────────────────────────────────────────
+
+mut Analyzer::inferBinary(e: BinaryOp): Type
+    if e.op == "is" then
+        inferExpr(e.left)
+        let rn = ""
+        let rhs = e.right
+        if rhs is Identifier then
+            rn = rhs.name
+        if rn == "" or not isObjType(rn) then
+            err(e, "`is` expects a known type name on the right")
+        return tPrim("bool")
+
+    if e.op == "and" or e.op == "or" then
+        // Lua value-select idiom: `a and b`, `a or b`, `a and b or c`.
+        // The result is a value of either side; never an operand-type
+        // error.  (Short-circuiting is a codegen concern.)
+        //
+        // The right operand is evaluated only when the left did not
+        // decide the result, so it sees the left's implied narrowing —
+        // `x != null and x.f` type-checks `x.f` with `x` non-null.
+        let lt = inferExpr(e.left)
+        let snap = scopeSnapshot()
+        let pm = pathMark()
+        let ps = pathSnap()
+        applyNarrowing(e.left, e.op == "and")
+        let rt = inferExpr(e.right)
+        scopeApply(snap)
+        pathRestore(pm, ps)
+        // `a or b` yields `a` only when `a` is truthy — so a nullable
+        // left side contributes its non-null form (`x or default`).
+        if e.op == "or" then
+            return unify(stripNull(lt), rt)
+        return unify(rt, stripNull(lt))
+
+    let lt = inferExpr(e.left)
+    let rt = inferExpr(e.right)
+
+    // `==` / `!=` may involve `null` (that is how a value gets narrowed);
+    // every other operator needs both operands non-null.
+    if e.op != "==" and e.op != "!=" then
+        if isNullable(lt) then
+            err(e, "left operand of '" + e.op + "' is possibly null")
+        if isNullable(rt) then
+            err(e, "right operand of '" + e.op + "' is possibly null")
+
+    if isCompareOp(e.op) then
+        return tPrim("bool")
+
+    if lt.kind == "any" or rt.kind == "any" then
+        return tAny()
+
+    let ls = legacyOf(lt) == "string"
+    let rs = legacyOf(rt) == "string"
+    if e.op == "+" and (ls or rs) then
+        return tPrim("string")
+    if e.op == "*" and ls then
+        return tPrim("string")
+    if legacyOf(lt) == "float" or legacyOf(rt) == "float" then
+        return tPrim("float")
+    return tPrim("int")
+
+mut Analyzer::isCompareOp(op: string): bool
+    if op == "==" or op == "!=" then
+        return true
+    if op == "<" or op == ">" or op == "<=" or op == ">=" then
+        return true
+    return false
+
+// legacy tag of a Type (nullable washes out, like codegen sees it)
+mut Analyzer::legacyOf(t: Type): string
+    return typeToLegacy(t)
+
+// join of two value types for the `and`/`or` idiom and array literals
+mut Analyzer::unify(a: Type, b: Type): Type
+    if a.kind == "never" then
+        return b
+    if b.kind == "never" then
+        return a
+    if a.kind == "null" then
+        return tNullable(b)
+    if b.kind == "null" then
+        return tNullable(a)
+    if typeToString(a) == typeToString(b) then
+        return a
+    if isNumeric(a) and isNumeric(b) then
+        if a.kind == "float" or b.kind == "float" then
+            return tPrim("float")
+        return tPrim("int")
+    // fall back to the left side's shape (value-select keeps a value)
+    return a
+
+// ── unary operators ────────────────────────────────────────────────
+
+mut Analyzer::inferUnary(e: UnaryOp): Type
+    let ot = inferExpr(e.operand)
+    if e.op == "#" then
+        return tPrim("int")
+    if e.op == "not" or e.op == "!" then
+        return tPrim("bool")
+    // `-x`
+    return ot
+
+// ── calls: free fn / method / stdlib / extern / builtin ─────────────
+
+mut Analyzer::inferCall(e: CallExpr): Type
+    // `data(arr)` — element pointer for C interop; result is an int.
+    if e.name == "data" then
+        for a in e.args do
+            inferExpr(a)
+        return tPrim("int")
+
+    // `string(x)` — universal to-string.
+    if e.name == "string" then
+        for a in e.args do
+            inferExpr(a)
+        return tPrim("string")
+
+    // `join(parts, sep)` — [string] joined into one string.
+    if e.name == "join" then
+        for a in e.args do
+            inferExpr(a)
+        return tPrim("string")
+
+    let dot = dotIndex(e.name)
+    if dot > 0 then
+        let recv = e.name[0 to dot]
+        let meth = e.name[(dot + 1) to e.name.length]
+        if isMethodReceiver(recv) then
+            return inferMethodCall(e, recv, meth)
+        // a module-qualified call — `console.print`, `math.sqrt`.  The
+        // linked symbol is the "_"-joined form; if a declaration for it
+        // was imported (stdlib/*.kmm, or any library), type-check against
+        // it, otherwise leave the call unchecked.
+        let argsD: [Type] = []
+        for a in e.args do
+            argsD += [inferExpr(a)]
+        let sym = mangleDotted(e.name)
+        if hasFn(sym) then
+            return resolveFnCall(e, sym, e.name, argsD, 0)
+        return tAny()
+
+    // plain name: user function, extern, or `module::member` (the parser
+    // drops the namespace, so it arrives bare).
+    let argTs: [Type] = []
+    for a in e.args do
+        argTs += [inferExpr(a)]
+    if hasFn(e.name) then
+        return resolveFnCall(e, e.name, e.name, argTs, 0)
+    // an unqualified call inside a method that names a sibling method —
+    // `foo(x)` for `self.foo(x)`.
+    if m_curClass != "" then
+        let owner = methodOwner(m_curClass, e.name)
+        if owner != "" then
+            let sym = owner + "__" + e.name
+            let params = fnParamTypes(sym)
+            if #params != 1 + #e.args then
+                err(e, "method '" + m_curClass + "." + e.name + "' takes " + string(#params - 1) + " argument(s), got " + string(#e.args))
+            checkArgs(e, m_curClass + "." + e.name, params, argTs, 1, false)
+            e.isMethod = true
+            e.resolvedSym = sym
+            return parseTypeStr(fnRetType(sym))
+    // an unresolved free symbol — a library not on the search path, say.
+    // Leave it unchecked rather than guessing.
+    return tAny()
+
+// Type-check a call whose target `sym` is a registered function/prototype.
+// `display` is the name to use in diagnostics; `skip` leading params are
+// implicit (a method receiver).
+mut Analyzer::resolveFnCall(e: CallExpr, sym: string, display: string, argTs: [Type], skip: int): Type
+    let k = fnKindOf(sym)
+    let params = fnParamTypes(sym)
+    let fixed = #params - skip
+    if fnIsVariadic(sym) then
+        if #argTs < fixed then
+            err(e, "'" + display + "' takes at least " + string(fixed) + " argument(s), got " + string(#argTs))
+    else if #argTs != fixed then
+        err(e, "'" + display + "' takes " + string(fixed) + " argument(s), got " + string(#argTs))
+    if m_curKind == "fn" and k == "void" and not fnIsLinked(sym) then
+        err(e, "a pure `fn` cannot call the void procedure '" + display + "'")
+    checkArgs(e, display, params, argTs, skip, k == "extern")
+    if skip == 0 then
+        e.resolvedSym = sym
+    return parseTypeStr(fnRetType(sym))
+
+// Check each argument against its parameter's declared type.  `skip` is
+// the count of leading implicit params (1 for a method receiver).  An
+// `extern` call uses the looser native-ABI rule: any integer-class value
+// (int / bool / char / pointer / object handle / array) satisfies an
+// integer-class parameter, floats stay distinct.
+mut Analyzer::checkArgs(node: ASTNode, name: string, params: [string], argTs: [Type], skip: int, isExtern: bool)
+    let i = 0
+    while i < #argTs and (i + skip) < #params do
+        let want = parseTypeStr(params[i + skip])
+        let got = argTs[i]
+        if isExtern then
+            if not cAbiCompatible(want, got) then
+                err(node, "argument " + string(i + 1) + " to extern '" + name + "': '" + typeToString(got) + "' is not compatible with '" + typeToString(want) + "'")
+        else if not isAssignable(want, got) then
+            err(node, "argument " + string(i + 1) + " to '" + name + "': type '" + typeToString(got) + "' is not assignable to '" + typeToString(want) + "'")
+        i += 1
+
+mut Analyzer::cAbiCompatible(want: Type, got: Type): bool
+    let w = stripNull(want)
+    let g = stripNull(got)
+    if w.kind == "float" then
+        return g.kind == "float" or isNumeric(g)
+    if g.kind == "float" then
+        return false
+    // everything else is passed in an integer register
+    return true
+
+// `recv` is a local / field / `self` of object type — resolve the method
+// against the receiver's static type.
+mut Analyzer::inferMethodCall(e: CallExpr, recv: string, meth: string): Type
+    if recvIsNullable(recv) then
+        err(e, "'" + recv + "' is possibly null — narrow it before calling '" + meth + "'")
+    let rt = receiverType(recv)
+    let owner = methodOwner(rt, meth)
+    if owner == "" then
+        err(e, "type '" + rt + "' has no method '" + meth + "'")
+    let sym = owner + "__" + meth
+    let params = fnParamTypes(sym)
+    let total = 1 + #e.args
+    if #params != total then
+        err(e, "method '" + rt + "." + meth + "' takes " + string(#params - 1) + " argument(s), got " + string(#e.args))
+    let argTs: [Type] = []
+    for a in e.args do
+        argTs += [inferExpr(a)]
+    checkArgs(e, rt + "." + meth, params, argTs, 1, false)
+    e.isMethod = true
+    e.resolvedSym = sym
+    return parseTypeStr(fnRetType(sym))
+
+mut Analyzer::recvIsNullable(recv: string): bool
+    if scopeHas(recv) then
+        return isNullable(scopeType(recv))
+    if isCurField(recv) then
+        return isNullable(curClassFieldType(recv))
+    return false
+
+mut Analyzer::receiverType(recv: string): string
+    if scopeHas(recv) then
+        return typeToString(stripNull(scopeDeclType(recv)))
+    if recv == "self" then
+        return m_curClass
+    if isCurField(recv) then
+        return typeToString(stripNull(curClassFieldType(recv)))
+    return ""
+
+mut Analyzer::isMethodReceiver(recv: string): bool
+    if scopeHas(recv) then
+        let bt = typeToString(stripNull(scopeDeclType(recv)))
+        return isObjType(bt)
+    if recv == "self" and m_curClass != "" then
+        return true
+    if isCurField(recv) then
+        let ft = typeToString(stripNull(curClassFieldType(recv)))
+        return isObjType(ft)
+    return false
+
+// ── construction ───────────────────────────────────────────────────
+
+mut Analyzer::inferNew(e: NewExpr): Type
+    if not isObjType(e.typeName) then
+        err(e, "`new` of unknown type '" + e.typeName + "'")
+    if isAbstractType(e.typeName) then
+        err(e, "cannot instantiate abstract type '" + e.typeName + "'")
+    let argTs: [Type] = []
+    for a in e.args do
+        argTs += [inferExpr(a)]
+    if isClassType(e.typeName) and hasFn(e.typeName + "__ctor") then
+        let ctor = e.typeName + "__ctor"
+        let params = fnParamTypes(ctor)
+        let total = 1 + #e.args
+        if #params != total then
+            err(e, "constructor '" + e.typeName + "' takes " + string(#params - 1) + " argument(s), got " + string(#e.args))
+        checkArgs(e, e.typeName + ".constructor", params, argTs, 1, false)
+    else if not isClassType(e.typeName) then
+        if #e.args > fieldCount(e.typeName) then
+            err(e, "`new " + e.typeName + "` given more values than it has fields")
+        checkNewFields(e, e.typeName, argTs)
+    return tObject(e.typeName)
+
+// Positional `new T(a, b, …)` on a struct / constructor-less class binds
+// args to fields in constructor order (required first, then own defaulted,
+// then inherited defaulted — the interpreter's reorder rule).
+mut Analyzer::checkNewFields(node: ASTNode, typeName: string, argTs: [Type])
+    let names = fieldNamesOf(typeName)
+    let order = ctorFieldOrder(typeName)
+    let i = 0
+    while i < #argTs and i < #order do
+        let fname = names[order[i]]
+        let want = fieldReadType(typeName, fname)
+        if not isAssignable(want, argTs[i]) then
+            err(node, "field '" + fname + "' of '" + typeName + "': type '" + typeToString(argTs[i]) + "' is not assignable to '" + typeToString(want) + "'")
+        i += 1
+
+// Field-slot indices in positional-constructor order (mirrors
+// `Codegen::ctorFieldOrder` / the interpreter's `reorder_constructible_fields`).
+mut Analyzer::ctorFieldOrder(typeName: string): [int]
+    let ti = typeIndex(typeName)
+    if ti < 0 then
+        return []
+    let hasDef = m_typeFieldHasDef[ti]
+    let par = m_typeParent[ti]
+    let pc = 0
+    if par != "" then
+        let pi = typeIndex(par)
+        if pi >= 0 then
+            pc = #m_typeFieldNames[pi]
+    let req: [int] = []
+    let ownOpt: [int] = []
+    let inhOpt: [int] = []
+    let i = 0
+    while i < #hasDef do
+        if not hasDef[i] then
+            req += [i]
+        else if i >= pc then
+            ownOpt += [i]
+        else
+            inhOpt += [i]
+        i += 1
+    let out: [int] = []
+    for x in req do
+        out += [x]
+    for x in ownOpt do
+        out += [x]
+    for x in inhOpt do
+        out += [x]
+    return out
+
+// ── member / index / array ─────────────────────────────────────────
+
+mut Analyzer::inferMember(e: MemberExpr): Type
+    // always infer the receiver so codegen sees its resolved type
+    let ot = inferExpr(e.object)
+
+    // a prior `path.member == null` / `is T` guard refines this read
+    let pnarrow = pathType(pathOf(e))
+    if pnarrow != null then
+        return pnarrow
+
+    if ot.kind == "any" then
+        return tAny()
+    if isNullable(ot) then
+        err(e, "in '" + m_curFnName + "': value of type '" + typeToString(ot) + "' is possibly null — narrow it before reading '." + e.member + "'")
+    let base = stripNull(ot)
+    if base.kind != "object" or isEnumType(base.name) then
+        err(e, "field access on a non-object (type '" + typeToString(ot) + "')")
+    if not hasField(base.name, e.member) then
+        err(e, "type '" + base.name + "' has no field '" + e.member + "'")
+    return fieldReadType(base.name, e.member)
+
+mut Analyzer::inferIndex(e: IndexExpr): Type
+    let ot = inferExpr(e.object)
+    inferExpr(e.index)
+    if ot.kind == "any" then
+        return tAny()
+    if isNullable(ot) then
+        err(e, "value of type '" + typeToString(ot) + "' is possibly null — narrow it before indexing")
+    let base = stripNull(ot)
+    if base.kind == "array" then
+        return base.elem or tPrim("int")
+    if base.kind == "string" then
+        return tPrim("char")
+    return tPrim("int")
+
+mut Analyzer::inferArray(e: ArrayExpr): Type
+    if #e.elements == 0 then
+        return tArray(tNever())
+    let acc: Type? = null
+    for el in e.elements do
+        let et = inferExpr(el)
+        if acc == null then
+            acc = et
+        else
+            acc = unify(acc, et)
+    return tArray(acc or tNever())

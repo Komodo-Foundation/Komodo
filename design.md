@@ -88,8 +88,15 @@ void name(x: string)                // procedure — returns nothing
 mut name(): [Token]                 // mutates receiver / instance state
 ```
 
-- Parameters: `name: Type`, may have default values.
+- Parameters: `name: Type`, may have default values. A trailing `...`
+  makes the function **variadic** — the call may pass any number of extra
+  arguments after the fixed ones (`void console::print(...)`).
 - Return type follows `:`. `return expr` / bare `return`.
+- A **body-less** `fn` / `void` / `mut` (a header with no indented block)
+  is a **prototype**: the signature is declared here and the definition
+  is supplied at link time, using the ordinary Komodo call ABI. This is
+  how the standard library declares itself (see *Built-ins*); it differs
+  from `extern fn`, which uses the C ABI.
 - Mutation contract (compile-time checked): a pure `fn` may not contain
   mutating code, and a `mut` function/method must. "Mutating code" means a
   write the caller can observe — a field write (`obj.f = v`, or bare
@@ -284,9 +291,78 @@ extern void SDL_Quit()
 
 ## Built-ins
 
+A handful of names the compiler lowers directly (no `import`, no library):
+
 - `print(...)` — write values.
-- `string(x)` — convert to string.
-- Standard library modules (imported): `console` (`print`, `write`, `error`),
-  `algorithm` (`sort`, `reverse`, `sum`, `max`, `min`, `contains`,
-  `index_of`, `fill`), `math` (`abs`, `min`, `max`, `pow`, `gcd`, `sqrt`),
-  `file` (`exists`, `read_all`, `write_all`).
+- `string(x)` — convert any value to its text form.
+- `join(parts, sep)` — concatenate a `[string]` with `sep` between, in
+  one pass (avoids the O(n²) churn of repeated `s = s + line`).
+- `data(arr)` — an array's element pointer, for handing a buffer to C.
+
+## Standard library
+
+The standard library has **no special treatment** — each part is an
+ordinary Komodo module, resolved and type-checked like any other. Each
+ships as a `.kmm` file of prototype declarations (bodies linked from
+`stdlib/*.c`), found automatically under the compiler's own directory, so
+`import console` / `import math` / `import algorithm` / `import file` work
+out of the box from anywhere.
+
+| Module | Members |
+|---|---|
+| `console` | `print`, `write`, `error` (all variadic) |
+| `math` | `abs`, `min`, `max`, `pow`, `gcd`, `sqrt` |
+| `algorithm` | `sort`, `reverse`, `sum`, `max`, `min`, `contains`, `index_of`, `fill` |
+| `file` | `exists`, `read_all`, `write_all`, `find` |
+
+To add another library, drop a `name.kmm` (prototypes) plus its
+implementation object next to the others — nothing in the compiler needs
+to change.
+
+## Semantic analysis
+
+Between the parser and the code generator the compiler runs a dedicated
+**static analysis pass** (`modules/sema*.kmm`, driven from
+`km_compiler::compileWith`). It is the single authority on the language's
+rules; the code generator only lowers a tree the analyser has already
+accepted and annotated.
+
+What it does:
+
+- **Type inference.** Every expression is resolved to one static `Type`
+  (`modules/types.kmm`). An unannotated `let` binding takes its
+  initialiser's inferred type. The coarse form is written back onto the
+  AST (`Expression.resolvedType`) so codegen never re-derives it.
+- **Flow-sensitive narrowing.** `if x == null` / `x != null` /
+  `x is T` / `not (…)` refine a binding's type within the branch it
+  guards; a branch that provably diverges (`return` / `throw` / `break` /
+  `continue`) narrows the *rest* of the enclosing block. So after
+  `if p == null then return`, `p` is non-null for the code that follows.
+- **Null-safety.** `T` is non-nullable; `T?` is nullable. Reading a
+  field / calling a method / indexing / doing arithmetic on a possibly-
+  null value is an error until it is narrowed. An object-typed field with
+  no non-null default is treated as `T?` (a fresh `new` zero-fills it).
+- **Assignability** on initialisers, returns, assignments, call
+  arguments, `new` field bindings — with numeric widening (`int`→`float`,
+  among integer widths) and subclass→base. `extern` calls use the looser
+  native-ABI rule (any integer-class value fills an integer-class
+  parameter; `float` stays distinct).
+- **Signatures.** Arity and result type for every free function, method,
+  constructor, `extern` prototype, and the modelled standard library
+  (`console` / `algorithm` / `math` / `file`, `string`, `data`).
+- **Structural rules.** "Returns a value on every path", the `fn` / `mut`
+  mutation contract, `break` / `continue` only inside a loop, no
+  instantiation of an `abstract` type, no duplicate function / type /
+  macro, single-inheritance cycle detection.
+
+A semantic error is reported as `line:col: message` and stops
+compilation.
+
+### Strict mode
+
+Passing `strict` as the 4th argument to the driver
+(`main.km <file> <target> strict`) additionally reports, as hard errors:
+a binding with neither annotation nor initialiser, a local / parameter
+that is never used, unreachable code after a diverging statement, and a
+`match` on an enum that lacks an `else` and does not cover every variant.
+The default checks above always run.

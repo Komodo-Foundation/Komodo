@@ -17,7 +17,7 @@ module km_compiler
 
 class X86Backend : Backend
 private
-    m_text: string = ""            // .text body, function after function
+    m_lines: [string] = []         // .text body, one entry per line
     m_rodata: string = ""          // interned .rodata lines
     m_doubleId: int = 0
     m_stringId: int = 0
@@ -34,7 +34,7 @@ private
 // ── line buffer ────────────────────────────────────────────────────
 
 void X86Backend::emit(line: string)
-    m_text = m_text + line + "\n"
+    m_lines += [line]
 
 void X86Backend::ins(text: string)
     emit("    " + text)
@@ -65,7 +65,17 @@ mut X86Backend::addDouble(value: string): string
 mut X86Backend::addString(lexeme: string): string
     m_stringId += 1
     let name = "LS" + string(m_stringId)
-    let body = lexeme[1 to (lexeme.length - 1)]
+    let raw = lexeme[1 to (lexeme.length - 1)]
+    // NASM back-quoted strings use `` ` `` as the delimiter, so any
+    // backtick inside the literal has to be escaped.
+    let body = ""
+    let i = 0
+    while i < raw.length do
+        if raw[i] == "`" then
+            body = body + "\\`"
+        else
+            body = body + raw[i]
+        i += 1
     m_rodata = m_rodata + name + ": db `" + body + "`, 0\n"
     return name
 
@@ -80,23 +90,28 @@ void X86Backend::recordExtern(sym: string)
 // ── lifecycle ──────────────────────────────────────────────────────
 
 void X86Backend::begin()
-    m_text = ""
+    m_lines = []
 
 // name + frame size (bytes, already 16-aligned) + each parameter's
 // frame offset.  `main` is entered by the C runtime with the C ABI;
 // every other function receives  rsi = &(tag,value)[argc].
 void X86Backend::beginFunction(name: string, frame: int, paramOffsets: [int], isMain: bool)
-    label(name)
+    if isMain then
+        label("km_program_main")
+    else
+        label(name)
     ins("push rbp")
     ins("mov rbp, rsp")
     ins("push rbx")
     ins("sub rsp, " + string(frame))
-    if not isMain then
-        let i = 0
-        while i < #paramOffsets do
-            ins("mov rax, [rsi + " + string(16 * i + 8) + "]")
-            ins("mov [rbp - " + string(paramOffsets[i]) + "], rax")
-            i += 1
+    // Both the ordinary Komodo ABI and the C runtime's `main` shim pass
+    // arguments as `rsi` → KmArg records, so load params the same way for
+    // `main` (which may take `args`) as for everything else.
+    let i = 0
+    while i < #paramOffsets do
+        ins("mov rax, [rsi + " + string(16 * i + 8) + "]")
+        ins("mov [rbp - " + string(paramOffsets[i]) + "], rax")
+        i += 1
 
 void X86Backend::endFunction()
     ins("xor eax, eax")
@@ -256,6 +271,23 @@ mut X86Backend::strEquals(negate: bool)
     if negate then
         ins("xor eax, 1")
 
+// `s[i]` — index in rax, string pointer spilled → fresh 1-char string.
+mut X86Backend::strIndexAcc()
+    ins("mov rsi, rax")
+    ins("pop rdi")
+    recordExtern("km_str_char")
+    emitCall("km_str_char")
+
+// `s1 <op> s2` (`<` `>` `<=` `>=`) — right in rax, left spilled.
+mut X86Backend::strCompare(op: string)
+    ins("mov rsi, rax")
+    ins("pop rdi")
+    recordExtern("km_str_cmp")
+    emitCall("km_str_cmp")
+    ins("cmp rax, 0")
+    ins(setInstr(op) + " al")
+    ins("movzx eax, al")
+
 mut X86Backend::strLen()
     m_usesStr = true
     ins("mov rdi, rax")
@@ -386,8 +418,36 @@ mut X86Backend::arrayAppendTo(off: int)
     m_usesAppend = true
     ins("mov rsi, rax")
     ins("mov rdi, [rbp - " + string(off) + "]")
-    emitCall("km_array_append")
+    emitCall("km_array_grow")
     ins("mov [rbp - " + string(off) + "], rax")
+
+// `string(x)` — value in rax, `tag` a compile-time constant
+// (0 int / 1 float-bits / 2 string / 3 bool).  → km_to_string(tag, value).
+mut X86Backend::toStringOf(tag: int)
+    ins("mov rsi, rax")
+    ins("mov rdi, " + string(tag))
+    recordExtern("km_to_string")
+    emitCall("km_to_string")
+
+// `a + b` for arrays / `dst[i] += src` — right operand in rax, left
+// spilled by pushAcc().  Copying (left may be aliased).
+mut X86Backend::arrayAppendAcc()
+    m_usesAppend = true
+    ins("mov rsi, rax")
+    ins("pop rdi")
+    emitCall("km_array_append")
+
+// `self.field += src` (array append) — src in rax, receiver spilled by
+// pushAcc().  self.field = km_array_append(self.field, src).
+mut X86Backend::arrayAppendToField(idx: int)
+    m_usesAppend = true
+    ins("mov rsi, rax")
+    ins("pop rax")
+    ins("mov rdi, [rax + " + string(8 + idx * 8) + "]")
+    ins("push rax")
+    emitCall("km_array_grow")
+    ins("pop rcx")
+    ins("mov [rcx + " + string(8 + idx * 8) + "], rax")
 
 // `dst -= src` — value in rax, dst at [rbp - off].
 void X86Backend::subFromLocal(off: int)
@@ -434,9 +494,9 @@ void X86Backend::forCompareExit(endL: string, descending: bool, inclusive: bool)
         else
             ins("jge " + endL)
 
-void X86Backend::stepLocal(off: int, down: bool)
+void X86Backend::stepLocal(off: int, desc: bool)
     ins("mov rax, [rbp - " + string(off) + "]")
-    if down then
+    if desc then
         ins("dec rax")
     else
         ins("inc rax")
@@ -666,21 +726,25 @@ mut X86Backend::tryEnd()
 // ── final assembly ─────────────────────────────────────────────────
 
 mut X86Backend::finish(): string
-    return header() + m_text + footer()
+    return header() + join(m_lines, "\n") + "\n" + footer()
 
 mut X86Backend::header(): string
     let h = "; generated by the Komodo compiler — NASM x86-64\n"
     h = h + "default rel\n\n"
-    h = h + "global main\n\n"
+    // The C runtime provides `main` (it marshals argv into a Komodo
+    // string array); the program's own entry point is `km_program_main`.
+    h = h + "global km_program_main\n\n"
     if m_usesMalloc then
         h = h + "extern malloc\n"
     if m_usesAppend then
         h = h + "extern km_array_append\n"
+        h = h + "extern km_array_grow\n"
     if m_usesStr then
         h = h + "extern km_str_concat\n"
         h = h + "extern km_str_repeat\n"
         h = h + "extern km_str_len\n"
         h = h + "extern km_str_eq\n"
+        h = h + "extern km_str_join\n"
     let i = 0
     while i < #m_externs do
         h = h + "extern " + m_externs[i] + "\n"

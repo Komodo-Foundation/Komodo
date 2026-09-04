@@ -34,3 +34,7 @@ static void write_all(FILE *out, long argc, KmArg *items, int newline)
 void console_print(long argc, KmArg *items) { write_all(stdout, argc, items, 1); }
 void console_write(long argc, KmArg *items) { write_all(stdout, argc, items, 0); }
 void console_error(long argc, KmArg *items) { write_all(stderr, argc, items, 1); }
+
+/* Bare `print(...)` (used by the self-hosted compiler driver) is an
+ * alias for `console.print`. */
+void print(long argc, KmArg *items) { console_print(argc, items); }

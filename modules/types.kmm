@@ -1,0 +1,205 @@
+module km_compiler
+
+// ═══════════════════════════════════════════════════════════════════════
+//  Komodo static type system — the internal representation the semantic
+//  analyser (sema*.kmm) reasons about.
+//
+//  This is *not* surface syntax: the parser still records a declared type
+//  as a plain string ("int", "string?", "[Token]", …).  `parseTypeStr`
+//  turns such a string into a structured `Type`; `typeToLegacy` collapses
+//  a `Type` back to the coarse string the code generator consumes
+//  ("int" / "float" / "string" / "[T]" / an object-type name), so codegen
+//  never has to learn the richer lattice.
+//
+//  Kinds:
+//     int uint float bool string char void        — primitives
+//     u8 u16 u32 u64 i8 i16 i32 i64                — fixed-width integers
+//     null      — the type of the `null` literal
+//     never     — no value (a `throw`, an exhausted branch)
+//     array     — `elem` is the element type
+//     nullable  — `elem` is the non-null inner type (`T?` = `T | null`)
+//     object    — `name` is a struct / class / enum name
+//     union     — `members` are the alternatives (analyser-internal only)
+//     fn        — `members` are the parameter types, `ret` the result
+// ═══════════════════════════════════════════════════════════════════════
+
+struct Type
+    kind: string
+    elem: Type? = null
+    name: string = ""
+    members: [Type] = []
+    ret: Type? = null
+
+// ── constructors ─────────────────────────────────────────────────────
+
+fn tPrim(k: string): Type
+    return new Type(k)
+
+fn tArray(e: Type): Type
+    return new Type("array", e)
+
+fn tObject(n: string): Type
+    return new Type("object", null, n)
+
+fn tNever(): Type
+    return new Type("never")
+
+// The gradual escape hatch: an un-annotated parameter's type.  `any` is
+// assignable to and from everything, and reading a member / indexing /
+// calling on it yields `any` again.  `strict` mode reports the binding.
+fn tAny(): Type
+    return new Type("any")
+
+fn tNull(): Type
+    return new Type("null")
+
+fn tVoid(): Type
+    return new Type("void")
+
+// `T?` — idempotent, and `null` / `never` are left unchanged.
+fn tNullable(inner: Type): Type
+    if inner.kind == "nullable" or inner.kind == "null" or inner.kind == "never" then
+        return inner
+    return new Type("nullable", inner)
+
+fn tFn(params: [Type], r: Type): Type
+    return new Type("fn", null, "", params, r)
+
+// ── predicates ───────────────────────────────────────────────────────
+
+fn isNullable(t: Type): bool
+    return t.kind == "nullable" or t.kind == "null"
+
+// The non-null core of a type (`T?` → `T`, everything else unchanged).
+fn stripNull(t: Type): Type
+    if t.kind == "nullable" then
+        return t.elem or tPrim("never")
+    return t
+
+fn isIntKind(k: string): bool
+    if k == "int" or k == "uint" then
+        return true
+    if k == "u8" or k == "u16" or k == "u32" or k == "u64" then
+        return true
+    if k == "i8" or k == "i16" or k == "i32" or k == "i64" then
+        return true
+    return false
+
+fn isNumeric(t: Type): bool
+    if t.kind == "float" then
+        return true
+    return isIntKind(t.kind)
+
+// ── stringification ──────────────────────────────────────────────────
+
+fn typeToString(t: Type): string
+    if t.kind == "array" then
+        return "[" + typeToString(t.elem or tPrim("int")) + "]"
+    if t.kind == "nullable" then
+        return typeToString(t.elem or tPrim("int")) + "?"
+    if t.kind == "object" then
+        return t.name
+    if t.kind == "union" then
+        let s = ""
+        let i = 0
+        while i < #t.members do
+            if i > 0 then
+                s = s + " | "
+            s = s + typeToString(t.members[i])
+            i += 1
+        return s
+    if t.kind == "fn" then
+        let s = "("
+        let i = 0
+        while i < #t.members do
+            if i > 0 then
+                s = s + ", "
+            s = s + typeToString(t.members[i])
+            i += 1
+        return s + "): " + typeToString(t.ret or tVoid())
+    return t.kind
+
+// The coarse tag the code generator keys off: one of "int", "float",
+// "string", "[T]", or an object-type name.  Nullability, fixed-width
+// integer sizes and unions all wash out here — codegen never needed them.
+fn typeToLegacy(t: Type): string
+    if t.kind == "nullable" then
+        return typeToLegacy(t.elem or tPrim("int"))
+    if t.kind == "array" then
+        return "[" + typeToLegacy(t.elem or tPrim("int")) + "]"
+    if t.kind == "object" then
+        return t.name
+    if t.kind == "float" then
+        return "float"
+    if t.kind == "string" then
+        return "string"
+    // a `char` is a one-character string at run time (it compares and
+    // concatenates like one), so codegen treats it as a string.
+    if t.kind == "char" then
+        return "string"
+    if t.kind == "bool" then
+        return "int"
+    if t.kind == "union" then
+        // codegen wants one tag; "string"/"float" only if every arm agrees
+        let acc = ""
+        let i = 0
+        while i < #t.members do
+            let l = typeToLegacy(t.members[i])
+            if i == 0 then
+                acc = l
+            else if l != acc then
+                acc = "int"
+            i += 1
+        return acc
+    if isIntKind(t.kind) then
+        return "int"
+    // void / null / never / fn — nothing meaningful for codegen
+    return "int"
+
+// ── parsing a declared-type string into a `Type` ─────────────────────
+//
+//  Declared types are recorded by the parser as strings.  Grammar here:
+//  an optional trailing "?" makes it nullable; "[...]" is an array whose
+//  body is itself a declared-type string; a bare word is a primitive
+//  (known kind) or an object-type name.
+
+fn stripOpt(t: string?): string?
+    if t == null then
+        return null
+    if #t > 0 and t[#t - 1] == "?" then
+        return t[0 to (#t - 1)]
+    return t
+
+fn isOpt(t: string?): bool
+    if t == null then
+        return false
+    return #t > 0 and t[#t - 1] == "?"
+
+fn isPrimName(w: string): bool
+    if w == "int" or w == "uint" or w == "float" or w == "bool" then
+        return true
+    if w == "string" or w == "char" or w == "void" then
+        return true
+    return isIntKind(w)
+
+fn parseTypeStr(s: string?): Type
+    if s == null then
+        return tPrim("int")
+    let body = s
+    let nullable = false
+    if #body > 0 and body[#body - 1] == "?" then
+        nullable = true
+        body = body[0 to (#body - 1)]
+    let inner = parseTypeBody(body)
+    if nullable then
+        return tNullable(inner)
+    return inner
+
+fn parseTypeBody(body: string): Type
+    if #body >= 2 and body[0] == "[" and body[#body - 1] == "]" then
+        return tArray(parseTypeStr(body[1 to (#body - 1)]))
+    if body == "any" then
+        return tAny()
+    if isPrimName(body) then
+        return tPrim(body)
+    return tObject(body)
