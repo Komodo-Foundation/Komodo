@@ -1,0 +1,264 @@
+module km_compiler
+
+// ═══════════════════════════════════════════════════════════════════════
+//  Parser — the expression grammar.
+//
+//  A plain recursive-descent precedence climb, lowest-binding first:
+//
+//      parseExpression → or → and → is/in → comparison → bitwise
+//                      → additive → multiplicative → unary → postfix
+//                      → primary
+//
+//  Every method belongs to `Parser` (declared in parser.kmm) and drives
+//  the shared token cursor through `peek` / `eat` / `at`.
+// ═══════════════════════════════════════════════════════════════════════
+
+// Komodo has no C-style `?:`. A conditional value is the Lua idiom
+// `cond and whenTrue or whenFalse`, built from short-circuit and/or,
+// which yield operand values (not coerced booleans).
+mut Parser::parseExpression(): Expression?
+    let ln = peek().line
+    let col = peek().column
+    let ex = parseOr()
+    if ex != null and ex.line == 0 then
+        ex.line = ln
+        ex.column = col
+    return ex
+
+mut Parser::parseOr(): Expression?
+    let left = parseAnd()
+    while at(TokenType::OR) do
+        eat()
+        let right = parseAnd()
+        left = new BinaryOp("or", left, right)
+    return left
+
+mut Parser::parseAnd(): Expression?
+    let left = parseIs()
+    while at(TokenType::AND) do
+        eat()
+        let right = parseIs()
+        left = new BinaryOp("and", left, right)
+    return left
+
+// `expr is TypeName` — runtime type test.  The right side is a bare
+// type name (matches the interpreter): pulled off as an Identifier,
+// never evaluated as a value.
+mut Parser::parseIs(): Expression?
+    let left = parseComparison()
+    while at(TokenType::IS) do
+        eat()
+        let tn = peek().lexeme
+        eat()
+        left = new BinaryOp("is", left, new Identifier(tn))
+    return left
+
+mut Parser::parseComparison(): Expression?
+    let left = parseBitwise()
+    if at(TokenType::LT) or at(TokenType::GT) or at(TokenType::LTE) or at(TokenType::GTE) or at(TokenType::EQ) or at(TokenType::NEQ) then
+        let op = peek().lexeme
+        eat()
+        let right = parseBitwise()
+        return new BinaryOp(op, left, right)
+    // `x in coll` — membership: a substring of a string, or an
+    // element of an array.  Yields a bool.
+    if at(TokenType::IN) then
+        eat()
+        let right = parseBitwise()
+        return new BinaryOp("in", left, right)
+    return left
+
+mut Parser::parseBitwise(): Expression?
+    let left = parseAdditive()
+    while at(TokenType::AMP) or at(TokenType::PIPE) or at(TokenType::CARET) or at(TokenType::SHL) or at(TokenType::SHR) do
+        let op = peek().lexeme
+        eat()
+        let right = parseAdditive()
+        left = new BinaryOp(op, left, right)
+    return left
+
+mut Parser::parseAdditive(): Expression?
+    let left = parseMultiplicative()
+    while at(TokenType::PLUS) or at(TokenType::MINUS) do
+        let op = peek().lexeme
+        eat()
+        let right = parseMultiplicative()
+        left = new BinaryOp(op, left, right)
+    return left
+
+mut Parser::parseMultiplicative(): Expression?
+    let left = parseUnary()
+    while at(TokenType::STAR) or at(TokenType::SLASH) or at(TokenType::PERCENT) do
+        let op = peek().lexeme
+        eat()
+        let right = parseUnary()
+        left = new BinaryOp(op, left, right)
+    return left
+
+mut Parser::parseUnary(): Expression?
+    if at(TokenType::MINUS) or at(TokenType::NOT) or at(TokenType::HASH) then
+        let op = peek().lexeme
+        eat()
+        let operand = parseUnary()
+        return new UnaryOp(op, operand)
+    // `throw expr` in expression position (covers `x or throw "msg"`).
+    if at(TokenType::THROW) then
+        eat()
+        let msg = parseUnary()
+        return new ThrowExpr(msg)
+    return parsePostfix()
+
+mut Parser::parsePostfix(): Expression?
+    let expr = parsePrimary()
+
+    while true do
+        if at(TokenType::DOT) then
+            eat()
+            let member = peek().lexeme
+            eat()
+            if at(TokenType::OPEN_PAREN) then
+                eat()
+                let cargs: [Expression] = []
+                while not at(TokenType::CLOSE_PAREN) and not at(TokenType::EOF) do
+                    let carg = parseExpression()
+                    if carg != null then
+                        cargs += [carg]
+                    if not at(TokenType::CLOSE_PAREN) then
+                        eat()
+                eat()
+                let base = ""
+                if expr is Identifier then
+                    base = expr.name
+                expr = new CallExpr(base + "." + member, cargs)
+            else if member == "length" then
+                // `.length` on a string / array is the same as `#x`.
+                expr = new UnaryOp("#", expr)
+            else
+                expr = new MemberExpr(expr, member)
+        else if at(TokenType::OPEN_BRACKET) then
+            eat()
+            // `obj[i]` indexes; `obj[a to b]` / `obj[a:b]` slices
+            // (end exclusive).  Either bound may be omitted:
+            // `obj[:b]`, `obj[a:]`, `obj[a to]`, `obj[:]`.
+            let sStart: Expression? = null
+            if not at(TokenType::COLON) and not at(TokenType::TO) and not at(TokenType::CLOSE_BRACKET) then
+                sStart = parseExpression()
+            if at(TokenType::COLON) or at(TokenType::TO) then
+                eat()
+                let sEnd: Expression? = null
+                if not at(TokenType::CLOSE_BRACKET) then
+                    sEnd = parseExpression()
+                if at(TokenType::CLOSE_BRACKET) then
+                    eat()
+                expr = new SliceExpr(expr, sStart, sEnd)
+            else
+                if at(TokenType::CLOSE_BRACKET) then
+                    eat()
+                expr = new IndexExpr(expr, sStart)
+        else if at(TokenType::OPEN_PAREN) and expr is Identifier then
+            eat()
+            let args: [Expression] = []
+            while not at(TokenType::CLOSE_PAREN) do
+                let arg = parseExpression()
+                if arg != null then
+                    args += [arg]
+                if not at(TokenType::CLOSE_PAREN) then
+                    eat()
+            eat()
+            let ce = new CallExpr(expr.name, args)
+            ce.qualifier = expr.qualifier
+            expr = ce
+        else if at(TokenType::QUESTION) and expr is CallExpr then
+            eat()
+            expr.protected = true
+        else if at(TokenType::QUESTION) and expr is NewExpr then
+            eat()
+            expr.protected = true
+        else
+            break
+
+    return expr
+
+mut Parser::parsePrimary(): Expression?
+    if at(TokenType::INT) then
+        let val = peek().lexeme
+        eat()
+        return new IntLiteral(val)
+
+    if at(TokenType::FLOAT) then
+        let val = peek().lexeme
+        eat()
+        return new FloatLiteral(val)
+
+    if at(TokenType::STRING) then
+        let val = peek().lexeme
+        eat()
+        return new StringLiteral(val)
+
+    if at(TokenType::CHAR) then
+        let lexeme = peek().lexeme
+        eat()
+        return new CharLiteral(lexeme)
+
+    if at(TokenType::TRUE) then
+        eat()
+        return new BoolLiteral(true)
+
+    if at(TokenType::FALSE) then
+        eat()
+        return new BoolLiteral(false)
+
+    if at(TokenType::NULL) then
+        eat()
+        return new NullLiteral()
+
+    if at(TokenType::NEW) then
+        eat()
+        let typeName = peek().lexeme
+        eat()
+        eat()
+        let args: [Expression] = []
+        while not at(TokenType::CLOSE_PAREN) do
+            let arg = parseExpression()
+            if arg != null then
+                args += [arg]
+            if not at(TokenType::CLOSE_PAREN) then
+                eat()
+        eat()
+        return new NewExpr(typeName, args)
+
+    if at(TokenType::OPEN_BRACKET) then
+        eat()
+        let elements: [Expression] = []
+        while not at(TokenType::CLOSE_BRACKET) do
+            let elem = parseExpression()
+            if elem != null then
+                elements += [elem]
+            if not at(TokenType::CLOSE_BRACKET) then
+                eat()
+        eat()
+        return new ArrayExpr(elements)
+
+    if at(TokenType::OPEN_PAREN) then
+        eat()
+        let expr = parseExpression()
+        eat()
+        return expr
+
+    if at(TokenType::IDENT) then
+        let name = peek().lexeme
+        eat()
+        // `ns::member` — the namespace is dropped (flat after merge);
+        // `a::b::c` keeps the last segment.  The segment just before
+        // the final `::` is kept on the node for module-privacy checks.
+        let qual = ""
+        while at(TokenType::SCOPE) do
+            eat()
+            qual = name
+            name = peek().lexeme
+            eat()
+        let id = new Identifier(name)
+        id.qualifier = qual
+        return id
+
+    return null
