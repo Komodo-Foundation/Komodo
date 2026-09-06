@@ -10,13 +10,22 @@
 #include <dirent.h>
 #include "km_runtime.h"
 
-/* file.exists(path) : bool */
+/* file.exists(path) : bool  — a regular file exists at `path` */
 long exists(long argc, KmArg *items)
 {
     if (argc < 1) return 0;
     struct stat st;
     const char *path = (const char *)items[0].value;
     return stat(path, &st) == 0 && S_ISREG(st.st_mode);
+}
+
+/* file.is_dir(path) : bool */
+long is_dir(long argc, KmArg *items)
+{
+    if (argc < 1) return 0;
+    struct stat st;
+    const char *path = (const char *)items[0].value;
+    return stat(path, &st) == 0 && S_ISDIR(st.st_mode);
 }
 
 /* file.read_all(path) : string */

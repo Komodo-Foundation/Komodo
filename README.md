@@ -1,7 +1,7 @@
 # Komodo
 
 A **self-hosting** compiler for the **Komodo** language, written in Komodo
-itself: `./kmc` compiles `main.km` + `modules/*.kmm` to a byte-identical copy
+itself: `./kmc` compiles `main.km` + the `modules/` tree to a byte-identical copy
 of itself. It lowers a program to native **x86-64** assembly (NASM) or to a
 textual **stack-VM** bytecode, links the result against a small C runtime in
 `stdlib/`, statically type-checks it first (`modules/sema*.kmm`), and can

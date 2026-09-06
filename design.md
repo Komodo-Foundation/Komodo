@@ -29,11 +29,12 @@ only, for keeping the implementation and sample code coherent.
 - `import <name>` — pull in a module. `<name>.kmm` is resolved from the
   directory tree of the file being compiled (and, as a fallback, the
   compiler's own directory, which is where the standard library lives);
-  then every sibling `.km` / `.kmm` in that file's directory declaring
-  the same `module` is merged in too. Applied transitively, everything
-  reached is compiled as one unit. The interpreter and the self-hosted
-  compiler resolve modules the same way, so `kmc main.km` builds the
-  compiler straight from `modules/*.kmm` — no concatenation step.
+  then every `.km` / `.kmm` **anywhere under that file's directory**
+  declaring the same `module` is merged in too — so a module's files may
+  be grouped into sub-folders (the compiler's own sources are, under
+  `modules/frontend/`, `modules/analyze/`, `modules/codegen/`, …).
+  Applied transitively, everything reached is compiled as one unit, so
+  `kmc main.km` builds the compiler with no concatenation step.
 - Members are reached as `name::member` (scope) or `name.member`. After the
   merge namespaces are flat, so `name::member` resolves to `member`.
 - Entry point: `void main()` or `void main(args)`; `args` is a string array,
@@ -443,7 +444,7 @@ ships as a `.kmm` file of prototype declarations (bodies linked from
 | `math` | ints: `abs`, `min`, `max`, `pow`, `gcd`, `clamp`, `sign`; floats: `sqrt`, `floor`, `ceil`, `round`, `trunc`, `fabs`, `sin`, `cos`, `tan`, `atan`, `atan2`, `exp`, `log`, `log2`, `log10`, `powf`, `hypot`; constants `pi()`, `e()` |
 | `string` | `length`, `split`, `join`, `trim`, `trim_start`, `trim_end`, `replace`, `index_of`, `contains`, `starts_with`, `ends_with`, `to_upper`, `to_lower`, `repeat`, `reverse`, `substring`, `pad_start`, `pad_end` |
 | `algorithm` | `sort`, `reverse`, `sum`, `max`, `min`, `contains`, `index_of`, `fill` — each **overloaded** for `[int]` and `[float]` (same call, resolved on the array's element type) |
-| `file` | `exists`, `read_all`, `read_lines`, `write_all`, `append_all`, `find`, `list_dir` |
+| `file` | `exists`, `is_dir`, `read_all`, `read_lines`, `write_all`, `append_all`, `find`, `list_dir` |
 | `sdl2` | a System-V-ABI subset of SDL2 (window / renderer / events) — see `stdlib/sdl2.kmm` |
 
 `math` / `string` / `algorithm` members carry a module-name prefix on

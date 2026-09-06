@@ -4,6 +4,7 @@ module file
 // the parser resolves to the bare symbol.
 
 fn exists(path: string): int
+fn is_dir(path: string): int
 fn read_all(path: string): string
 fn read_lines(path: string): [string]
 void write_all(path: string, data: string)

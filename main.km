@@ -164,14 +164,26 @@ fn gather(rootPath: string, stdlibProbe: string) : GatherResult
                 if not (t in links) then
                     links += [t]
 
-            let dir = dirOf(p)
-            for entry in file::list_dir(dir) do
-                if isSource(entry) then
-                    let sib = dir + "/" + entry
-                    if not (sib in seen) and moduleOf(file::read_all(sib)) == mod then
-                        queue += [sib]
+            // Sibling files declaring the same module — searched through
+            // the whole subtree of this file's directory, so the compiler
+            // sources may be grouped into folders (frontend/, codegen/, …).
+            for sib in sourceTree(dirOf(p)) do
+                if not (sib in seen) and moduleOf(file::read_all(sib)) == mod then
+                    queue += [sib]
 
     return new GatherResult(out, seen, links)
+
+// Every `.km` / `.kmm` under `dir`, recursively.
+fn sourceTree(dir: string) : [string]
+    let out: [string] = []
+    for entry in file::list_dir(dir) do
+        let full = dir + "/" + entry
+        if file::is_dir(full) != 0 then
+            for nested in sourceTree(full) do
+                out += [nested]
+        else if isSource(entry) then
+            out += [full]
+    return out
 
 // `link <name>` (a bare identifier → the linker flag `-lname`) or
 // `link "path/to/file.c"` (a quoted path, kept as-is — relative to

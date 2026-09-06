@@ -177,6 +177,7 @@ double math_pi(long argc, KmArg *items);
 double math_e(long argc, KmArg *items);
 
 /* ── module: file (extra) ── */
+long      is_dir(long argc, KmArg *items);
 void      append_all(long argc, KmArg *items);
 KmArray  *read_lines(long argc, KmArg *items);
 

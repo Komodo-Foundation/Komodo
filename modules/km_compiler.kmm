@@ -6,21 +6,32 @@ import file
 //
 //  Pipeline:  source ─Lexer▶ tokens ─Parser▶ AST ─Analyzer▶ ─Optimizer▶ AST ─Codegen▶ text
 //
-//  The compiler is split across sibling files, all `module km_compiler`:
+//  The compiler is one `module km_compiler` spread over modules/, grouped
+//  by pipeline stage (the driver walks the whole tree — see main.km's
+//  `sourceTree`):
 //
-//      ast.kmm             AST node definitions
-//      lexer.kmm           source text → tokens
-//      parser.kmm          tokens → AST
-//      types.kmm           Type: the static type lattice
-//      sema*.kmm           Analyzer: static type-checking + AST annotation
-//      optimize.kmm        Optimizer: constant folding / DCE (none..max)
-//      codegen.kmm         Codegen: target-independent lowering pass
-//      codegen_frame.kmm   stack-frame layout + static type inference
-//      codegen_stmt.kmm    statement lowering
-//      codegen_expr.kmm    expression lowering
-//      backend.kmm         Backend: the target-independent emit interface
-//      backend_x86.kmm     X86Backend     — System V AMD64, NASM syntax
-//      backend_stackvm.kmm StackVMBackend — textual stack-VM bytecode
+//      km_compiler.kmm         this file — the driver + target selection
+//    frontend/
+//      ast.kmm                 AST node definitions
+//      lexer.kmm               source text → tokens
+//      parser.kmm              tokens → AST (declarations + statements)
+//      parser_expr.kmm         the expression-grammar precedence climb
+//    analyze/
+//      types.kmm               Type: the static type lattice
+//      sema.kmm                Analyzer: driver + registries
+//      sema_expr.kmm           `inferExpr` — type inference
+//      sema_stmt.kmm           `checkStmt` + flow narrowing
+//    optimize/
+//      optimize.kmm            Optimizer: constant folding / DCE (none..max)
+//    codegen/
+//      codegen.kmm             Codegen: driver + the function registry
+//      codegen_frame.kmm       stack-frame layout + coarse type inference
+//      codegen_stmt.kmm        statement lowering
+//      codegen_expr.kmm        expression lowering
+//    backend/
+//      backend.kmm             Backend: the target-independent emit interface
+//      backend_x86.kmm         X86Backend     — System V AMD64, NASM syntax
+//      backend_stackvm.kmm     StackVMBackend — textual stack-VM bytecode
 //
 //  The front end and `Codegen` are target-agnostic; picking a target is
 //  just picking a `Backend` (see `selectBackend`).  The x86 output
