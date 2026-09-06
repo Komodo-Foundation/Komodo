@@ -62,12 +62,6 @@ struct GatherResult
     deps: [string]
     links: [string]
 
-fn listHas(xs: [string], v: string) : bool
-    for x in xs do
-        if x == v then
-            return true
-    return false
-
 // Everything in `path` before the last "/".  "." when there is none.
 fn dirOf(path: string) : string
     let cut = 0 - 1
@@ -138,7 +132,7 @@ fn gather(rootPath: string, stdlibProbe: string) : GatherResult
     while #queue > 0 do
         let p = queue[0]
         queue = queue[1 to #queue]
-        if listHas(seen, p) then
+        if (p in seen) then
             continue
         seen += [p]
 
@@ -150,13 +144,13 @@ fn gather(rootPath: string, stdlibProbe: string) : GatherResult
             let resolved = file::find(name, rootPath)
             if resolved == null then
                 resolved = file::find(name, stdlibProbe)
-            if resolved != null and not listHas(seen, resolved) then
+            if resolved != null and not (resolved in seen) then
                 queue += [resolved]
 
         // 1b. a block `extern "lib"` links its library automatically, in
         //     any file (unlike the `link` keyword it needs no `module`).
         for t in externLinkTargets(src) do
-            if not listHas(links, t) then
+            if not (t in links) then
                 links += [t]
 
         // 2. a module file: merge its siblings, and collect its `link`s
@@ -167,14 +161,14 @@ fn gather(rootPath: string, stdlibProbe: string) : GatherResult
         let mod = moduleOf(src)
         if mod != "" then
             for t in linkTargets(src) do
-                if not listHas(links, t) then
+                if not (t in links) then
                     links += [t]
 
             let dir = dirOf(p)
             for entry in file::list_dir(dir) do
                 if isSource(entry) then
                     let sib = dir + "/" + entry
-                    if not listHas(seen, sib) and moduleOf(file::read_all(sib)) == mod then
+                    if not (sib in seen) and moduleOf(file::read_all(sib)) == mod then
                         queue += [sib]
 
     return new GatherResult(out, seen, links)

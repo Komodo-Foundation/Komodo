@@ -86,11 +86,11 @@ public
     // never emitted as an external symbol.
     mut declareFn(name: string)
         let m = mangle(name)
-        if not listHas(m_fnNames, m) then
+        if not (m in m_fnNames) then
             m_fnNames += [m]
 
     mut isLocalFn(mangledSym: string): bool
-        return listHas(m_fnNames, mangledSym)
+        return (mangledSym in m_fnNames)
 
     // `module.member` → `module_member`; a plain name is unchanged.
     fn mangle(name: string): string
@@ -103,14 +103,6 @@ public
                 out = out + name[i]
             i += 1
         return out
-
-    mut listHas(list: [string], item: string): bool
-        let i = 0
-        while i < #list do
-            if list[i] == item then
-                return true
-            i += 1
-        return false
 
 private
     m_labelId: int = 0

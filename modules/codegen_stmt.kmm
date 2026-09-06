@@ -187,7 +187,7 @@ mut Codegen::escFreshChildren(e: Expression?)
 mut Codegen::collectFreeable(stmts: [Statement])
     for s in stmts do
         if s is VarDecl and not s.immutable then
-            if isFreshExpr(s.init) and not listHas(m_escaped, s.name) and not listHas(m_freeNames, s.name) then
+            if isFreshExpr(s.init) and not (s.name in m_escaped) and not (s.name in m_freeNames) then
                 let ty = typeOf(s.name)
                 if isArrayType(ty) then
                     m_freeNames += [s.name]
@@ -209,7 +209,7 @@ mut Codegen::collectFreeable(stmts: [Statement])
                 collectFreeable(c.body)
 
 mut Codegen::isFreeable(name: string): bool
-    return listHas(m_freeNames, name)
+    return (name in m_freeNames)
 
 // ════════════════════════════════════════════════════════════════════
 

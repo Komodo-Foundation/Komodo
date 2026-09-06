@@ -58,7 +58,7 @@ public
         for en in prog.enums do
             let ord = 0
             for v in en.variants do
-                if not listHas(m_enumNames, v) then
+                if not (v in m_enumNames) then
                     m_enumNames += [v]
                     m_enumOrdinals += [ord]
                 ord += 1
@@ -284,7 +284,7 @@ public
             let progressed = false
             for d in work do
                 let par = declParent(d)
-                if par == "" or listHas(done, par) then
+                if par == "" or (par in done) then
                     ordered += [d]
                     done += [declName(d)]
                     progressed = true
@@ -316,7 +316,7 @@ public
     // Register a type, prepending its parent's flattened fields (names,
     // types and default-value expressions) ahead of its own.
     mut registerTypeFull(name: string, isClass: bool, isAbs: bool, parent: string?, fnames: [string], ftypes: [string], fdefs: [Expression?])
-        if listHas(m_typeNames, name) then
+        if (name in m_typeNames) then
             throw ("duplicate type '" + name + "'")
         let par = parentOrEmpty(parent)
         let allNames: [string] = []
@@ -372,7 +372,7 @@ public
             prog.functions += [makeDeepCopier(nm)]
 
     mut deepCopierExists(name: string): bool
-        return listHas(m_deepCopierTypes, name)
+        return (name in m_deepCopierTypes)
 
     fn classHasCtor(c: ClassDecl): bool
         for m in c.methods do
@@ -526,7 +526,7 @@ public
                         for s in m_typeSlotNames[pi] do
                             slots += [s]
                 for mn in m_typeOwnMethods[i] do
-                    if mn != "constructor" and not listHas(slots, mn) then
+                    if mn != "constructor" and not (mn in slots) then
                         slots += [mn]
                 // An abstract base that never declares an interface method
                 // itself still needs a slot for it, so a `base.method()`
@@ -538,7 +538,7 @@ public
                     while d < #m_typeNames do
                         if isDescendantOf(m_typeNames[d], m_typeNames[i]) and not m_typeIsAbstract[d] then
                             for mn in m_typeOwnMethods[d] do
-                                if mn != "constructor" and not listHas(slots, mn) and allConcreteHave(m_typeNames[i], mn) then
+                                if mn != "constructor" and not (mn in slots) and allConcreteHave(m_typeNames[i], mn) then
                                     slots += [mn]
                         d += 1
                 m_typeSlotNames[i] = slots
@@ -549,7 +549,7 @@ public
         let d = 0
         while d < #m_typeNames do
             if isDescendantOf(m_typeNames[d], base) and not m_typeIsAbstract[d] then
-                if not listHas(m_typeOwnMethods[d], mn) and resolveMethodOwner(m_typeNames[d], mn) == "" then
+                if not (mn in m_typeOwnMethods[d]) and resolveMethodOwner(m_typeNames[d], mn) == "" then
                     return false
             d += 1
         return true
@@ -593,7 +593,7 @@ public
         let guard = 0
         while cur != "" do
             let ti = typeIndex(cur)
-            if ti >= 0 and listHas(m_typeOwnMethods[ti], method) then
+            if ti >= 0 and (method in m_typeOwnMethods[ti]) then
                 return cur
             cur = typeParentOf(cur)
             guard += 1
@@ -603,18 +603,18 @@ public
         if ci >= 0 and m_typeIsAbstract[ci] then
             let d = 0
             while d < #m_typeNames do
-                if isDescendantOf(m_typeNames[d], className) and listHas(m_typeOwnMethods[d], method) then
+                if isDescendantOf(m_typeNames[d], className) and (method in m_typeOwnMethods[d]) then
                     return m_typeNames[d]
                 d += 1
         return ""
 
     mut isObjType(name: string): bool
-        return listHas(m_typeNames, name)
+        return (name in m_typeNames)
 
     // ── enum variants (name → ordinal) ────────────────────────────
 
     mut isEnumVariant(name: string): bool
-        return listHas(m_enumNames, name)
+        return (name in m_enumNames)
 
     fn isArrayType(t: string): bool
         return #t > 0 and t[0] == "["
@@ -670,7 +670,7 @@ public
         return 0
 
     mut hasFn(name: string): bool
-        return listHas(m_fnNames, name)
+        return (name in m_fnNames)
 
     // `a` is a bare Komodo function name used as an `extern` call argument
     // — codegen passes C a pointer to that function's trampoline.
@@ -684,7 +684,7 @@ public
         return k != "" and k != "extern"
 
     mut recordTramp(name: string)
-        if not listHas(m_trampNames, name) then
+        if not (name in m_trampNames) then
             m_trampNames += [name]
 
     // ── macro registry ────────────────────────────────────────────
@@ -696,7 +696,7 @@ public
     // of the stack, so an inner binding shadows an outer one.
 
     mut isMacro(name: string): bool
-        return listHas(m_macroNames, name)
+        return (name in m_macroNames)
 
     mut macroExprOf(name: string): Expression?
         let i = #m_macroNames - 1
@@ -723,7 +723,7 @@ public
     // ── top-level variable registry ─────────────────────────────
 
     mut isGlobalVar(name: string): bool
-        return listHas(m_globalNames, name)
+        return (name in m_globalNames)
 
     mut globalTypeOf(name: string): string
         let i = 0
@@ -802,7 +802,7 @@ public
         return m_typeFieldNames[ti]
 
     mut isCurField(name: string): bool
-        return listHas(curClassFields(), name)
+        return (name in curClassFields())
 
     // A function with no declared return type never yields a value
     // (`void f()`, or `mut m()` with no `: T`).
@@ -836,14 +836,6 @@ public
                 return m_fnArity[i]
             i += 1
         return 0 - 1
-
-    mut listHas(list: [string], item: string): bool
-        let i = 0
-        while i < #list do
-            if list[i] == item then
-                return true
-            i += 1
-        return false
 
     // ── function overloading ──────────────────────────────────────
     //

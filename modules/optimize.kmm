@@ -102,7 +102,7 @@ public
         if s is VarDecl then
             if s.init != null then
                 s.init = foldExpr(s.init)
-            if m_prop and not s.immutable and isLiteral(s.init) and not listHas(m_assigned, s.name) then
+            if m_prop and not s.immutable and isLiteral(s.init) and not (s.name in m_assigned) then
                 m_constNames += [s.name]
                 m_constVals += [needExpr(s.init)]
             return [s]
@@ -529,14 +529,8 @@ public
             return mkInt(0)
         return e
 
-    fn listHas(xs: [string], v: string): bool
-        for x in xs do
-            if x == v then
-                return true
-        return false
-
     fn addUniq(xs: [string], v: string): [string]
-        if listHas(xs, v) then
+        if v in xs then
             return xs
         xs += [v]
         return xs

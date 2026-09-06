@@ -112,7 +112,7 @@ mut Analyzer::inferIdentifier(e: Identifier): Type
 mut Analyzer::enumOfVariant(name: string): string
     let i = 0
     while i < #m_typeNames do
-        if m_typeIsEnum[i] and listHas(m_enumVariants[i], name) then
+        if m_typeIsEnum[i] and (name in m_enumVariants[i]) then
             return m_typeNames[i]
         i += 1
     return ""

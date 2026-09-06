@@ -117,7 +117,7 @@ mut X86Backend::addString(lexeme: string): string
 void X86Backend::recordExtern(sym: string)
     if isLocalFn(sym) then
         return
-    if not listHas(m_externs, sym) then
+    if not (sym in m_externs) then
         m_externs += [sym]
 
 // ── lifecycle ──────────────────────────────────────────────────────
@@ -196,7 +196,7 @@ void X86Backend::storeLocal(off: int, ty: string)
 // `main`.
 
 void X86Backend::declareGlobal(name: string, ty: string)
-    if not listHas(m_globals, name) then
+    if not (name in m_globals) then
         m_globals += [name]
 
 void X86Backend::loadGlobal(name: string, ty: string)
@@ -1014,14 +1014,6 @@ mut X86Backend::header(): string
     h = h + "\nsection .text\n\n"
     return h
 
-fn X86Backend::intListHas(xs: [int], v: int): bool
-    let i = 0
-    while i < #xs do
-        if xs[i] == v then
-            return true
-        i += 1
-    return false
-
 fn X86Backend::footer(): string
     let r = ""
     if #m_globals > 0 then
@@ -1038,7 +1030,7 @@ fn X86Backend::footer(): string
         while i < m_vtabCount do
             if i > 0 then
                 r = r + ", "
-            if intListHas(m_vtabSet, i) then
+            if i in m_vtabSet then
                 r = r + "__vt_" + string(i)
             else
                 r = r + "0"
