@@ -1,23 +1,72 @@
 module algorithm
 
-// Linked from stdlib/algorithm.c.  The array element type is not
-// constrained — every element is one machine word.
+// The public surface is a set of *overloaded* free functions: one name
+// per operation, resolved on the element type of the array argument.
+// `algorithm.sort(xs)` picks `km_algo_sort` for `[int]` and
+// `km_algo_sortf` for `[float]`; the bodies are one-liners forwarding to
+// the C primitives (linked from stdlib/algorithm.c).
+//
+// The float element words are IEEE-754 double bit patterns, so the
+// order-independent ops (`reverse`, `fill`, `index_of`, `contains`) reuse
+// the integer primitive unchanged.
 
+// ── C primitives (prototypes — bodies in stdlib/algorithm.c) ──────────
+private
+    void km_algo_sort(a: [int])
+    void km_algo_reverse(a: [int])
+    fn   km_algo_sum(a: [int]): int
+    fn   km_algo_max(a: [int]): int
+    fn   km_algo_min(a: [int]): int
+    fn   km_algo_index_of(a: [int], v: int): int
+    fn   km_algo_contains(a: [int], v: int): int
+    void km_algo_fill(a: [int], v: int)
+    void km_algo_sortf(a: [float])
+    fn   km_algo_sumf(a: [float]): float
+    fn   km_algo_maxf(a: [float]): float
+    fn   km_algo_minf(a: [float]): float
+    void km_algo_reversef(a: [float])
+    void km_algo_fillf(a: [float], v: float)
+    fn   km_algo_index_off(a: [float], v: float): int
+    fn   km_algo_containsf(a: [float], v: float): int
+
+// ── overloaded public surface ────────────────────────────────────────
+public
 void algorithm_sort(a: [int])
-void algorithm_reverse(a: [int])
-fn algorithm_sum(a: [int]): int
-fn algorithm_max(a: [int]): int
-fn algorithm_min(a: [int]): int
-fn algorithm_index_of(a: [int], v: int): int
-fn algorithm_contains(a: [int], v: int): int
-void algorithm_fill(a: [int], v: int)
+    km_algo_sort(a)
+void algorithm_sort(a: [float])
+    km_algo_sortf(a)
 
-// float variants — element words carry IEEE-754 bit patterns.
-void algorithm_sort_f(a: [float])
-fn algorithm_sum_f(a: [float]): float
-fn algorithm_max_f(a: [float]): float
-fn algorithm_min_f(a: [float]): float
-void algorithm_reverse_f(a: [float])
-void algorithm_fill_f(a: [float], v: float)
-fn algorithm_index_of_f(a: [float], v: float): int
-fn algorithm_contains_f(a: [float], v: float): int
+void algorithm_reverse(a: [int])
+    km_algo_reverse(a)
+void algorithm_reverse(a: [float])
+    km_algo_reversef(a)
+
+fn algorithm_sum(a: [int]): int
+    return km_algo_sum(a)
+fn algorithm_sum(a: [float]): float
+    return km_algo_sumf(a)
+
+fn algorithm_max(a: [int]): int
+    return km_algo_max(a)
+fn algorithm_max(a: [float]): float
+    return km_algo_maxf(a)
+
+fn algorithm_min(a: [int]): int
+    return km_algo_min(a)
+fn algorithm_min(a: [float]): float
+    return km_algo_minf(a)
+
+fn algorithm_index_of(a: [int], v: int): int
+    return km_algo_index_of(a, v)
+fn algorithm_index_of(a: [float], v: float): int
+    return km_algo_index_off(a, v)
+
+fn algorithm_contains(a: [int], v: int): int
+    return km_algo_contains(a, v)
+fn algorithm_contains(a: [float], v: float): int
+    return km_algo_containsf(a, v)
+
+void algorithm_fill(a: [int], v: int)
+    km_algo_fill(a, v)
+void algorithm_fill(a: [float], v: float)
+    km_algo_fillf(a, v)

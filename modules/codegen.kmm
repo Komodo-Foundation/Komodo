@@ -868,6 +868,10 @@ public
             return s
         if isObjType(s) then
             return s
+        // an array type keeps its shape so `[int]` and `[float]` overloads
+        // are distinct; the leaf is normalised the same way
+        if isArrayType(s) then
+            return "[" + normParamType(elemTypeOf(s)) + "]"
         return "int"
 
     mut paramSig(func: FunctionDecl): [string]
@@ -888,8 +892,22 @@ public
     fn overloadSym(name: string, sig: [string]): string
         let s = name + "__ov" + string(#sig)
         for p in sig do
-            s = s + "_" + p
+            s = s + "_" + symSafeType(p)
         return s
+
+    // A normalised param type made label-safe: `[int]` → `arr_int`,
+    // `[[float]]` → `arr_arr_float` (drop every `]`, `[` → `arr_`).
+    fn symSafeType(t: string): string
+        let out = ""
+        let i = 0
+        while i < t.length do
+            let c = t[i]
+            if c == "[" then
+                out = out + "arr_"
+            else if c != "]" then
+                out = out + c
+            i += 1
+        return out
 
     mut sigsEqual(a: [string], b: [string]): bool
         if #a != #b then
@@ -919,6 +937,17 @@ public
         if p == "any" then
             return 1
         let at = exprType(a)
+        // array parameter — match the normalised shape exactly; an empty
+        // literal (`[]` ⇒ `[never]` / `[int]`) fits any array param
+        if isArrayType(p) then
+            if not isArrayType(at) then
+                return 0
+            let na = "[" + normParamType(elemTypeOf(at)) + "]"
+            if na == p then
+                return 2
+            if elemTypeOf(at) == "never" then
+                return 1
+            return 0
         if p == "float" then
             if at == "float" then
                 return 2
@@ -1294,6 +1323,10 @@ private
     m_curRet: string = "int"
     m_curVoid: bool = false
     m_curKind: string = "fn"
+    // true while lowering a dotted library call redirected to an overload
+    // wrapper — exempts it from the "pure `fn` can't call a void" rule,
+    // as a linked-prototype library call always was.
+    m_libCall: bool = false
 
     // labels for the innermost enclosing loop (break / continue targets)
     m_loopBreak: [string] = []

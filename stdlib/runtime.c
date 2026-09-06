@@ -26,6 +26,36 @@ void km_fmt_double(char *buf, unsigned long cap, double d)
     }
 }
 
+/* `needle in haystack` for strings — a substring test. */
+long km_in_str(const char *haystack, const char *needle)
+{
+    if (!haystack || !needle)
+        return 0;
+    return strstr(haystack, needle) != NULL;
+}
+
+/* `v in arr` — linear membership.  `leaf` is the element's scalar tag:
+ * 2 (string) compares with strcmp, anything else a raw 64-bit `==`
+ * (ints, bools, chars, and float bit patterns for exact matches). */
+long km_in_array(KmArray *a, long v, long leaf)
+{
+    if (!a)
+        return 0;
+    if (leaf == 2) {
+        const char *needle = (const char *)v;
+        for (long i = 0; i < a->len; i++) {
+            const char *e = (const char *)a->data[i];
+            if (e == needle || (e && needle && strcmp(e, needle) == 0))
+                return 1;
+        }
+        return 0;
+    }
+    for (long i = 0; i < a->len; i++)
+        if (a->data[i] == v)
+            return 1;
+    return 0;
+}
+
 KmArray *km_array_new(long len)
 {
     KmArray *a = malloc(sizeof(KmArray) + (size_t)len * sizeof(long));

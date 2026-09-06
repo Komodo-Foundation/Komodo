@@ -8,6 +8,24 @@ only, for keeping the implementation and sample code coherent.
 - `.km` — program (has a `main`). `.kmm` — module (library).
 - `module <name>` — first line of a module file. All files declaring the same
   module name are auto-merged into one namespace.
+- A module body may carry **`public` / `private` section labels**, like a
+  class:
+
+  ```
+  module greet
+  public
+      fn hello(who: string): string
+          return banner() + who
+  private
+      fn banner(): string
+          return "Hello, "
+  ```
+
+  A `private` member is module-local: reaching it through the module name
+  from *another* module (`greet::banner()`) is a compile error. Members
+  in the same module call it freely, and a member with no section is
+  `public`. Enforcement covers functions reached as `mod::name`; it does
+  not (yet) cover private globals or types.
 - `import <name>` — pull in a module. `<name>.kmm` is resolved from the
   directory tree of the file being compiled (and, as a fallback, the
   compiler's own directory, which is where the standard library lives);
@@ -204,8 +222,8 @@ enum TokenType
 
 ## Expressions & operators
 
-Precedence low → high: `or`, `and`, comparison, bitwise, additive,
-multiplicative, unary, postfix.
+Precedence low → high: `or`, `and`, `is` / `in`, comparison, bitwise,
+additive, multiplicative, unary, postfix.
 
 - Arithmetic: `+ - * / %`
 - Comparison: `== != < <= > >=`
@@ -214,8 +232,14 @@ multiplicative, unary, postfix.
 - Conditional value: Lua-style `cond and whenTrue or whenFalse` (built from
   short-circuit `and`/`or`); there is no C-style `?:` operator
 - Unary: `-x`, `not x` / `!x`, `#x` (length of array or string)
-- Assignment: `x = v`, `x += v`, `x -= v`; also `obj.field = v`, `arr[i] = v`
+- Assignment: `x = v` and the compound forms `x += v`, `x -= v`, `x *= v`,
+  `x /= v`, `x %= v` (`lhs <op>= v` ≡ `lhs = lhs <op> v`) — on a plain
+  name, `obj.field`, or `arr[i]`. `+=` also appends to an array / global
+  array (`arr += [x]`, `arr += other`) and concatenates strings.
 - Type test: `expr is TypeName`
+- Membership: `x in coll` — a bool. `coll` a string ⇒ substring test
+  (`"at" in "cat"`, a `char` left operand is a 1-char string); `coll` an
+  array ⇒ element test by value (`==`, `strcmp` for `[string]`).
 - Grouping: `( expr )`
 - Construction: `new Type(args)`
 
@@ -418,16 +442,18 @@ ships as a `.kmm` file of prototype declarations (bodies linked from
 | `console` | `print`, `write`, `error` (all variadic) |
 | `math` | ints: `abs`, `min`, `max`, `pow`, `gcd`, `clamp`, `sign`; floats: `sqrt`, `floor`, `ceil`, `round`, `trunc`, `fabs`, `sin`, `cos`, `tan`, `atan`, `atan2`, `exp`, `log`, `log2`, `log10`, `powf`, `hypot`; constants `pi()`, `e()` |
 | `string` | `length`, `split`, `join`, `trim`, `trim_start`, `trim_end`, `replace`, `index_of`, `contains`, `starts_with`, `ends_with`, `to_upper`, `to_lower`, `repeat`, `reverse`, `substring`, `pad_start`, `pad_end` |
-| `algorithm` | `sort`, `reverse`, `sum`, `max`, `min`, `contains`, `index_of`, `fill` (all `[int]`); `sort_f`, `sum_f`, `max_f`, `min_f`, `reverse_f`, `fill_f`, `index_of_f`, `contains_f` (`[float]`) |
+| `algorithm` | `sort`, `reverse`, `sum`, `max`, `min`, `contains`, `index_of`, `fill` — each **overloaded** for `[int]` and `[float]` (same call, resolved on the array's element type) |
 | `file` | `exists`, `read_all`, `read_lines`, `write_all`, `append_all`, `find`, `list_dir` |
 | `sdl2` | a System-V-ABI subset of SDL2 (window / renderer / events) — see `stdlib/sdl2.kmm` |
 
-`math` / `string` / `algorithm` prototypes carry a module-name prefix on
-the linked symbol (`math_abs`, `string_split`), so they are reached with a
-**dot** — `math.abs(x)`, `string.split(s, ",")`. `file` and `console`
-prototypes are bare symbols, reached with the `::` scope operator that
-drops the namespace — `file::read_all(path)`. (The bare `string(x)`
-value-to-text built-in is unrelated to `import string`.)
+`math` / `string` / `algorithm` members carry a module-name prefix on
+their symbol (`math_abs`, `string_split`, `algorithm_sort`), so they are
+reached with a **dot** — `math.abs(x)`, `string.split(s, ",")`,
+`algorithm.sort(xs)`. A dotted call whose `"_"`-joined name is an
+overload set (as every `algorithm` op is) resolves like any other
+overload. `file` and `console` are bare symbols reached with the `::`
+scope operator that drops the namespace — `file::read_all(path)`. (The
+bare `string(x)` value-to-text built-in is unrelated to `import string`.)
 
 To add another library, drop a `name.kmm` (prototypes) plus its
 implementation object next to the others — nothing in the compiler needs

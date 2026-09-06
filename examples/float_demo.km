@@ -38,10 +38,11 @@ void main()
     let n = 5
     console.print("mix:", n + 0.5, "  pick:", n > 0 and 1.5 or 0.0)
 
-    // float standard-library helpers
-    algorithm.sort_f(xs)
+    // float standard-library helpers — `algorithm.*` is overloaded, so
+    // the same names take `[float]` as they do `[int]`
+    algorithm.sort(xs)
     console.print("sorted:", xs[0], xs[1], xs[2])
-    console.print("sum_f:", algorithm.sum_f(xs), " min:", algorithm.min_f(xs), " max:", algorithm.max_f(xs))
+    console.print("sum:", algorithm.sum(xs), " min:", algorithm.min(xs), " max:", algorithm.max(xs))
 
     // whole floats still read as floats
     console.print(4.0, 10.0 / 4.0, 6.0 / 3.0)

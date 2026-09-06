@@ -350,6 +350,23 @@ mut X86Backend::strBinOp(helper: string)
     ins("pop rdi")
     emitCall(helper)
 
+// `needle in haystack` for strings — haystack spilled, needle in rax.
+mut X86Backend::strIn()
+    ins("mov rsi, rax")
+    ins("pop rdi")
+    recordExtern("km_in_str")
+    emitCall("km_in_str")
+
+// `v in arr` — array handle spilled by pushAcc(), candidate in rax.
+// `km_in_array(arr, v, leaf)` returns 1 / 0.  `leaf` is the element's
+// scalar tag (2 = string ⇒ strcmp, else a raw 64-bit `==`).
+mut X86Backend::arrayIn(leaf: int)
+    ins("mov rsi, rax")
+    ins("pop rdi")
+    ins("mov rdx, " + string(leaf))
+    recordExtern("km_in_array")
+    emitCall("km_in_array")
+
 mut X86Backend::strEquals(negate: bool)
     m_usesStr = true
     ins("mov rsi, rax")

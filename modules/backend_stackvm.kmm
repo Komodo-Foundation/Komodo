@@ -380,6 +380,14 @@ void StackVMBackend::cCallEnd(name: string, classes: [string])
 void StackVMBackend::arrayDataPtr()
     op("ADATA")
 
+// `needle in haystack` (strings) — both on the stack.
+void StackVMBackend::strIn()
+    op("SIN")
+
+// `v in arr` — arr and candidate on the stack; leaf tag as an operand.
+void StackVMBackend::arrayIn(leaf: int)
+    op("AIN " + string(leaf))
+
 // C callbacks — the stack VM has no native-ABI story yet; emit a marker
 // so a future interpreter can bind it, and keep codegen target-agnostic.
 void StackVMBackend::loadFnPtr(sym: string)

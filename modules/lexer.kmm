@@ -68,6 +68,9 @@ enum TokenType
     ARROW
     PLUS_EQ
     MINUS_EQ
+    STAR_EQ
+    SLASH_EQ
+    PERCENT_EQ
     HASH
     BE
     DOWN
@@ -360,10 +363,18 @@ private
                 eat()
             case "*"
                 eat()
-                m_tokens += [new Token(TokenType::STAR, "*", m_line, m_col)]
+                if peek() == "=" then
+                    eat()
+                    m_tokens += [new Token(TokenType::STAR_EQ, "*=", m_line, m_col)]
+                else
+                    m_tokens += [new Token(TokenType::STAR, "*", m_line, m_col)]
             case "%"
                 eat()
-                m_tokens += [new Token(TokenType::PERCENT, "%", m_line, m_col)]
+                if peek() == "=" then
+                    eat()
+                    m_tokens += [new Token(TokenType::PERCENT_EQ, "%=", m_line, m_col)]
+                else
+                    m_tokens += [new Token(TokenType::PERCENT, "%", m_line, m_col)]
             case "^"
                 eat()
                 m_tokens += [new Token(TokenType::CARET, "^", m_line, m_col)]
@@ -416,6 +427,9 @@ private
                             eat()
                             break
                         eat()
+                else if peek() == "=" then
+                    eat()
+                    m_tokens += [new Token(TokenType::SLASH_EQ, "/=", m_line, m_col)]
                 else
                     m_tokens += [new Token(TokenType::SLASH, "/", m_line, m_col)]
             case "<"

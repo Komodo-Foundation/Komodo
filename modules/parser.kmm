@@ -10,23 +10,46 @@ public
         let prog = new Program()
         while true do
             skipNewlines()
+            // a `public` / `private` section label at module top level —
+            // its visibility applies to the following declarations until
+            // the next label, the next `module` line, or a closing dedent.
+            if at(TokenType::IDENT) and (peek().lexeme == "public" or peek().lexeme == "private") then
+                m_curVis = peek().lexeme
+                eat()
+                skipNewlines()
+                if at(TokenType::INDENT) then
+                    eat()
+                    m_secIndent = true
+                continue
+            if m_secIndent and at(TokenType::DEDENT) then
+                eat()
+                m_secIndent = false
+                m_curVis = "public"
+                continue
             if at(TokenType::EOF) then
                 break
             if at(TokenType::EXTERN) then
                 parseExternInto(prog)
             else if at(TokenType::FN) or at(TokenType::MUT) or at(TokenType::VOID) then
                 let fdecl = parseFunction()
+                stampDecl(fdecl)
                 if fdecl.ownerClass == null then
                     prog.functions += [fdecl]
                 else
                     // `void Class::method(...)` written outside the class
                     m_pendingMethods += [fdecl]
             else if at(TokenType::STRUCT) then
-                prog.structs += [parseStruct()]
+                let sd0 = parseStruct()
+                stampDecl(sd0)
+                prog.structs += [sd0]
             else if at(TokenType::CLASS) then
-                prog.classes += [parseClass()]
+                let cd0 = parseClass()
+                stampDecl(cd0)
+                prog.classes += [cd0]
             else if at(TokenType::ENUM) then
-                prog.enums += [parseEnum()]
+                let ed0 = parseEnum()
+                stampDecl(ed0)
+                prog.enums += [ed0]
             else if at(TokenType::IDENT) and isTypeModifier(peek().lexeme) then
                 // leading type modifiers: `abstract` / `shared` / `unique`
                 // before `struct` / `class`.  `shared` is parsed and
@@ -45,10 +68,12 @@ public
                     let sd = parseStruct()
                     sd.isAbstract = isAbs
                     sd.isUnique = isUniq
+                    stampDecl(sd)
                     prog.structs += [sd]
                 else if at(TokenType::CLASS) then
                     let cd = parseClass()
                     cd.isAbstract = isAbs
+                    stampDecl(cd)
                     prog.classes += [cd]
                 else
                     throw ("expected `struct` or `class` after type modifier")
@@ -57,6 +82,8 @@ public
                 // [: T] = EXPR` (or a bare `let NAME : T`) — a top-level
                 // variable with its own storage.
                 let vd = parseVarDecl()
+                vd.visMod = m_curVis
+                vd.modOwner = m_curModule
                 if vd.immutable then
                     prog.macros += [vd]
                 else
@@ -67,11 +94,15 @@ public
                 continue
             else if at(TokenType::MODULE) then
                 // `module <name>` — namespaces are flat after the driver
-                // merges the imported files, so just record and move on.
+                // merges the imported files; record the name so each
+                // declaration below can be attributed to its module.
                 eat()
                 m_inModule = true
+                m_curVis = "public"
+                m_secIndent = false
                 if not at(TokenType::NEWLINE) and not at(TokenType::EOF) then
                     prog.moduleName = peek().lexeme
+                    m_curModule = peek().lexeme
                     eat()
                 continue
             else if at(TokenType::LINK) then
@@ -90,6 +121,12 @@ public
             m.ownerClass = null
             cls.methods += [m]
         return prog
+
+    // Attribute a top-level declaration to the module it was parsed in
+    // and the visibility section it sat under.
+    mut stampDecl(d: Declaration)
+        d.moduleOwner = m_curModule
+        d.visibility = m_curVis
 
     mut findClass(prog: Program, name: string?): ClassDecl?
         for c in prog.classes do
@@ -111,6 +148,11 @@ private
     // one's own lines stay in order), so this is correct per file even
     // though the parser runs over the merged token stream.
     m_inModule: bool = false
+    // module name + visibility section currently in effect during the
+    // top-level sweep (see `stampDecl`).
+    m_curModule: string = ""
+    m_curVis: string = "public"
+    m_secIndent: bool = false
             
     mut peek(): Token
         if m_pos >= #m_tokens then
@@ -658,7 +700,7 @@ private
         if expr == null then
             return null
 
-        if at(TokenType::EQUALS) or at(TokenType::PLUS_EQ) or at(TokenType::MINUS_EQ) then
+        if at(TokenType::EQUALS) or at(TokenType::PLUS_EQ) or at(TokenType::MINUS_EQ) or at(TokenType::STAR_EQ) or at(TokenType::SLASH_EQ) or at(TokenType::PERCENT_EQ) then
             let op = peek().lexeme
             eat()
             let value = parseExpression()
@@ -870,6 +912,12 @@ private
             eat()
             let right = parseBitwise()
             return new BinaryOp(op, left, right)
+        // `x in coll` — membership: a substring of a string, or an
+        // element of an array.  Yields a bool.
+        if at(TokenType::IN) then
+            eat()
+            let right = parseBitwise()
+            return new BinaryOp("in", left, right)
         return left
 
     mut parseBitwise(): Expression?
@@ -969,7 +1017,9 @@ private
                     if not at(TokenType::CLOSE_PAREN) then
                         eat()
                 eat()
-                expr = new CallExpr(expr.name, args)
+                let ce = new CallExpr(expr.name, args)
+                ce.qualifier = expr.qualifier
+                expr = ce
             else if at(TokenType::QUESTION) and expr is CallExpr then
                 eat()
                 expr.protected = true
@@ -1051,11 +1101,16 @@ private
             let name = peek().lexeme
             eat()
             // `ns::member` — the namespace is dropped (flat after merge);
-            // `a::b::c` keeps the last segment.
+            // `a::b::c` keeps the last segment.  The segment just before
+            // the final `::` is kept on the node for module-privacy checks.
+            let qual = ""
             while at(TokenType::SCOPE) do
                 eat()
+                qual = name
                 name = peek().lexeme
                 eat()
-            return new Identifier(name)
+            let id = new Identifier(name)
+            id.qualifier = qual
+            return id
 
         return null

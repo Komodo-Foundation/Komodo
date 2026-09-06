@@ -1,0 +1,10 @@
+// Modules as static classes: `module Name` + `public` / `private`
+// sections.  See examples/greet.kmm.
+
+import console
+import greet
+
+void main()
+    console.print(greet::hello("world"))
+    console.print(greet::loud("Komodo"))
+    // greet::banner() would be a compile error — it is private to `greet`.

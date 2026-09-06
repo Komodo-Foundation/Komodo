@@ -130,6 +130,22 @@ mut Analyzer::inferBinary(e: BinaryOp): Type
             err(e, "`is` expects a known type name on the right")
         return tPrim("bool")
 
+    if e.op == "in" then
+        let needle = inferExpr(e.left)
+        let hay = inferExpr(e.right)
+        let hb = stripNull(hay)
+        if hb.kind == "string" then
+            let nb = stripNull(needle)
+            if nb.kind != "string" and nb.kind != "char" and nb.kind != "any" then
+                err(e, "`in` on a string wants a string / char on the left, got '" + typeToString(needle) + "'")
+        else if hb.kind == "array" then
+            let el = hb.elem or tPrim("int")
+            if not (isAssignable(el, needle) or isAssignable(needle, el) or stripNull(needle).kind == "any") then
+                err(e, "`in`: '" + typeToString(needle) + "' can't be an element of '" + typeToString(hay) + "'")
+        else if hb.kind != "any" then
+            err(e, "`in` wants a string or an array on the right, got '" + typeToString(hay) + "'")
+        return tPrim("bool")
+
     if e.op == "and" or e.op == "or" then
         // Lua value-select idiom: `a and b`, `a or b`, `a and b or c`.
         // The result is a value of either side; never an operand-type
@@ -300,16 +316,33 @@ mut Analyzer::inferCall(e: CallExpr): Type
         // linked symbol is the "_"-joined form; if a declaration for it
         // was imported (stdlib/*.kmm, or any library), type-check against
         // it, otherwise leave the call unchecked.
+        let sym = mangleDotted(e.name)
+        // `Module.member` where `member` sits in a `private` section of a
+        // *different* module — reject it.
+        if hasFn(sym) and fnVisOf(sym) == "private" then
+            let owns = fnModOf(sym)
+            if owns != "" and owns != m_curModuleOwner then
+                err(e, "'" + meth + "' is private to module '" + owns + "'")
+        // that flat symbol may itself be an overload set / template
+        // (e.g. `algorithm.sort` → overloaded `algorithm_sort`) — resolve
+        // it loosely, exactly like a bare overloaded name.
+        if isTemplateName(sym) or isOverloadedName(sym) then
+            for a in e.args do
+                inferExpr(a)
+            return tAny
         let argsD: [Type] = []
         for a in e.args do
             argsD += [inferExpr(a)]
-        let sym = mangleDotted(e.name)
         if hasFn(sym) then
             return resolveFnCall(e, sym, e.name, argsD, 0)
         return tAny
 
     // plain name: user function, extern, or `module::member` (the parser
-    // drops the namespace, so it arrives bare).
+    // drops the namespace but keeps it on `e.qualifier` for this check).
+    if e.qualifier != "" and hasFn(e.name) and fnVisOf(e.name) == "private" then
+        let owns = fnModOf(e.name)
+        if owns != "" and owns != m_curModuleOwner then
+            err(e, "'" + e.name + "' is private to module '" + owns + "'")
     //
     // An `extern` call may take a bare Komodo function name as an argument
     // — it is passed to C as a function pointer (codegen emits a native-ABI

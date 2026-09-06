@@ -17,6 +17,7 @@ mut Analyzer::checkFunction(fd: FunctionDecl, owner: string)
     macroRestoreToBase()
 
     m_curClass = owner
+    m_curModuleOwner = fd.moduleOwner
     m_curFnName = displayName(fd, owner)
     m_curKind = kindOf(fd)
     m_curVoid = (fd.isVoid or fd.returnType == null)

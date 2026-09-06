@@ -48,6 +48,9 @@ struct NullLiteral : Literal
 
 struct Identifier : Expression
     name: string
+    // For `ns::member` the namespace before the final `::` (flat after
+    // merge, so only used for module-privacy diagnostics). "" otherwise.
+    qualifier: string = ""
 
 // Binary arithmetic / comparison / logical (`and`, `or`) - `op` is the
 // source operator text.
@@ -64,6 +67,9 @@ struct UnaryOp : Expression
 struct CallExpr : Expression
     name: string
     args: [Expression] = []
+    // `ns::member(args)` — the namespace before the final `::` (kept only
+    // for module-privacy diagnostics; the call still targets `name`).
+    qualifier: string = ""
     // `name(args)?` — a protected call: yields null instead of
     // propagating a thrown error out of the callee.
     protected: bool = false
@@ -134,6 +140,10 @@ struct VarDecl : Statement
     // The analyser's inferred/declared type for this binding (coarse
     // string form), so frame layout does not re-infer it.
     resolvedType: string? = null
+    // For a top-level `let` (global / macro): its module + `public` /
+    // `private` section, mirroring `Declaration`.
+    modOwner: string = ""
+    visMod: string = "public"
 
 struct AssignStmt : Statement
     name: string
@@ -224,6 +234,12 @@ struct ContinueStmt : Statement
 // ─── Declarations ─────────────────────────────────────────────────────
 
 abstract struct Declaration : ASTNode
+    // `module NAME` a file's declarations belong to (flat after merge),
+    // and whether a `public` / `private` section marked it. Enforcement
+    // is best-effort — a `private` member is rejected only when reached
+    // through its module name from a different module.
+    moduleOwner: string = ""
+    visibility: string = "public"
 
 // A function / method parameter. `modifier` is `public` / `private` for
 // constructor-parameter fields, else null.

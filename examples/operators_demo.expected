@@ -1,0 +1,9 @@
+n: 4
+x: 5.0
+a.total: 15.0
+xs: 2 40 5
+cat has c: 1   cat has z: 0
+sub 'at': 1
+1 in list: 1   5 in list: 0
+beta in words: 1   delta in words: 0
+2.5 in fs: 1

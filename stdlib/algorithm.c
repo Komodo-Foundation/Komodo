@@ -1,8 +1,11 @@
 /*
  * algorithm — Komodo standard algorithms over arrays.
  *
- * Reached through the uniform Komodo call ABI (see km_runtime.h).  For
- * every routine here argument 0 is an array handle:
+ * These are the C *primitives*; the public `algorithm.sort` / `.sum` / …
+ * surface is a set of overloaded Komodo wrappers in stdlib/algorithm.kmm
+ * that pick `_i` (int elements) or `_f` (IEEE-754 double bit patterns)
+ * from the argument type.  Reached through the uniform Komodo call ABI
+ * (see km_runtime.h): argument 0 is an array handle
  *
  *     [ int64 len | int64 cap | int64 data[] ]
  */
@@ -10,11 +13,12 @@
 
 #define ARR(items)  ((KmArray *)(items)[0].value)
 
-void algorithm_sort(long argc, KmArg *items)
+/* ── integer-word primitives (also serve the word-wise float ops) ──── */
+
+void km_algo_sort(long argc, KmArg *items)
 {
     (void)argc;
     KmArray *a = ARR(items);
-
     for (long i = 1; i < a->len; i++) {
         long key = a->data[i];
         long j = i - 1;
@@ -26,11 +30,10 @@ void algorithm_sort(long argc, KmArg *items)
     }
 }
 
-void algorithm_reverse(long argc, KmArg *items)
+void km_algo_reverse(long argc, KmArg *items)
 {
     (void)argc;
     KmArray *a = ARR(items);
-
     for (long i = 0, k = a->len - 1; i < k; i++, k--) {
         long t = a->data[i];
         a->data[i] = a->data[k];
@@ -38,7 +41,7 @@ void algorithm_reverse(long argc, KmArg *items)
     }
 }
 
-long algorithm_sum(long argc, KmArg *items)
+long km_algo_sum(long argc, KmArg *items)
 {
     (void)argc;
     KmArray *a = ARR(items);
@@ -48,7 +51,7 @@ long algorithm_sum(long argc, KmArg *items)
     return total;
 }
 
-long algorithm_max(long argc, KmArg *items)
+long km_algo_max(long argc, KmArg *items)
 {
     (void)argc;
     KmArray *a = ARR(items);
@@ -59,7 +62,7 @@ long algorithm_max(long argc, KmArg *items)
     return best;
 }
 
-long algorithm_min(long argc, KmArg *items)
+long km_algo_min(long argc, KmArg *items)
 {
     (void)argc;
     KmArray *a = ARR(items);
@@ -70,7 +73,7 @@ long algorithm_min(long argc, KmArg *items)
     return best;
 }
 
-long algorithm_index_of(long argc, KmArg *items)
+long km_algo_index_of(long argc, KmArg *items)
 {
     (void)argc;
     KmArray *a = ARR(items);
@@ -81,12 +84,12 @@ long algorithm_index_of(long argc, KmArg *items)
     return -1;
 }
 
-long algorithm_contains(long argc, KmArg *items)
+long km_algo_contains(long argc, KmArg *items)
 {
-    return algorithm_index_of(argc, items) >= 0;
+    return km_algo_index_of(argc, items) >= 0;
 }
 
-void algorithm_fill(long argc, KmArg *items)
+void km_algo_fill(long argc, KmArg *items)
 {
     (void)argc;
     KmArray *a = ARR(items);
@@ -95,13 +98,9 @@ void algorithm_fill(long argc, KmArg *items)
         a->data[i] = value;
 }
 
-/* ── float variants ───────────────────────────────────────────────────
- *
- * Same array layout, but each element word is the IEEE-754 bit pattern of
- * a double.  `km_as_float` / `km_from_float` (km_runtime.h) reinterpret.
- */
+/* ── float primitives — element words are IEEE-754 double bit patterns ── */
 
-void algorithm_sort_f(long argc, KmArg *items)
+void km_algo_sortf(long argc, KmArg *items)
 {
     (void)argc;
     KmArray *a = ARR(items);
@@ -117,7 +116,7 @@ void algorithm_sort_f(long argc, KmArg *items)
     }
 }
 
-double algorithm_sum_f(long argc, KmArg *items)
+double km_algo_sumf(long argc, KmArg *items)
 {
     (void)argc;
     KmArray *a = ARR(items);
@@ -127,7 +126,7 @@ double algorithm_sum_f(long argc, KmArg *items)
     return total;
 }
 
-double algorithm_max_f(long argc, KmArg *items)
+double km_algo_maxf(long argc, KmArg *items)
 {
     (void)argc;
     KmArray *a = ARR(items);
@@ -140,7 +139,7 @@ double algorithm_max_f(long argc, KmArg *items)
     return best;
 }
 
-double algorithm_min_f(long argc, KmArg *items)
+double km_algo_minf(long argc, KmArg *items)
 {
     (void)argc;
     KmArray *a = ARR(items);
@@ -153,8 +152,9 @@ double algorithm_min_f(long argc, KmArg *items)
     return best;
 }
 
-/* word-wise on the element bits — identical to the int versions */
-void algorithm_reverse_f(long argc, KmArg *items)  { algorithm_reverse(argc, items); }
-void algorithm_fill_f(long argc, KmArg *items)     { algorithm_fill(argc, items); }
-long algorithm_index_of_f(long argc, KmArg *items) { return algorithm_index_of(argc, items); }
-long algorithm_contains_f(long argc, KmArg *items) { return algorithm_contains(argc, items); }
+/* float aliases for the order-independent ops — element words are just
+ * copied / compared, so the integer primitive is bit-for-bit correct. */
+void km_algo_reversef(long argc, KmArg *items)  { km_algo_reverse(argc, items); }
+void km_algo_fillf(long argc, KmArg *items)     { km_algo_fill(argc, items); }
+long km_algo_index_off(long argc, KmArg *items) { return km_algo_index_of(argc, items); }
+long km_algo_containsf(long argc, KmArg *items) { return km_algo_contains(argc, items); }

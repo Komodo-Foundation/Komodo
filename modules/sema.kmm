@@ -454,6 +454,20 @@ public
         m_fnKind += [kindOf(fd)]
         m_fnVariadic += [fd.variadic]
         m_fnLinked += [fd.isPrototype or fd.isExtern]
+        m_fnVis += [fd.visibility]
+        m_fnMod += [fd.moduleOwner]
+
+    mut fnVisOf(sym: string): string
+        let i = fnIndex(sym)
+        if i < 0 then
+            return "public"
+        return m_fnVis[i]
+
+    mut fnModOf(sym: string): string
+        let i = fnIndex(sym)
+        if i < 0 then
+            return ""
+        return m_fnMod[i]
 
     mut retDeclOf(fd: FunctionDecl): string
         if fd.isVoid or fd.returnType == null then
@@ -1002,6 +1016,10 @@ private
     m_fnKind: [string] = []
     m_fnVariadic: [bool] = []
     m_fnLinked: [bool] = []
+    m_fnVis: [string] = []       // "public" / "private" (module section)
+    m_fnMod: [string] = []       // owning module name ("" for the program)
+    // module of the function body currently being checked (for privacy)
+    m_curModuleOwner: string = ""
 
     // macros
     m_macroNames: [string] = []

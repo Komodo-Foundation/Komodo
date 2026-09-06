@@ -93,7 +93,7 @@ mut Codegen::exprType(e: Expression?): string
             return "int"
         return exprType(e.operand)
     if e is BinaryOp then
-        if e.op == "is" then
+        if e.op == "is" or e.op == "in" then
             return "int"
         if isCompareOp(e.op) then
             return "int"
@@ -111,6 +111,9 @@ mut Codegen::exprType(e: Expression?): string
         return "int"
     if e is CallExpr then
         let d = dotIndex(e.name)
+        // a dotted call may name an overload set / template through its
+        // "_"-joined form (`algorithm.sum` → overloaded `algorithm_sum`)
+        let cn = e.name
         if d > 0 then
             let r = e.name[0 to d]
             let mth = e.name[(d + 1) to e.name.length]
@@ -118,11 +121,12 @@ mut Codegen::exprType(e: Expression?): string
                 let owner = resolveMethodOwner(receiverType(r), mth)
                 if owner != "" then
                     return fnRet(owner + "__" + mth)
-        if isTemplate(e.name) and #templateDeclOf(e.name).params == #e.args then
-            let gsym = ensureInstance(e.name, tplArgTypes(e.args))
+            cn = m_backend.mangle(e.name)
+        if isTemplate(cn) and #templateDeclOf(cn).params == #e.args then
+            let gsym = ensureInstance(cn, tplArgTypes(e.args))
             return lookupRet(gsym)
-        if countSourceName(e.name) >= 2 then
-            return overloadRet(e.name, e.args)
+        if countSourceName(cn) >= 2 then
+            return overloadRet(cn, e.args)
         return fnRet(e.name)
     return "int"
 

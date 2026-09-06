@@ -151,6 +151,9 @@ void Codegen::genBinary(e: BinaryOp)
     if e.op == "is" then
         genIsCheck(e)
         return
+    if e.op == "in" then
+        genIn(e)
+        return
     // A float-valued `A and B or C` needs the real branch lowering
     // (xmm0 arms); the integer idiom keeps its short-circuit `genLogical`
     // path, whose Lua "B falsy ⇒ C" semantics some code may rely on.
@@ -201,6 +204,28 @@ void Codegen::genStrEquals(e: BinaryOp)
     m_backend.pushAcc()
     genExpr(e.right)
     m_backend.strEquals(e.op == "!=")
+
+// `x in coll` — substring test when `coll` is a string, element test when
+// it is an array.  Yields 1 / 0.
+void Codegen::genIn(e: BinaryOp)
+    let ht = exprType(e.right)
+    if ht == "string" then
+        genExpr(e.right)                 // haystack (spilled)
+        m_backend.pushAcc()
+        genExpr(e.left)                  // needle in rax
+        m_backend.strIn()
+        return
+    // array membership — pass the element's scalar tag so the runtime
+    // knows to compare strings by value rather than by pointer
+    let leaf = 0
+    if elemTypeOf(ht) == "string" then
+        leaf = 2
+    genExpr(e.right)                     // array handle (spilled)
+    m_backend.pushAcc()
+    genExpr(e.left)                      // candidate
+    if exprType(e.left) == "float" then
+        m_backend.floatToBits()
+    m_backend.arrayIn(leaf)
 
 void Codegen::genCompare(e: BinaryOp)
     // a float on either side ⇒ compare in the SSE unit; an int operand is
@@ -411,6 +436,20 @@ void Codegen::genCall(e: CallExpr)
             genMethodCall("self", e.name, e.args)
             return
 
+    // A dotted module call whose "_"-joined symbol is an overload set or
+    // a template — `algorithm.sort(xs)` → overloaded `algorithm_sort` —
+    // is resolved exactly like a bare overloaded / template name.  Such a
+    // library call is exempt from the "pure `fn` can't call a void" rule
+    // (it always was, back when the target was a linked prototype).
+    if dot > 0 then
+        let flat = m_backend.mangle(e.name)
+        if isTemplate(flat) or countSourceName(flat) >= 2 then
+            let savedLib = m_libCall
+            m_libCall = true
+            genCall(new CallExpr(flat, e.args))
+            m_libCall = savedLib
+            return
+
     // Generic (implicit-type) free function — monomorphize it for the
     // static argument types and call the specialized instance.
     if isTemplate(e.name) then
@@ -418,7 +457,7 @@ void Codegen::genCall(e: CallExpr)
         if #tpl.params != #e.args then
             throw ("function '" + e.name + "' takes " + string(#tpl.params) + " argument(s), got " + string(#e.args))
         let gsym = ensureInstance(e.name, tplArgTypes(e.args))
-        if m_curKind == "fn" and fnKind(gsym) == "void" then
+        if m_curKind == "fn" and not m_libCall and fnKind(gsym) == "void" then
             throw ("a pure `fn` cannot call the void procedure '" + e.name + "'")
         genDirectCall(gsym, e.args)
         return
@@ -431,7 +470,7 @@ void Codegen::genCall(e: CallExpr)
         if sel == 0 - 2 then
             genOverloadDispatch(m_ovOrder, e.args)
         else
-            if m_curKind == "fn" and m_fnKinds[sel] == "void" then
+            if m_curKind == "fn" and not m_libCall and m_fnKinds[sel] == "void" then
                 throw ("a pure `fn` cannot call the void procedure '" + e.name + "'")
             genDirectCall(m_fnLink[sel], e.args)
         return
@@ -542,6 +581,8 @@ void Codegen::genOverloadDispatch(order: [int], args: [Expression])
                 m_backend.dispatchTestTag(pi, 2)
             else if pt == "bool" then
                 m_backend.dispatchTestTag(pi, 3)
+            else if isArrayType(pt) then
+                m_backend.dispatchTestTag(pi, arrayTag(pt))
             else if pt != "any" then
                 m_backend.dispatchTestType(pi, descendantIds(pt))
             pi += 1

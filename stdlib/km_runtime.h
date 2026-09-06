@@ -118,6 +118,9 @@ long        km_str_eq(const char *a, const char *b);
 const char *km_str_slice(const char *s, long start, long end);
 const char *km_str_char(const char *s, long i);
 long        km_str_cmp(const char *a, const char *b);
+/* `x in coll` membership — 1 / 0 */
+long        km_in_str(const char *haystack, const char *needle);
+long        km_in_array(KmArray *a, long v, long leaf);
 const char *km_to_string(long tag, long value);
 /* "%g" for a double, but integral values keep a ".0" (Komodo float text) */
 void        km_fmt_double(char *buf, unsigned long cap, double d);
@@ -127,23 +130,23 @@ void console_print(long argc, KmArg *items);
 void console_write(long argc, KmArg *items);
 void console_error(long argc, KmArg *items);
 
-/* ── module: algorithm ── */
-void algorithm_sort(long argc, KmArg *items);
-void algorithm_reverse(long argc, KmArg *items);
-long algorithm_sum(long argc, KmArg *items);
-long algorithm_max(long argc, KmArg *items);
-long algorithm_min(long argc, KmArg *items);
-long algorithm_contains(long argc, KmArg *items);
-long algorithm_index_of(long argc, KmArg *items);
-void algorithm_fill(long argc, KmArg *items);
-void   algorithm_sort_f(long argc, KmArg *items);
-double algorithm_sum_f(long argc, KmArg *items);
-double algorithm_max_f(long argc, KmArg *items);
-double algorithm_min_f(long argc, KmArg *items);
-void   algorithm_reverse_f(long argc, KmArg *items);
-void   algorithm_fill_f(long argc, KmArg *items);
-long   algorithm_index_of_f(long argc, KmArg *items);
-long   algorithm_contains_f(long argc, KmArg *items);
+/* ── module: algorithm (C primitives; public overloads live in the .kmm) ── */
+void   km_algo_sort(long argc, KmArg *items);
+void   km_algo_reverse(long argc, KmArg *items);
+long   km_algo_sum(long argc, KmArg *items);
+long   km_algo_max(long argc, KmArg *items);
+long   km_algo_min(long argc, KmArg *items);
+long   km_algo_contains(long argc, KmArg *items);
+long   km_algo_index_of(long argc, KmArg *items);
+void   km_algo_fill(long argc, KmArg *items);
+void   km_algo_sortf(long argc, KmArg *items);
+double km_algo_sumf(long argc, KmArg *items);
+double km_algo_maxf(long argc, KmArg *items);
+double km_algo_minf(long argc, KmArg *items);
+void   km_algo_reversef(long argc, KmArg *items);
+void   km_algo_fillf(long argc, KmArg *items);
+long   km_algo_index_off(long argc, KmArg *items);
+long   km_algo_containsf(long argc, KmArg *items);
 
 /* ── module: math ── */
 long   math_abs(long argc, KmArg *items);
