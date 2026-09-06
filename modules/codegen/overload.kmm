@@ -1,0 +1,415 @@
+module km_compiler
+
+// ═══════════════════════════════════════════════════════════════════════
+//  Codegen — free-function overloading and generic (implicit-type)
+//  monomorphisation.
+//
+//  Both are resolved entirely here: sema only exempts the names involved
+//  from its single-definition rule and leaves their call sites loosely
+//  typed (see analyze/sema.kmm).  `selectOverload` picks an overload from
+//  the static argument types (or asks for a runtime type-id dispatch when
+//  several survive); `ensureInstance` clones a template specialised to a
+//  call site's argument types and queues it for emission.
+//
+//  All state lives on `Codegen` (codegen.kmm's private section):
+//  m_fnSigs / m_fnLink / m_ovOrder for overloads, m_tplNames / m_tplDecls
+//  / m_genDone / m_genQueue / m_envNames / m_envTypes for templates.
+// ═══════════════════════════════════════════════════════════════════════
+
+// ── function overloading ──────────────────────────────────────
+//
+//  A free function (no owner class, not extern / prototype) may be
+//  declared more than once under one name with different parameter
+//  types.  Each overload is emitted under a unique `overloadSym` link
+//  name; a call site picks the overload from the static argument
+//  types and, when those leave more than one candidate, emits a
+//  runtime tag / type-id check that dispatches to the right one.
+
+fn Codegen::isFreeFn(func: FunctionDecl): bool
+    return func.ownerClass == null and not func.isExtern and not func.isPrototype
+
+// Coarse parameter type, matched to what `exprType` / the call ABI can
+// tell apart: `int` (also bool / char / int widths / unknown),
+// `float`, `string`, `bool`, an object type name, or `any` (untyped).
+mut Codegen::normParamType(t: string?): string
+    let s = stripOpt(t)
+    if s == null then
+        return "any"
+    if s == "float" or s == "string" or s == "bool" then
+        return s
+    if isObjType(s) then
+        return s
+    // an array type keeps its shape so `[int]` and `[float]` overloads
+    // are distinct; the leaf is normalised the same way
+    if isArrayType(s) then
+        return "[" + normParamType(elemTypeOf(s)) + "]"
+    return "int"
+
+mut Codegen::paramSig(func: FunctionDecl): [string]
+    let out: [string] = []
+    for p in func.params do
+        out += [normParamType(p.declaredType)]
+    return out
+
+mut Codegen::countSourceName(name: string): int
+    let n = 0
+    let i = 0
+    while i < #m_fnNames do
+        if m_fnNames[i] == name then
+            n += 1
+        i += 1
+    return n
+
+fn Codegen::overloadSym(name: string, sig: [string]): string
+    let s = name + "__ov" + string(#sig)
+    for p in sig do
+        s = s + "_" + symSafeType(p)
+    return s
+
+// A normalised param type made label-safe: `[int]` → `arr_int`,
+// `[[float]]` → `arr_arr_float` (drop every `]`, `[` → `arr_`).
+fn Codegen::symSafeType(t: string): string
+    let out = ""
+    let i = 0
+    while i < t.length do
+        let c = t[i]
+        if c == "[" then
+            out = out + "arr_"
+        else if c != "]" then
+            out = out + c
+        i += 1
+    return out
+
+mut Codegen::sigsEqual(a: [string], b: [string]): bool
+    if #a != #b then
+        return false
+    let i = 0
+    while i < #a do
+        if a[i] != b[i] then
+            return false
+        i += 1
+    return true
+
+// Indices of every registered overload of a free function `name` with
+// exactly `argc` parameters.
+mut Codegen::arityCandidates(name: string, argc: int): [int]
+    let out: [int] = []
+    let i = 0
+    while i < #m_fnNames do
+        if m_fnNames[i] == name and m_fnArity[i] == argc then
+            out += [i]
+        i += 1
+    return out
+
+// How well argument `a` fits a parameter normalized to `p`:
+//   2 = a definite static match   1 = possible (decided at runtime)
+//   0 = incompatible
+mut Codegen::argFit(p: string, a: Expression?): int
+    if p == "any" then
+        return 1
+    let at = exprType(a)
+    // array parameter — match the normalised shape exactly; an empty
+    // literal (`[]` ⇒ `[never]` / `[int]`) fits any array param
+    if isArrayType(p) then
+        if not isArrayType(at) then
+            return 0
+        let na = "[" + normParamType(elemTypeOf(at)) + "]"
+        if na == p then
+            return 2
+        if elemTypeOf(at) == "never" then
+            return 1
+        return 0
+    if p == "float" then
+        if at == "float" then
+            return 2
+        return 0
+    if p == "string" then
+        if at == "string" then
+            return 2
+        return 0
+    if p == "bool" then
+        if a is BoolLiteral then
+            return 2
+        if at == "int" then
+            return 1
+        return 0
+    if p == "int" then
+        if a is BoolLiteral then
+            return 1
+        if at == "int" then
+            return 2
+        return 0
+    // p is an object type
+    if not isObjType(at) then
+        return 0
+    if at == p then
+        return 2
+    if isDescendantOf(at, p) then
+        return 2
+    if isDescendantOf(p, at) then
+        return 1
+    return 0
+
+// Minimum fit across all parameters (0 ⇒ the whole overload is out).
+mut Codegen::sigFit(sig: [string], args: [Expression]): int
+    let worst = 2
+    let i = 0
+    while i < #sig do
+        let f = argFit(sig[i], args[i])
+        if f < worst then
+            worst = f
+        i += 1
+    return worst
+
+// Larger ⇒ more specific ⇒ tried first at runtime.
+mut Codegen::sigSpecificity(sig: [string], args: [Expression]): int
+    let total = 0
+    let i = 0
+    while i < #sig do
+        let p = sig[i]
+        if p == "any" then
+            total += 0
+        else if isObjType(p) then
+            let at = exprType(args[i])
+            if at == p then
+                total += 3
+            else if isDescendantOf(at, p) then
+                total += 2
+            else
+                total += 1
+        else
+            total += 3
+        i += 1
+    return total
+
+mut Codegen::orderBySpecificity(idxs: [int], args: [Expression]): [int]
+    let out: [int] = []
+    for x in idxs do
+        out += [x]
+    let i = 1
+    while i < #out do
+        let cur = out[i]
+        let key = sigSpecificity(m_fnSigs[cur], args)
+        let j = i - 1
+        while j >= 0 and sigSpecificity(m_fnSigs[out[j]], args) < key do
+            out[j + 1] = out[j]
+            j -= 1
+        out[j + 1] = cur
+        i += 1
+    return out
+
+// Resolve an overloaded call.  Returns a registry index when it is
+// statically decided, -2 when a runtime dispatch is required (order
+// left in `m_ovOrder`), or throws on a genuine mismatch / ambiguity.
+mut Codegen::selectOverload(name: string, args: [Expression]): int
+    let byArity = arityCandidates(name, #args)
+    if #byArity == 0 then
+        throw ("no overload of '" + name + "' takes " + string(#args) + " argument(s)")
+    if #byArity == 1 then
+        return byArity[0]
+    let exact: [int] = []
+    let scored: [int] = []
+    for i in byArity do
+        let f = sigFit(m_fnSigs[i], args)
+        if f == 2 then
+            exact += [i]
+        if f > 0 then
+            scored += [i]
+    if #exact == 1 then
+        return exact[0]
+    if #exact > 1 then
+        throw ("ambiguous overloaded call to '" + name + "'")
+    if #scored == 0 then
+        throw ("no overload of '" + name + "' matches the argument types")
+    if #scored == 1 then
+        return scored[0]
+    m_ovOrder = orderBySpecificity(scored, args)
+    return 0 - 2
+
+// Non-throwing return-type lookup for an overloaded call (static type
+// classifier).  Falls back to int when candidates disagree.
+mut Codegen::overloadRet(name: string, args: [Expression]): string
+    let byArity = arityCandidates(name, #args)
+    if #byArity == 0 then
+        return "int"
+    if #byArity == 1 then
+        return m_fnRets[byArity[0]]
+    let exact: [int] = []
+    let scored: [int] = []
+    for i in byArity do
+        let f = sigFit(m_fnSigs[i], args)
+        if f == 2 then
+            exact += [i]
+        if f > 0 then
+            scored += [i]
+    if #exact >= 1 then
+        return m_fnRets[exact[0]]
+    if #scored == 0 then
+        return m_fnRets[byArity[0]]
+    let r = m_fnRets[scored[0]]
+    for i in scored do
+        if m_fnRets[i] != r then
+            return "int"
+    return r
+
+// ── generic (implicit-type) functions ────────────────────────
+//
+//  A free function with one or more untyped parameters is a
+//  *template*: never emitted on its own.  Every call site classifies
+//  its argument types and asks for a monomorphized copy
+//  (`name__g<argc>_<t1>_<t2>…`) specialized to those types.
+
+fn Codegen::isTemplateDecl(func: FunctionDecl): bool
+    if func.ownerClass != null or func.isExtern or func.isPrototype or func.variadic then
+        return false
+    if func.name == "main" then
+        return false
+    for p in func.params do
+        if p.declaredType == null then
+            return true
+    return false
+
+mut Codegen::isTemplate(name: string): bool
+    let i = 0
+    while i < #m_tplNames do
+        if m_tplNames[i] == name then
+            return true
+        i += 1
+    return false
+
+mut Codegen::templateDeclOf(name: string): FunctionDecl
+    let i = 0
+    while i < #m_tplNames do
+        if m_tplNames[i] == name then
+            return m_tplDecls[i]
+        i += 1
+    return m_tplDecls[0]
+
+mut Codegen::genDone(sym: string): bool
+    for s in m_genDone do
+        if s == sym then
+            return true
+    return false
+
+// Concrete classification of each argument at a template call site.
+// Anything not pinned to float / string / bool / an object type is
+// treated as an integer (the uniform 64-bit slot).
+mut Codegen::tplArgTypes(args: [Expression]): [string]
+    let out: [string] = []
+    for a in args do
+        let t = exprType(a)
+        if t != "float" and t != "string" and t != "bool" and not isObjType(t) then
+            t = "int"
+        out += [t]
+    return out
+
+fn Codegen::instSym(name: string, types: [string]): string
+    let s = name + "__g" + string(#types)
+    for t in types do
+        s = s + "_" + t
+    return s
+
+// Auxiliary name→type environment, consulted by `exprType` while a
+// template's return type is inferred (before its instance has a frame).
+mut Codegen::envTypeOf(name: string): string
+    let i = 0
+    while i < #m_envNames do
+        if m_envNames[i] == name then
+            return m_envTypes[i]
+        i += 1
+    return ""
+
+mut Codegen::firstReturnType(stmts: [Statement]): string
+    for s in stmts do
+        if s is ReturnStmt then
+            if s.value == null then
+                return "void"
+            return exprType(s.value)
+        if s is IfStmt then
+            let a = firstReturnType(s.thenBody)
+            if a != "" then
+                return a
+            let b = firstReturnType(s.elseBody)
+            if b != "" then
+                return b
+        if s is WhileStmt then
+            let w = firstReturnType(s.body)
+            if w != "" then
+                return w
+        if s is ForStmt then
+            let f = firstReturnType(s.body)
+            if f != "" then
+                return f
+        if s is ForInStmt then
+            let g = firstReturnType(s.body)
+            if g != "" then
+                return g
+    return ""
+
+mut Codegen::inferReturnType(body: [Statement], pnames: [string], ptypes: [string]): string
+    let saveN = m_envNames
+    let saveT = m_envTypes
+    m_envNames = pnames
+    m_envTypes = ptypes
+    let r = firstReturnType(body)
+    m_envNames = saveN
+    m_envTypes = saveT
+    return r
+
+// `""` / `"void"` ⇒ no return annotation (procedure); float / string
+// keep it; everything else (int / bool / object handle) rides an
+// integer slot, so annotate it `int`.
+fn Codegen::retAnnot(rt: string): string?
+    if rt == "" or rt == "void" then
+        return null
+    if rt == "float" or rt == "string" then
+        return rt
+    return "int"
+
+mut Codegen::lookupRet(sym: string): string
+    let i = 0
+    while i < #m_fnNames do
+        if m_fnNames[i] == sym then
+            return m_fnRets[i]
+        i += 1
+    return "int"
+
+// Ensure a monomorphized instance of template `name` specialized to
+// `argTypes` is registered and queued for emission; return its symbol.
+mut Codegen::ensureInstance(name: string, argTypes: [string]): string
+    let sym = instSym(name, argTypes)
+    if genDone(sym) then
+        return sym
+    m_genDone += [sym]
+    let tpl = templateDeclOf(name)
+    let ps: [Param] = []
+    let pnames: [string] = []
+    let i = 0
+    while i < #tpl.params do
+        let sp = tpl.params[i]
+        let ty = sp.declaredType
+        if ty == null then
+            ty = argTypes[i]
+        ps += [new Param(sp.name, ty, sp.defaultValue, sp.modifier)]
+        pnames += [sp.name]
+        i += 1
+    let rt = inferReturnType(tpl.body, pnames, argTypes)
+    let inst = new FunctionDecl(sym)
+    inst.params = ps
+    inst.body = tpl.body
+    inst.isVoid = tpl.isVoid or rt == "" or rt == "void"
+    inst.isMut = tpl.isMut
+    inst.returnType = retAnnot(rt)
+    inst.linkName = sym
+    let rtStore = rt
+    if rt == "" or rt == "void" then
+        rtStore = "int"
+    m_fnNames += [sym]
+    m_fnRets += [rtStore]
+    m_fnKinds += [funcKind(inst)]
+    m_fnArity += [#ps]
+    m_fnSigs += [paramSig(inst)]
+    m_fnLink += [sym]
+    m_backend.declareFn(sym)
+    m_genQueue += [inst]
+    return sym

@@ -28,6 +28,7 @@ import file
 //      codegen_frame.kmm       stack-frame layout + coarse type inference
 //      codegen_stmt.kmm        statement lowering
 //      codegen_expr.kmm        expression lowering
+//      overload.kmm            overload resolution + generic monomorphisation
 //    backend/
 //      backend.kmm             Backend: the target-independent emit interface
 //      backend_x86.kmm         X86Backend     — System V AMD64, NASM syntax
