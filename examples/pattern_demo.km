@@ -1,0 +1,46 @@
+// Struct pattern matching: `case Type(field: <literal>, binding, …)`.
+// A pattern matches when the subject's runtime type is `Type` (or a
+// subtype) and every literal field-pattern is equal; bare names bind the
+// corresponding field for the arm body.
+
+import console
+
+struct User
+    name: string
+    role: string
+    age: int
+
+abstract struct Shape
+struct Circle : Shape
+    r: int
+struct Rect : Shape
+    w: int
+    h: int
+
+void greet(u: User)
+    match u
+        case User(name: "admin", role: "superuser")
+            console.print("!! the all-powerful admin")
+        case User(role: "admin", name)
+            console.print("admin:", name)
+        case User(name, role, age)
+            console.print(name, "is a", role, "aged", age)
+
+fn area(s: Shape): int
+    match s
+        case Circle(r)
+            return 3 * r * r
+        case Rect(w: 0)
+            return 0
+        case Rect(w, h)
+            return w * h
+    return 0 - 1
+
+void main()
+    greet(new User("admin", "superuser", 40))
+    greet(new User("bob", "admin", 33))
+    greet(new User("carol", "guest", 21))
+
+    console.print("circle 10 ->", area(new Circle(10)))
+    console.print("rect 0x5  ->", area(new Rect(0, 5)))
+    console.print("rect 4x6  ->", area(new Rect(4, 6)))

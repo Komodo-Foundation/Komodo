@@ -17,8 +17,13 @@ void Codegen::genExpr(e: Expression?)
         if not hasLocal(e.name) and isCurField(e.name) then
             m_backend.loadLocal(slotOf("self"), "int")
             m_backend.loadField(fieldIndexOf(m_curClass, e.name))
+            // a raw field read lands in rax; a float field must ride xmm0
+            if fieldTypeOf(m_curClass, e.name) == "float" then
+                m_backend.bitsToFloat()
         else if not hasLocal(e.name) and isMacro(e.name) then
             genExpr(macroExprOf(e.name))
+        else if not hasLocal(e.name) and isGlobalVar(e.name) then
+            m_backend.loadGlobal(e.name, globalTypeOf(e.name))
         else if not hasLocal(e.name) and isEnumVariant(e.name) then
             m_backend.loadIntLit(string(enumOrdinal(e.name)))
         else if not hasLocal(e.name) then
@@ -38,12 +43,15 @@ void Codegen::genExpr(e: Expression?)
             throw (string(e.line) + ": field access '." + e.member + "' on a non-object (type '" + mt + "')")
         genExpr(e.object)
         m_backend.loadField(fieldIndexOf(mt, e.member))
+        if fieldTypeOf(mt, e.member) == "float" then
+            m_backend.bitsToFloat()
     else if e is UnaryOp then
         genUnary(e)
     else if e is BinaryOp then
         genBinary(e)
     else if e is IndexExpr then
-        let strIdx = exprType(e.object) == "string"
+        let objT = exprType(e.object)
+        let strIdx = objT == "string"
         genExpr(e.object)
         m_backend.pushAcc()
         genExpr(e.index)
@@ -51,6 +59,9 @@ void Codegen::genExpr(e: Expression?)
             m_backend.strIndexAcc()
         else
             m_backend.indexAcc()
+            // a raw element read lands in rax; a float element rides xmm0
+            if elemTypeOf(objT) == "float" then
+                m_backend.bitsToFloat()
     else if e is SliceExpr then
         genSlice(e)
     else if e is ArrayExpr then
@@ -140,11 +151,21 @@ void Codegen::genBinary(e: BinaryOp)
     if e.op == "is" then
         genIsCheck(e)
         return
+    if e.op == "in" then
+        genIn(e)
+        return
+    // A float-valued `A and B or C` needs the real branch lowering
+    // (xmm0 arms); the integer idiom keeps its short-circuit `genLogical`
+    // path, whose Lua "B falsy ⇒ C" semantics some code may rely on.
+    if isTernary(e) and exprType(e) == "float" then
+        genTernary(e)
+        return
     if e.op == "and" or e.op == "or" then
         genLogical(e)
         return
     let ls = exprType(e.left) == "string"
     let rs = exprType(e.right) == "string"
+    let la = isArrayType(exprType(e.left))
     if (e.op == "==" or e.op == "!=") and (ls or rs) then
         genStrEquals(e)
     else if isCompareOp(e.op) and (ls or rs) then
@@ -155,6 +176,16 @@ void Codegen::genBinary(e: BinaryOp)
         genStrOp(e, "km_str_concat")
     else if e.op == "*" and ls then
         genStrOp(e, "km_str_repeat")
+    else if e.op == "+" and la then
+        genExpr(e.left)
+        m_backend.pushAcc()
+        genExpr(e.right)
+        m_backend.arrayAppendAcc()
+    else if e.op == "*" and la then
+        genExpr(e.left)
+        m_backend.pushAcc()
+        genExpr(e.right)
+        m_backend.arrayRepeat()
     else if exprType(e.left) == "float" or exprType(e.right) == "float" then
         genFloatArith(e)
     else
@@ -174,7 +205,37 @@ void Codegen::genStrEquals(e: BinaryOp)
     genExpr(e.right)
     m_backend.strEquals(e.op == "!=")
 
+// `x in coll` — substring test when `coll` is a string, element test when
+// it is an array.  Yields 1 / 0.
+void Codegen::genIn(e: BinaryOp)
+    let ht = exprType(e.right)
+    if ht == "string" then
+        genExpr(e.right)                 // haystack (spilled)
+        m_backend.pushAcc()
+        genExpr(e.left)                  // needle in rax
+        m_backend.strIn()
+        return
+    // array membership — pass the element's scalar tag so the runtime
+    // knows to compare strings by value rather than by pointer
+    let leaf = 0
+    if elemTypeOf(ht) == "string" then
+        leaf = 2
+    genExpr(e.right)                     // array handle (spilled)
+    m_backend.pushAcc()
+    genExpr(e.left)                      // candidate
+    if exprType(e.left) == "float" then
+        m_backend.floatToBits()
+    m_backend.arrayIn(leaf)
+
 void Codegen::genCompare(e: BinaryOp)
+    // a float on either side ⇒ compare in the SSE unit; an int operand is
+    // widened first so `2 < 3.5` works.
+    if exprType(e.left) == "float" or exprType(e.right) == "float" then
+        genOperandAsFloat(e.left)
+        m_backend.pushAccFloat()
+        genOperandAsFloat(e.right)
+        m_backend.compareFloat(e.op)
+        return
     genExpr(e.left)
     m_backend.pushAcc()
     genExpr(e.right)
@@ -188,7 +249,8 @@ void Codegen::genStrCompare(e: BinaryOp)
     m_backend.strCompare(e.op)
 
 // Short-circuit `and` / `or`: the right operand is only evaluated when
-// the left doesn't already decide the result.
+// the left doesn't already decide the result.  (Integer / pointer / bool
+// operands.  A float-valued select goes through `genTernary`.)
 void Codegen::genLogical(e: BinaryOp)
     let endL = m_backend.newLabel()
     genExpr(e.left)
@@ -198,6 +260,37 @@ void Codegen::genLogical(e: BinaryOp)
         m_backend.branchIfNonzeroKeep(endL)
     genExpr(e.right)
     m_backend.label(endL)
+
+// `A and B or C` — the Lua conditional-value idiom — lowered as a real
+// `A ? B : C` so the two arms may leave a float in xmm0 without the
+// truthiness plumbing that `genLogical` does on rax.  `isTernary` gates
+// this in `genBinary`.
+mut Codegen::isTernary(e: BinaryOp): bool
+    if e.op != "or" then
+        return false
+    let l = e.left
+    return l is BinaryOp and l.op == "and"
+
+void Codegen::genTernary(e: BinaryOp)
+    let cond = e.left
+    if not (cond is BinaryOp) then
+        genLogical(e)
+        return
+    let wantFloat = exprType(e) == "float"
+    let elseL = m_backend.newLabel()
+    let endL = m_backend.newLabel()
+    genExpr(cond.left)
+    m_backend.branchIfZero(elseL)
+    genTernaryArm(cond.right, wantFloat)
+    m_backend.jump(endL)
+    m_backend.label(elseL)
+    genTernaryArm(e.right, wantFloat)
+    m_backend.label(endL)
+
+void Codegen::genTernaryArm(v: Expression?, wantFloat: bool)
+    genExpr(v)
+    if wantFloat and exprType(v) != "float" then
+        m_backend.cvtIntToFloat()
 
 void Codegen::genIntArith(e: BinaryOp)
     genExpr(e.left)
@@ -217,27 +310,57 @@ void Codegen::genOperandAsFloat(e: Expression?)
         m_backend.cvtIntToFloat()
 
 // Array literal → target-defined  [ len | cap | elems… ]  handle.
+// A `[float]` literal widens any integer element (`[1, 2.5]` ⇒ [float]).
 void Codegen::genArray(e: ArrayExpr)
     let n = #e.elements
+    let floatElems = elemTypeOf(exprType(e)) == "float"
     m_backend.arrayBegin(n)
     let i = 0
     for elem in e.elements do
         genExpr(elem)
+        if floatElems and exprType(elem) != "float" then
+            m_backend.cvtIntToFloat()
+        if floatElems or exprType(elem) == "float" then
+            m_backend.floatToBits()
         m_backend.arrayStoreElem(i)
         i += 1
     m_backend.arrayEnd()
 
 // Runtime type tag for a call argument (see km_runtime.h):
-//   0 int / pointer   1 float   2 string   3 bool
+//   0 int / pointer   1 float   2 string   3 bool   4+ array (packed,
+//   see arrayTag) — lets `print`/`string(x)` pretty-print array values.
 mut Codegen::argTag(a: Expression?): int
     if a is BoolLiteral then
         return 3
     let t = exprType(a)
+    if isArrayType(t) then
+        return arrayTag(t)
     if t == "float" then
         return 1
     if t == "string" then
         return 2
     return 0
+
+// Packs an array type's leaf scalar tag and nesting depth into one
+// runtime tag: KM_TAG_ARRAY in the low byte, leaf tag in the next byte,
+// depth in the byte above that (mirrors km_runtime.h's contract;
+// `km_array_to_string` in stdlib/runtime.c unpacks the same way).
+// Types are homogeneous, so a single leaf + depth describes any uniform
+// nesting, e.g. `[[int]]` is leaf=int, depth=2.
+mut Codegen::arrayTag(t: string): int
+    let depth = 0
+    let leafType = t
+    while isArrayType(leafType) do
+        depth += 1
+        leafType = elemTypeOf(leafType)
+    let leaf = 9
+    if leafType == "int" then
+        leaf = 0
+    else if leafType == "float" then
+        leaf = 1
+    else if leafType == "string" then
+        leaf = 2
+    return 4 + leaf * 256 + depth * 65536
 
 // Every Komodo call is lowered the same way: an argc-long (tag, value)[]
 // buffer, filled one pair at a time.  `print`, `algorithm.sort`, … are
@@ -262,6 +385,25 @@ void Codegen::genCall(e: CallExpr)
         m_backend.pushAcc()
         genExpr(e.args[1])
         m_backend.strBinOp("km_str_join")
+        return
+
+    // `copy(x)` — a deep copy.  A value type delegates to its synthesised
+    // `km_deepcopy_<T>` helper; an array is buffer-cloned; anything else
+    // (scalar, string, enum, opaque handle) is already a value copy.
+    if e.name == "copy" then
+        if #e.args != 1 then
+            throw "copy(x) takes exactly one argument"
+        let a = e.args[0]
+        let t = exprType(a)
+        if deepCopierExists(t) then
+            genCall(new CallExpr("km_deepcopy_" + t, [a]))
+            return
+        if isArrayType(t) then
+            let sl = new SliceExpr()
+            sl.object = a
+            genSlice(sl)
+            return
+        genExpr(a)
         return
 
     // `string(x)` — convert any tagged value to its text form.
@@ -294,6 +436,45 @@ void Codegen::genCall(e: CallExpr)
             genMethodCall("self", e.name, e.args)
             return
 
+    // A dotted module call whose "_"-joined symbol is an overload set or
+    // a template — `algorithm.sort(xs)` → overloaded `algorithm_sort` —
+    // is resolved exactly like a bare overloaded / template name.  Such a
+    // library call is exempt from the "pure `fn` can't call a void" rule
+    // (it always was, back when the target was a linked prototype).
+    if dot > 0 then
+        let flat = m_backend.mangle(e.name)
+        if isTemplate(flat) or countSourceName(flat) >= 2 then
+            let savedLib = m_libCall
+            m_libCall = true
+            genCall(new CallExpr(flat, e.args))
+            m_libCall = savedLib
+            return
+
+    // Generic (implicit-type) free function — monomorphize it for the
+    // static argument types and call the specialized instance.
+    if isTemplate(e.name) then
+        let tpl = templateDeclOf(e.name)
+        if #tpl.params != #e.args then
+            throw ("function '" + e.name + "' takes " + string(#tpl.params) + " argument(s), got " + string(#e.args))
+        let gsym = ensureInstance(e.name, tplArgTypes(e.args))
+        if m_curKind == "fn" and not m_libCall and fnKind(gsym) == "void" then
+            throw ("a pure `fn` cannot call the void procedure '" + e.name + "'")
+        genDirectCall(gsym, e.args)
+        return
+
+    // Overloaded free function — pick the overload from the static
+    // argument types, falling back to a runtime dispatch when more than
+    // one candidate survives.
+    if countSourceName(e.name) >= 2 then
+        let sel = selectOverload(e.name, e.args)
+        if sel == 0 - 2 then
+            genOverloadDispatch(m_ovOrder, e.args)
+        else
+            if m_curKind == "fn" and not m_libCall and m_fnKinds[sel] == "void" then
+                throw ("a pure `fn` cannot call the void procedure '" + e.name + "'")
+            genDirectCall(m_fnLink[sel], e.args)
+        return
+
     let kind = fnKind(e.name)
 
     // `extern fn` — call through the native System V AMD64 C ABI.
@@ -308,14 +489,21 @@ void Codegen::genCall(e: CallExpr)
         // across the evaluation loop.
         let classes: [string] = []
         for a in e.args do
-            if exprType(a) == "float" then
+            if a is Identifier and isCallbackArg(a) then
+                classes += ["int"]
+            else if exprType(a) == "float" then
                 classes += ["float"]
             else
                 classes += ["int"]
         m_backend.cCallBegin(#e.args)
         let ci = 0
         for a in e.args do
-            genExpr(a)
+            if a is Identifier and isCallbackArg(a) then
+                // pass C a pointer to this Komodo function's trampoline
+                recordTramp(a.name)
+                m_backend.loadFnPtr(m_backend.mangle(a.name))
+            else
+                genExpr(a)
             m_backend.cCallArg(ci, classes[ci])
             ci += 1
         m_backend.cCallEnd(e.name, classes)
@@ -343,6 +531,64 @@ void Codegen::genCall(e: CallExpr)
         m_backend.callArgStore(j)
         j += 1
     m_backend.callFrameEnd(e.name, n)
+
+// Build the (tag,value)[] frame and call `sym` directly — the shared tail
+// of a plain call and of every statically-resolved overload / generic
+// instance.
+void Codegen::genDirectCall(sym: string, args: [Expression])
+    let n = #args
+    if n == 0 then
+        m_backend.call0(sym)
+        return
+    m_backend.callFrameBegin(n)
+    let j = 0
+    for a in args do
+        m_backend.callArgTag(j, argTag(a))
+        genExpr(a)
+        if exprType(a) == "float" then
+            m_backend.floatToBits()
+        m_backend.callArgStore(j)
+        j += 1
+    m_backend.callFrameEnd(sym, n)
+
+// Runtime overload dispatch: build the frame once, then for each
+// candidate (most specific first) test the argument tags / header type
+// ids and, on a full match, call that overload.  No candidate matching at
+// runtime aborts.
+void Codegen::genOverloadDispatch(order: [int], args: [Expression])
+    let n = #args
+    m_backend.callFrameBegin(n)
+    let j = 0
+    for a in args do
+        m_backend.callArgTag(j, argTag(a))
+        genExpr(a)
+        if exprType(a) == "float" then
+            m_backend.floatToBits()
+        m_backend.callArgStore(j)
+        j += 1
+    m_backend.dispatchBegin()
+    for idx in order do
+        m_backend.dispatchCaseBegin()
+        let sig = m_fnSigs[idx]
+        let pi = 0
+        while pi < #sig do
+            let pt = sig[pi]
+            if pt == "int" then
+                m_backend.dispatchTestTag(pi, 0)
+            else if pt == "float" then
+                m_backend.dispatchTestTag(pi, 1)
+            else if pt == "string" then
+                m_backend.dispatchTestTag(pi, 2)
+            else if pt == "bool" then
+                m_backend.dispatchTestTag(pi, 3)
+            else if isArrayType(pt) then
+                m_backend.dispatchTestTag(pi, arrayTag(pt))
+            else if pt != "any" then
+                m_backend.dispatchTestType(pi, descendantIds(pt))
+            pi += 1
+        m_backend.dispatchCall(m_fnLink[idx], n)
+        m_backend.dispatchCaseEnd()
+    m_backend.dispatchEnd(n)
 
 // ── objects: `new`, method calls ──────────────────────────────────
 
@@ -393,6 +639,10 @@ void Codegen::genNew(e: NewExpr)
         let dflt = fieldDefaultAt(e.typeName, di)
         if dflt != null and not filled[di] then
             genExpr(dflt)
+            if fieldTypeAt(e.typeName, di) == "float" then
+                if exprType(dflt) != "float" then
+                    m_backend.cvtIntToFloat()
+                m_backend.floatToBits()
             m_backend.objSetField(di)
         di += 1
 
@@ -416,8 +666,14 @@ void Codegen::genNew(e: NewExpr)
             throw ("`new " + e.typeName + "` given more values than it has fields")
         let i = 0
         for a in e.args do
+            let slot = order[i]
             genExpr(a)
-            m_backend.objSetField(order[i])
+            // a float field is stored as raw bits; widen an int arg first
+            if fieldTypeAt(e.typeName, slot) == "float" then
+                if exprType(a) != "float" then
+                    m_backend.cvtIntToFloat()
+                m_backend.floatToBits()
+            m_backend.objSetField(slot)
             i += 1
     m_backend.objFinishNew()
 

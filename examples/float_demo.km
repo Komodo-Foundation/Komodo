@@ -1,0 +1,48 @@
+// Floating-point: arithmetic, comparison, %, arrays, struct fields,
+// int→float widening in mixed contexts, and the `.0` text form.
+
+import console
+import algorithm
+
+struct Vec2
+    x: float
+    y: float
+
+fn length2(v: Vec2): float
+    return v.x * v.x + v.y * v.y
+
+void main()
+    let a = 3.0
+    let b = 2.0
+    console.print("arith:", a + b, a - b, a * b, a / b, a % b)
+    console.print("cmp:", a > b, a == b, a < b, a >= b, a != b)
+
+    // arrays of float — literal, index read/write, compound update
+    let xs = [1.5, 2.5, 3.5]
+    console.print("xs:", xs[0], xs[1], xs[2], "sum", xs[0] + xs[1] + xs[2])
+    xs[1] = 9.0
+    xs[2] += 0.25
+    console.print("xs':", xs[0], xs[1], xs[2])
+
+    // a [float] literal widens integer elements
+    let mixed = [1, 2.5, 3]
+    console.print("mixed:", mixed[0], mixed[1], mixed[2])
+
+    // float struct fields
+    let v = new Vec2(3.0, 4.0)
+    console.print("v:", v.x, v.y, "  |v|^2 =", length2(v))
+    v.x += 1.0
+    console.print("v.x now", v.x)
+
+    // int widened to float in a mixed expression / conditional value
+    let n = 5
+    console.print("mix:", n + 0.5, "  pick:", n > 0 and 1.5 or 0.0)
+
+    // float standard-library helpers — `algorithm.*` is overloaded, so
+    // the same names take `[float]` as they do `[int]`
+    algorithm.sort(xs)
+    console.print("sorted:", xs[0], xs[1], xs[2])
+    console.print("sum:", algorithm.sum(xs), " min:", algorithm.min(xs), " max:", algorithm.max(xs))
+
+    // whole floats still read as floats
+    console.print(4.0, 10.0 / 4.0, 6.0 / 3.0)

@@ -48,7 +48,22 @@ public
                 registerClass(d)
 
         // ── Pass 1: free-function + method signatures ──────────────
+        //  Generic templates (untyped params) and overload sets (>=2 free
+        //  decls sharing a name) are resolved by the code generator
+        //  (monomorphisation / dispatch); the analyser only exempts them
+        //  from the single-definition rule and leaves their call sites
+        //  loosely typed.
         for fd in prog.functions do
+            if fnIsTemplate(fd) then
+                if not listHas(m_templateNames, fd.name) then
+                    m_templateNames += [fd.name]
+                continue
+            if freeDeclCount(prog, fd.name) >= 2 then
+                if not listHas(m_overloadNames, fd.name) then
+                    m_overloadNames += [fd.name]
+                if not hasFn(fd.name) then
+                    registerFn(fd.name, "", fd)
+                continue
             if listHas(m_fnNames, fd.name) then
                 err(fd, "duplicate function '" + fd.name + "'")
             registerFn(fd.name, "", fd)
@@ -62,14 +77,30 @@ public
                 err(mac, "duplicate macro '" + mac.name + "'")
             pushMacro(mac.name, mac.init)
 
+        // ── Pass 2b: top-level variables ─────────────────────────
+        // Registered before any body so every function sees them, and in
+        // source order so an initialiser may read an earlier global.
+        for g in prog.globals do
+            registerGlobal(g)
+
         // ── Pass 3: check + annotate every body ───────────────────
+        //  Templates are skipped: their parameter types are known only
+        //  per call site, so codegen type-checks each monomorphised copy.
+        //  Overload members are ordinary functions — checked normally.
         for fd in prog.functions do
+            if fnIsTemplate(fd) then
+                continue
             checkFunction(fd, "")
         for cl in prog.classes do
             for m in cl.methods do
                 checkFunction(m, cl.name)
 
+        // non-fatal bad-practice warnings, in source order
+        for w in m_lints do
+            print(w)
+
         prog.analyzed = true
+        prog.usesCopy = m_usesCopy
 
     // ── diagnostics ───────────────────────────────────────────────
 
@@ -81,6 +112,60 @@ public
     void warn(node: ASTNode, msg: string)
         if m_strict then
             throw (string(node.line) + ":" + string(node.column) + ": " + msg)
+
+    // A non-fatal warning about a legal-but-suspicious construct — "this
+    // looks like a mistake" checks (dead code, self-assignment, `x / 0`,
+    // …).  Always recorded; the driver prints `lints()` after a
+    // successful analysis and the compile proceeds.  Under `strict` the
+    // same finding is escalated to a hard error.
+    mut lint(node: ASTNode, msg: string)
+        let at = string(node.line) + ":" + string(node.column) + ": "
+        if m_strict then
+            throw (at + msg)
+        m_lints += [at + "warning: " + msg]
+
+    mut lints(): [string]
+        return m_lints
+
+    // ── lint helpers ─────────────────────────────────────────────
+
+    // an integer literal lexeme whose value is 0 (`0`, `-0`, `000`)
+    mut intZero(v: string): bool
+        let i = 0
+        if v.length > 0 and v[0] == "-" then
+            i = 1
+        if i >= v.length then
+            return false
+        while i < v.length do
+            if v[i] != "0" then
+                return false
+            i += 1
+        return true
+
+    // two expressions that are syntactically the same plain variable
+    mut sameVar(a: Expression?, b: Expression?): bool
+        if a == null or b == null then
+            return false
+        if a is Identifier and b is Identifier then
+            return a.name == b.name
+        return false
+
+    // "" unless `e` is a literal that is always truthy / always falsy as
+    // a condition, in which case the word "true" / "false"
+    mut constTruthWord(e: Expression?): string
+        if e == null then
+            return ""
+        if e is BoolLiteral then
+            if e.value then
+                return "true"
+            return "false"
+        if e is NullLiteral then
+            return "false"
+        if e is IntLiteral then
+            if intZero(e.value) then
+                return "false"
+            return "true"
+        return ""
 
     // ── type registry ────────────────────────────────────────────
 
@@ -144,6 +229,8 @@ public
         m_typeIsClass += [false]
         m_typeIsEnum += [true]
         m_typeIsAbstract += [false]
+        m_typeIsUnique += [false]
+        m_typeIsExtern += [false]
         m_typeParent += [""]
         m_typeFieldNames += [[]]
         m_typeFieldTypes += [[]]
@@ -159,7 +246,9 @@ public
             names += [m.name]
             types += [m.declaredType or "int"]
             hasDef += [m.defaultValue != null]
-        registerType(d.name, d.parent, d, false, d.isAbstract, names, types, hasDef)
+        registerType(d.name, d.parent, d, false, d.isAbstract, d.isUnique, names, types, hasDef)
+        if d.isExtern then
+            m_typeIsExtern[typeIndex(d.name)] = true
 
     mut registerClass(d: ClassDecl)
         let names: [string] = []
@@ -169,16 +258,22 @@ public
             names += [f.name]
             types += [f.declaredType or "int"]
             hasDef += [f.defaultValue != null]
-        registerType(d.name, d.parent, d, true, d.isAbstract, names, types, hasDef)
+        registerType(d.name, d.parent, d, true, d.isAbstract, false, names, types, hasDef)
         let ti = typeIndex(d.name)
         for m in d.methods do
             if not m.isConstructor then
                 m_typeOwnMethods[ti] += [m.name]
 
-    mut registerType(name: string, parent: string?, node: ASTNode, isClass: bool, isAbs: bool, fnames: [string], ftypes: [string], fdef: [bool])
+    mut registerType(name: string, parent: string?, node: ASTNode, isClass: bool, isAbs: bool, isUniq: bool, fnames: [string], ftypes: [string], fdef: [bool])
         if listHas(m_typeNames, name) then
             err(node, "duplicate type '" + name + "'")
         let par = parentOrEmpty(parent)
+        // ownership is inherited: a child of a `unique` base is unique too.
+        let uniq = isUniq
+        if par != "" then
+            let upi = typeIndex(par)
+            if upi >= 0 and m_typeIsUnique[upi] then
+                uniq = true
         let allNames: [string] = []
         let allTypes: [string] = []
         let allDef: [bool] = []
@@ -202,6 +297,8 @@ public
         m_typeIsClass += [isClass]
         m_typeIsEnum += [false]
         m_typeIsAbstract += [isAbs]
+        m_typeIsUnique += [uniq]
+        m_typeIsExtern += [false]
         m_typeParent += [par]
         m_typeFieldNames += [allNames]
         m_typeFieldTypes += [allTypes]
@@ -231,6 +328,18 @@ public
     mut isAbstractType(name: string): bool
         let ti = typeIndex(name)
         return ti >= 0 and m_typeIsAbstract[ti]
+
+    // `unique struct T` (or a struct descended from one): its values carry
+    // single-owner move semantics — see `consumeMove` / `isMoved`.
+    mut isUniqueType(name: string): bool
+        let ti = typeIndex(name)
+        return ti >= 0 and m_typeIsUnique[ti]
+
+    // `extern type T` — an opaque C handle: a distinct nominal type,
+    // pointer-sized, with no fields and no `new`.
+    mut isExternType(name: string): bool
+        let ti = typeIndex(name)
+        return ti >= 0 and m_typeIsExtern[ti]
 
     mut typeParentOf(name: string): string
         let ti = typeIndex(name)
@@ -345,6 +454,20 @@ public
         m_fnKind += [kindOf(fd)]
         m_fnVariadic += [fd.variadic]
         m_fnLinked += [fd.isPrototype or fd.isExtern]
+        m_fnVis += [fd.visibility]
+        m_fnMod += [fd.moduleOwner]
+
+    mut fnVisOf(sym: string): string
+        let i = fnIndex(sym)
+        if i < 0 then
+            return "public"
+        return m_fnVis[i]
+
+    mut fnModOf(sym: string): string
+        let i = fnIndex(sym)
+        if i < 0 then
+            return ""
+        return m_fnMod[i]
 
     mut retDeclOf(fd: FunctionDecl): string
         if fd.isVoid or fd.returnType == null then
@@ -444,6 +567,48 @@ public
         m_macroNames += [name]
         m_macroExprs += [e]
 
+    // ── top-level variable registry (process-wide, never reset) ──
+
+    mut isGlobalVar(name: string): bool
+        return listHas(m_globalNames, name)
+
+    mut globalVarType(name: string): Type
+        let i = 0
+        while i < #m_globalNames do
+            if m_globalNames[i] == name then
+                return m_globalTypes[i]
+            i += 1
+        return tPrim("int")
+
+    // Type-check one `let NAME [: T] = EXPR` / `let NAME : T` and record
+    // its type.  Initialisers see functions (Pass 1) and every earlier
+    // global; a forward reference to a later global is not allowed.
+    mut registerGlobal(g: VarDecl)
+        if isGlobalVar(g.name) or isMacro(g.name) or listHas(m_fnNames, g.name) then
+            err(g, "duplicate top-level name '" + g.name + "'")
+
+        let declared: Type? = null
+        if g.declaredType != null then
+            declared = parseTypeStr(g.declaredType)
+
+        let initT: Type? = null
+        if g.init != null then
+            initT = inferExpr(g.init)
+
+        let bound = tPrim("int")
+        if declared != null then
+            bound = declared
+            if initT != null then
+                checkAssignable(g, declared, initT, "initialiser for '" + g.name + "'")
+        else if initT != null then
+            bound = widenForBinding(initT)
+        else
+            err(g, "top-level '" + g.name + "' needs a type annotation or an initialiser")
+
+        g.resolvedType = typeToLegacy(bound)
+        m_globalNames += [g.name]
+        m_globalTypes += [bound]
+
     // ── lexical scope for locals / params (flat per function) ────
     //
     //  Komodo locals do not lexically shadow one another (only macros
@@ -457,6 +622,8 @@ public
         m_scopeType = []
         m_scopeImmut = []
         m_scopeUsed = []
+        m_scopeMoved = []
+        m_scopeMovedAt = []
         m_pathKeys = []
         m_pathTypes = []
 
@@ -471,6 +638,61 @@ public
         m_scopeType += [t]
         m_scopeImmut += [immut]
         m_scopeUsed += [false]
+        m_scopeMoved += [false]
+        m_scopeMovedAt += [""]
+
+    // ── ownership / move tracking (unique structs) ───────────────────
+    //
+    //  A binding of `unique` type is "moved" once its value has been
+    //  transferred elsewhere (bound, assigned, stored, returned).  Reading
+    //  a moved binding is an error until a fresh value revives it.
+
+    mut markMoved(name: string, at: ASTNode)
+        let i = scopeIndex(name)
+        if i >= 0 then
+            m_scopeMoved[i] = true
+            m_scopeMovedAt[i] = string(at.line) + ":" + string(at.column)
+
+    mut isMoved(name: string): bool
+        let i = scopeIndex(name)
+        return i >= 0 and m_scopeMoved[i]
+
+    mut movedAt(name: string): string
+        let i = scopeIndex(name)
+        if i < 0 then
+            return "?"
+        return m_scopeMovedAt[i]
+
+    // a fresh value has landed in `name` — it owns again
+    mut reviveBinding(name: string)
+        let i = scopeIndex(name)
+        if i >= 0 then
+            m_scopeMoved[i] = false
+            m_scopeMovedAt[i] = ""
+
+    mut movedSnapshot(): [bool]
+        let out: [bool] = []
+        for b in m_scopeMoved do
+            out += [b]
+        return out
+
+    mut movedApply(snap: [bool])
+        let i = 0
+        while i < #snap and i < #m_scopeMoved do
+            m_scopeMoved[i] = snap[i]
+            i += 1
+
+    // conservative merge of two control-flow paths: a binding is moved
+    // after the join if it was moved on either side.
+    mut movedUnion(a: [bool], b: [bool]): [bool]
+        let out: [bool] = []
+        let i = 0
+        while i < #m_scopeMoved do
+            let av = i < #a and a[i]
+            let bv = i < #b and b[i]
+            out += [av or bv]
+            i += 1
+        return out
 
     mut scopeIndex(name: string): int
         let i = 0
@@ -620,6 +842,107 @@ public
             i += 1
         return false
 
+    // ── "did you mean" suggestions ───────────────────────────────
+    //
+    //  A small Levenshtein distance: the number of single-character
+    //  insert / delete / substitute edits that turn `a` into `b`.
+    //  Two rolling rows, so it costs O(#a · #b) time and O(#b) space.
+    mut editDistance(a: string, b: string): int
+        let n = a.length
+        let m = b.length
+        if n == 0 then
+            return m
+        if m == 0 then
+            return n
+        let prev: [int] = []
+        let j = 0
+        while j <= m do
+            prev += [j]
+            j += 1
+        let i = 1
+        while i <= n do
+            let cur: [int] = [i]
+            let k = 1
+            while k <= m do
+                let cost = 1
+                if a[i - 1] == b[k - 1] then
+                    cost = 0
+                let best = prev[k] + 1                 // delete
+                let ins = cur[k - 1] + 1               // insert
+                if ins < best then
+                    best = ins
+                let sub = prev[k - 1] + cost           // substitute
+                if sub < best then
+                    best = sub
+                cur += [best]
+                k += 1
+            prev = cur
+            i += 1
+        return prev[m]
+
+    //  The nearest entry in `candidates` to `name`, or "" when nothing
+    //  is close enough to be worth mentioning.  The threshold is tighter
+    //  for short names (a 1-edit gap between two 3-letter words is noise).
+    mut closestName(name: string, candidates: [string]): string
+        let limit = 2
+        if name.length <= 4 then
+            limit = 1
+        let best = ""
+        let bestD = 999
+        for c in candidates do
+            if c != name and c.length > 0 then
+                let d = editDistance(name, c)
+                if d < bestD then
+                    bestD = d
+                    best = c
+        if bestD <= limit then
+            return best
+        return ""
+
+    //  " (did you mean 'x'?)" or "" — append to any err() message.
+    mut didYouMean(name: string, candidates: [string]): string
+        let c = closestName(name, candidates)
+        if c == "" then
+            return ""
+        return " (did you mean '" + c + "'?)"
+
+    //  Every name that could legally stand where an identifier is used:
+    //  locals in scope, free functions, globals, macros, current-class
+    //  fields, and enum-variant shorthands.
+    mut identCandidates(): [string]
+        let out: [string] = []
+        for s in m_scopeNames do
+            out += [s]
+        for f in m_fnNames do
+            if dotIndex(f) < 0 then
+                out += [f]
+        for g in m_globalNames do
+            out += [g]
+        for mm in m_macroNames do
+            out += [mm]
+        if m_curClass != "" then
+            let ti = typeIndex(m_curClass)
+            if ti >= 0 then
+                for fld in m_typeFieldNames[ti] do
+                    out += [fld]
+        let i = 0
+        while i < #m_typeNames do
+            if m_typeIsEnum[i] then
+                for v in m_enumVariants[i] do
+                    out += [v]
+            i += 1
+        return out
+
+    //  Constructible type names (struct / class), for a bad `new T`.
+    mut typeCandidates(): [string]
+        let out: [string] = []
+        let i = 0
+        while i < #m_typeNames do
+            if not m_typeIsEnum[i] then
+                out += [m_typeNames[i]]
+            i += 1
+        return out
+
     mut dotIndex(s: string): int
         let i = 0
         while i < s.length do
@@ -628,20 +951,62 @@ public
             i += 1
         return 0 - 1
 
+    // ── overloading / generic templates ─────────────────────────────
+    //  Both are resolved by the code generator (`Codegen::selectOverload`
+    //  / `ensureInstance`); the analyser just relaxes its rules for the
+    //  names involved and leaves their call sites loosely typed.
+
+    //  A free function with >=1 un-annotated parameter — a
+    //  monomorphisation template, never emitted as-is.  Must match
+    //  `Codegen::isTemplateDecl` exactly (a `void` procedure with untyped
+    //  params counts, so it is *not* excluded here).
+    mut fnIsTemplate(fd: FunctionDecl): bool
+        if fd.isExtern or fd.isPrototype or fd.isConstructor then
+            return false
+        if fd.variadic or fd.name == "main" then
+            return false
+        for p in fd.params do
+            if p.declaredType == null then
+                return true
+        return false
+
+    //  How many non-template free declarations share `name`.
+    mut freeDeclCount(prog: Program, name: string): int
+        let n = 0
+        for fd in prog.functions do
+            if fd.name == name and not fnIsTemplate(fd) then
+                n += 1
+        return n
+
+    mut isTemplateName(name: string): bool
+        return listHas(m_templateNames, name)
+
+    mut isOverloadedName(name: string): bool
+        return listHas(m_overloadNames, name)
+
 private
     m_strict: bool = false
+    // non-fatal warnings collected during analysis (see `lint`)
+    m_lints: [string] = []
 
     // type registry
     m_typeNames: [string] = []
     m_typeIsClass: [bool] = []
     m_typeIsEnum: [bool] = []
     m_typeIsAbstract: [bool] = []
+    m_typeIsUnique: [bool] = []
+    m_typeIsExtern: [bool] = []
     m_typeParent: [string] = []
     m_typeFieldNames: [[string]] = []
     m_typeFieldTypes: [[string]] = []
     m_typeFieldHasDef: [[bool]] = []
     m_typeOwnMethods: [[string]] = []
     m_enumVariants: [[string]] = []
+
+    // free-function names that are monomorphisation templates (untyped
+    // params) or overload sets (>=2 decls); codegen resolves both.
+    m_templateNames: [string] = []
+    m_overloadNames: [string] = []
 
     // function-signature registry
     m_fnNames: [string] = []
@@ -651,10 +1016,17 @@ private
     m_fnKind: [string] = []
     m_fnVariadic: [bool] = []
     m_fnLinked: [bool] = []
+    m_fnVis: [string] = []       // "public" / "private" (module section)
+    m_fnMod: [string] = []       // owning module name ("" for the program)
+    // module of the function body currently being checked (for privacy)
+    m_curModuleOwner: string = ""
 
     // macros
     m_macroNames: [string] = []
     m_macroExprs: [Expression?] = []
+    // top-level `let` variables — registered once, visible to every body
+    m_globalNames: [string] = []
+    m_globalTypes: [Type] = []
     // number of (top-level) macros present before any function body ran
     m_macroBase: int = 0
     m_macroBaseSet: bool = false
@@ -665,6 +1037,9 @@ private
     m_scopeType: [Type] = []
     m_scopeImmut: [bool] = []
     m_scopeUsed: [bool] = []
+    // per-binding ownership state for `unique` types
+    m_scopeMoved: [bool] = []
+    m_scopeMovedAt: [string] = []
 
     // member-path narrowings
     m_pathKeys: [string] = []
@@ -677,3 +1052,5 @@ private
     m_curVoid: bool = false
     m_curKind: string = "fn"
     m_loopDepth: int = 0
+    // set when a `copy(x)` call is seen anywhere in the program
+    m_usesCopy: bool = false

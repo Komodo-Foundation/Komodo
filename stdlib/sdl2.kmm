@@ -1,0 +1,68 @@
+module sdl2
+
+link SDL2
+
+// SDL2 bindings — `import sdl2` and the `link SDL2` line above (a real
+// keyword, valid only inside a module) makes `komodo` add `-lSDL2` to
+// the link step automatically. No flags on the command line.
+//
+// This is the same pattern any C library uses: an interface module of
+// `extern fn` prototypes (native System V AMD64 ABI — see design.md's
+// "Foreign functions" section) plus one `link` line naming what the
+// linker needs — `link Name` for a `-lName` system library, or
+// `link "path/to/file.c"` for a companion source file to compile and
+// link in alongside it. No part of the compiler knows SDL2 exists; this
+// file is exactly as special as `stdlib/console.kmm`.
+//
+// Only the primitive-typed subset of the real SDL2 API is covered here
+// (structs aren't passed by value over this ABI — see design.md); it's
+// enough for a window + renderer + basic event loop. Extend it the same
+// way for more of SDL2, or copy the pattern for another library.
+
+extern fn SDL_Init(flags: int): int
+extern void SDL_Quit()
+
+extern fn SDL_CreateWindow(title: string, x: int, y: int, w: int, h: int, flags: int): int
+extern void SDL_DestroyWindow(window: int)
+
+extern fn SDL_CreateRenderer(window: int, index: int, flags: int): int
+extern void SDL_DestroyRenderer(renderer: int)
+extern fn SDL_SetRenderDrawColor(renderer: int, r: int, g: int, b: int, a: int): int
+extern fn SDL_RenderClear(renderer: int): int
+extern void SDL_RenderPresent(renderer: int)
+
+// `event` is `data(anIntArray)` — see design.md's `data()` builtin; an
+// SDL_Event is 56 bytes, so an 8-int array is room to spare. Read the
+// low 32 bits of ev[0] for the event type constant.
+extern fn SDL_PollEvent(event: int): int
+
+extern void SDL_Delay(ms: int)
+extern fn SDL_GetTicks(): int
+
+extern fn SDL_ShowCursor(toggle: int): int
+extern void SDL_SetWindowTitle(window: int, title: string)
+
+// ── commonly used constants ────────────────────────────────────────
+//
+// `let NAME be EXPR` compile-time macros: a module's top-level macros
+// are visible to every file that `import`s it, exactly like a `#define`
+// in a C header, and are substituted at each use site with no storage or
+// call overhead. Importers write `SDL_INIT_VIDEO`, not `SDL_INIT_VIDEO()`.
+
+let SDL_INIT_VIDEO be 32
+
+let SDL_WINDOWPOS_CENTERED be 805240832
+
+let SDL_WINDOW_SHOWN be 4
+let SDL_WINDOW_RESIZABLE be 32
+let SDL_WINDOW_FULLSCREEN be 1
+
+let SDL_RENDERER_ACCELERATED be 2
+let SDL_RENDERER_PRESENTVSYNC be 4
+
+// SDL_Event.type values (the low 32 bits of the polled event's word 0)
+let SDL_EVENT_QUIT be 256
+let SDL_EVENT_KEYDOWN be 768
+let SDL_EVENT_KEYUP be 769
+let SDL_EVENT_MOUSEBUTTONDOWN be 1025
+let SDL_EVENT_MOUSEMOTION be 1024

@@ -1,0 +1,43 @@
+// Compound assignment (`+= -= *= /= %=`) on every kind of lvalue, and the
+// `in` membership operator for strings and arrays.
+
+import console
+
+struct Acc
+    total: float
+
+void main()
+    // compound assignment — local, then all five operators
+    let n = 20
+    n += 5
+    n -= 3
+    n *= 2
+    n /= 4
+    n %= 7
+    console.print("n:", n)
+
+    // float local
+    let x = 1.0
+    x *= 2.5
+    x /= 0.5
+    console.print("x:", x)
+
+    // struct field (float) and array element (int)
+    let a = new Acc(10.0)
+    a.total *= 1.5
+    console.print("a.total:", a.total)
+    let xs = [2, 4, 6]
+    xs[1] *= 10
+    xs[2] -= 1
+    console.print("xs:", xs[0], xs[1], xs[2])
+
+    // `in` — substring of a string
+    console.print("cat has c:", "c" in "cat", "  cat has z:", "z" in "cat")
+    console.print("sub 'at':", "at" in "cat")
+
+    // `in` — element of an array (int, string, float)
+    console.print("1 in list:", 1 in [1, 2, 3], "  5 in list:", 5 in [1, 2, 3])
+    let words = ["alpha", "beta", "gamma"]
+    console.print("beta in words:", "beta" in words, "  delta in words:", "delta" in words)
+    let fs = [1.5, 2.5, 3.5]
+    console.print("2.5 in fs:", 2.5 in fs)

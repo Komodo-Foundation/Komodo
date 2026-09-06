@@ -1,0 +1,41 @@
+// Free-function overloading: one name, several parameter lists.  A call
+// is resolved from the static argument types; when a base-typed object
+// argument leaves more than one candidate, the compiler emits a runtime
+// type-id check that dispatches to the right overload.
+
+import console
+
+fn kind(x: int): string
+    return "int"
+fn kind(x: string): string
+    return "string"
+fn kind(x: bool): string
+    return "bool"
+
+// overload by arity
+fn area(w: int): int
+    return w * w
+fn area(w: int, h: int): int
+    return w * h
+
+abstract struct Shape
+struct Circle : Shape
+    r: int
+struct Square : Shape
+    s: int
+
+fn name(x: Circle): string
+    return "circle"
+fn name(x: Square): string
+    return "square"
+
+// `sh` is statically `Shape`, so `name(sh)` can't be resolved until run
+// time — the compiler emits a header type-id dispatch.
+fn describe(sh: Shape): string
+    return name(sh)
+
+void main()
+    console.print(kind(1), kind("hi"), kind(true))
+    console.print("area 5 =", area(5), "  area 3x4 =", area(3, 4))
+    console.print(describe(new Circle(2)))
+    console.print(describe(new Square(3)))

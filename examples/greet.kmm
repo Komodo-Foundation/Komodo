@@ -1,0 +1,16 @@
+module greet
+
+// A module with `public` / `private` sections, like a static class.
+// Only the `public` members may be reached from another module via
+// `greet::name`; the `private` helper is module-local.
+
+public
+    fn hello(who: string): string
+        return banner() + who + "!"
+
+    fn loud(who: string): string
+        return hello(who) + hello(who)
+
+private
+    fn banner(): string
+        return "Hello, "

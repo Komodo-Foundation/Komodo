@@ -26,6 +26,11 @@ mut Analyzer::inferExpr(e: Expression?): Type
     // falls back to its own classification instead of trusting "any".
     if stripNull(t).kind != "any" then
         e.resolvedType = typeToLegacy(t)
+    // An `extern type` handle is a plain pointer-sized word at run time —
+    // hand codegen "int" so it never treats the value as a struct.
+    let bt = stripNull(t)
+    if bt.kind == "object" and isExternType(bt.name) then
+        e.resolvedType = "int"
     return t
 
 mut Analyzer::inferRaw(e: Expression?): Type
@@ -41,7 +46,7 @@ mut Analyzer::inferRaw(e: Expression?): Type
     if e is CharLiteral then
         return tPrim("char")
     if e is NullLiteral then
-        return tNull()
+        return tNull
 
     if e is Identifier then
         return inferIdentifier(e)
@@ -74,7 +79,7 @@ mut Analyzer::inferRaw(e: Expression?): Type
     if e is ThrowExpr then
         if e.message != null then
             inferExpr(e.message)
-        return tNever()
+        return tNever
 
     return tPrim("int")
 
@@ -82,6 +87,8 @@ mut Analyzer::inferRaw(e: Expression?): Type
 
 mut Analyzer::inferIdentifier(e: Identifier): Type
     if scopeHas(e.name) then
+        if isMoved(e.name) then
+            err(e, "use of moved value '" + e.name + "' — a `unique` value moved away at " + movedAt(e.name) + " leaves nothing behind")
         return scopeType(e.name)
     if isCurField(e.name) then
         return curClassFieldType(e.name)
@@ -90,6 +97,8 @@ mut Analyzer::inferIdentifier(e: Identifier): Type
         if m == null then
             return tPrim("int")
         return inferExpr(m)
+    if isGlobalVar(e.name) then
+        return globalVarType(e.name)
     if isEnumType(e.name) then
         return tObject(e.name)
     // an `Enum::VARIANT` collapses to a bare Identifier in the parser;
@@ -97,7 +106,7 @@ mut Analyzer::inferIdentifier(e: Identifier): Type
     let en = enumOfVariant(e.name)
     if en != "" then
         return tObject(en)
-    err(e, "undefined name '" + e.name + "'")
+    err(e, "undefined name '" + e.name + "'" + didYouMean(e.name, identCandidates()))
     return tPrim("int")
 
 mut Analyzer::enumOfVariant(name: string): string
@@ -119,6 +128,22 @@ mut Analyzer::inferBinary(e: BinaryOp): Type
             rn = rhs.name
         if rn == "" or not isObjType(rn) then
             err(e, "`is` expects a known type name on the right")
+        return tPrim("bool")
+
+    if e.op == "in" then
+        let needle = inferExpr(e.left)
+        let hay = inferExpr(e.right)
+        let hb = stripNull(hay)
+        if hb.kind == "string" then
+            let nb = stripNull(needle)
+            if nb.kind != "string" and nb.kind != "char" and nb.kind != "any" then
+                err(e, "`in` on a string wants a string / char on the left, got '" + typeToString(needle) + "'")
+        else if hb.kind == "array" then
+            let el = hb.elem or tPrim("int")
+            if not (isAssignable(el, needle) or isAssignable(needle, el) or stripNull(needle).kind == "any") then
+                err(e, "`in`: '" + typeToString(needle) + "' can't be an element of '" + typeToString(hay) + "'")
+        else if hb.kind != "any" then
+            err(e, "`in` wants a string or an array on the right, got '" + typeToString(hay) + "'")
         return tPrim("bool")
 
     if e.op == "and" or e.op == "or" then
@@ -146,6 +171,17 @@ mut Analyzer::inferBinary(e: BinaryOp): Type
     let lt = inferExpr(e.left)
     let rt = inferExpr(e.right)
 
+    // bad practice: `x / 0` / `x % 0` — a guaranteed runtime trap the
+    // optimiser deliberately refuses to fold.
+    if e.op == "/" or e.op == "%" then
+        let rhs = e.right
+        if rhs is IntLiteral and intZero(rhs.value) then
+            lint(e, "division by zero")
+    // bad practice: `x <cmp> x` — the result is a constant (and, for
+    // floats, a NaN-dependent surprise).
+    if isCompareOp(e.op) and sameVar(e.left, e.right) then
+        lint(e, "'" + e.op + "' compares a value with itself")
+
     // `==` / `!=` may involve `null` (that is how a value gets narrowed);
     // every other operator needs both operands non-null.
     if e.op != "==" and e.op != "!=" then
@@ -154,11 +190,23 @@ mut Analyzer::inferBinary(e: BinaryOp): Type
         if isNullable(rt) then
             err(e, "right operand of '" + e.op + "' is possibly null")
 
+    // An opaque `extern type` handle only supports equality (`== 0` for a
+    // NULL check, `== other` for identity) — never arithmetic / ordering.
+    let lb = stripNull(lt)
+    let rb = stripNull(rt)
+    let externL = lb.kind == "object" and isExternType(lb.name)
+    let externR = rb.kind == "object" and isExternType(rb.name)
+    if (externL or externR) and not isCompareOp(e.op) then
+        let hn = lb.name
+        if externR then
+            hn = rb.name
+        err(e, "operator '" + e.op + "' is not defined for the opaque handle type '" + hn + "'")
+
     if isCompareOp(e.op) then
         return tPrim("bool")
 
     if lt.kind == "any" or rt.kind == "any" then
-        return tAny()
+        return tAny
 
     let ls = legacyOf(lt) == "string"
     let rs = legacyOf(rt) == "string"
@@ -166,6 +214,10 @@ mut Analyzer::inferBinary(e: BinaryOp): Type
         return tPrim("string")
     if e.op == "*" and ls then
         return tPrim("string")
+    if e.op == "+" and lt.kind == "array" and rt.kind == "array" then
+        return lt
+    if e.op == "*" and lt.kind == "array" and isNumeric(rt) then
+        return lt
     if legacyOf(lt) == "float" or legacyOf(rt) == "float" then
         return tPrim("float")
     return tPrim("int")
@@ -232,6 +284,28 @@ mut Analyzer::inferCall(e: CallExpr): Type
             inferExpr(a)
         return tPrim("string")
 
+    // `copy(x)` — a deep copy of `x`.  The result has the same type; the
+    // source is *read*, never moved, so `copy(a)` on a `unique` value
+    // leaves `a` a live owner while handing back an independent clone.
+    if e.name == "copy" then
+        m_usesCopy = true
+        if #e.args != 1 then
+            err(e, "'copy' takes exactly one argument")
+        let ct = inferExpr(e.args[0])
+        let cb = stripNull(ct)
+        if cb.kind == "object" and isExternType(cb.name) then
+            err(e, "cannot `copy` the opaque handle type '" + cb.name + "'")
+        return ct
+
+    // A generic template or an overload set — the code generator picks
+    // and monomorphises / dispatches the target.  Infer the arguments
+    // (so their own types resolve and side effects are seen) but leave
+    // the call loosely typed.
+    if isTemplateName(e.name) or isOverloadedName(e.name) then
+        for a in e.args do
+            inferExpr(a)
+        return tAny
+
     let dot = dotIndex(e.name)
     if dot > 0 then
         let recv = e.name[0 to dot]
@@ -242,19 +316,46 @@ mut Analyzer::inferCall(e: CallExpr): Type
         // linked symbol is the "_"-joined form; if a declaration for it
         // was imported (stdlib/*.kmm, or any library), type-check against
         // it, otherwise leave the call unchecked.
+        let sym = mangleDotted(e.name)
+        // `Module.member` where `member` sits in a `private` section of a
+        // *different* module — reject it.
+        if hasFn(sym) and fnVisOf(sym) == "private" then
+            let owns = fnModOf(sym)
+            if owns != "" and owns != m_curModuleOwner then
+                err(e, "'" + meth + "' is private to module '" + owns + "'")
+        // that flat symbol may itself be an overload set / template
+        // (e.g. `algorithm.sort` → overloaded `algorithm_sort`) — resolve
+        // it loosely, exactly like a bare overloaded name.
+        if isTemplateName(sym) or isOverloadedName(sym) then
+            for a in e.args do
+                inferExpr(a)
+            return tAny
         let argsD: [Type] = []
         for a in e.args do
             argsD += [inferExpr(a)]
-        let sym = mangleDotted(e.name)
         if hasFn(sym) then
             return resolveFnCall(e, sym, e.name, argsD, 0)
-        return tAny()
+        return tAny
 
     // plain name: user function, extern, or `module::member` (the parser
-    // drops the namespace, so it arrives bare).
+    // drops the namespace but keeps it on `e.qualifier` for this check).
+    if e.qualifier != "" and hasFn(e.name) and fnVisOf(e.name) == "private" then
+        let owns = fnModOf(e.name)
+        if owns != "" and owns != m_curModuleOwner then
+            err(e, "'" + e.name + "' is private to module '" + owns + "'")
+    //
+    // An `extern` call may take a bare Komodo function name as an argument
+    // — it is passed to C as a function pointer (codegen emits a native-ABI
+    // trampoline).  Such an argument must not be inferred as a value.
+    let externTarget = hasFn(e.name) and fnKindOf(e.name) == "extern"
     let argTs: [Type] = []
     for a in e.args do
-        argTs += [inferExpr(a)]
+        if externTarget and a is Identifier and isCallbackRef(a) then
+            checkCallbackTarget(e, a.name)
+            a.resolvedType = "int"
+            argTs += [tPrim("int")]
+        else
+            argTs += [inferExpr(a)]
     if hasFn(e.name) then
         return resolveFnCall(e, e.name, e.name, argTs, 0)
     // an unqualified call inside a method that names a sibling method —
@@ -272,7 +373,43 @@ mut Analyzer::inferCall(e: CallExpr): Type
             return parseTypeStr(fnRetType(sym))
     // an unresolved free symbol — a library not on the search path, say.
     // Leave it unchecked rather than guessing.
-    return tAny()
+    return tAny
+
+// Is `a` a bare reference to a top-level Komodo function (not a value in
+// scope, a macro, a global, or a `self` field)?  Only then is it a
+// candidate C callback.
+mut Analyzer::isCallbackRef(a: Identifier): bool
+    let nm = a.name
+    if scopeHas(nm) or isMacro(nm) or isGlobalVar(nm) or isCurField(nm) then
+        return false
+    return hasFn(nm) and fnKindOf(nm) != "extern"
+
+// A Komodo function handed to C as a callback must use only plain
+// machine-word parameters and an int-class or `void` result — the
+// generated trampoline marshals integer registers only.
+mut Analyzer::checkCallbackTarget(node: ASTNode, fnName: string)
+    let params = fnParamTypes(fnName)
+    if #params > 6 then
+        err(node, "'" + fnName + "' cannot be a C callback: it takes " + string(#params) + " parameters (max 6)")
+    for pt in params do
+        if not callbackWordType(parseTypeStr(pt)) then
+            err(node, "'" + fnName + "' cannot be a C callback: parameter type '" + pt + "' is not a plain machine word")
+    let ret = fnRetType(fnName)
+    if ret != "void" then
+        let rt = stripNull(parseTypeStr(ret))
+        if not callbackWordType(rt) then
+            err(node, "'" + fnName + "' cannot be a C callback: return type '" + ret + "' is not a plain machine word")
+
+// An integer-register-passable type: any integer width, bool, char,
+// string (char*), an object handle (pointer), or `any`.  Not float, not
+// an array, not void.
+mut Analyzer::callbackWordType(t: Type): bool
+    let b = stripNull(t)
+    if b.kind == "any" or b.kind == "bool" or b.kind == "char" or b.kind == "string" then
+        return true
+    if b.kind == "object" then
+        return true
+    return isIntKind(b.kind)
 
 // Type-check a call whose target `sym` is a registered function/prototype.
 // `display` is the name to use in diagnostics; `skip` leading params are
@@ -304,7 +441,14 @@ mut Analyzer::checkArgs(node: ASTNode, name: string, params: [string], argTs: [T
         let want = parseTypeStr(params[i + skip])
         let got = argTs[i]
         if isExtern then
-            if not cAbiCompatible(want, got) then
+            let wb = stripNull(want)
+            // A parameter typed as an opaque `extern type` handle keeps
+            // Komodo's nominal check — a bare `int` or a different handle
+            // is rejected, exactly as it would be Komodo-side.
+            if wb.kind == "object" and isExternType(wb.name) then
+                if not isAssignable(want, got) then
+                    err(node, "argument " + string(i + 1) + " to extern '" + name + "': type '" + typeToString(got) + "' is not assignable to handle type '" + typeToString(want) + "'")
+            else if not cAbiCompatible(want, got) then
                 err(node, "argument " + string(i + 1) + " to extern '" + name + "': '" + typeToString(got) + "' is not compatible with '" + typeToString(want) + "'")
         else if not isAssignable(want, got) then
             err(node, "argument " + string(i + 1) + " to '" + name + "': type '" + typeToString(got) + "' is not assignable to '" + typeToString(want) + "'")
@@ -373,7 +517,9 @@ mut Analyzer::isMethodReceiver(recv: string): bool
 
 mut Analyzer::inferNew(e: NewExpr): Type
     if not isObjType(e.typeName) then
-        err(e, "`new` of unknown type '" + e.typeName + "'")
+        err(e, "`new` of unknown type '" + e.typeName + "'" + didYouMean(e.typeName, typeCandidates()))
+    if isExternType(e.typeName) then
+        err(e, "cannot construct `extern type " + e.typeName + "` — it is an opaque C handle; obtain one from a C function")
     if isAbstractType(e.typeName) then
         err(e, "cannot instantiate abstract type '" + e.typeName + "'")
     let argTs: [Type] = []
@@ -452,21 +598,21 @@ mut Analyzer::inferMember(e: MemberExpr): Type
         return pnarrow
 
     if ot.kind == "any" then
-        return tAny()
+        return tAny
     if isNullable(ot) then
         err(e, "in '" + m_curFnName + "': value of type '" + typeToString(ot) + "' is possibly null — narrow it before reading '." + e.member + "'")
     let base = stripNull(ot)
     if base.kind != "object" or isEnumType(base.name) then
         err(e, "field access on a non-object (type '" + typeToString(ot) + "')")
     if not hasField(base.name, e.member) then
-        err(e, "type '" + base.name + "' has no field '" + e.member + "'")
+        err(e, "type '" + base.name + "' has no field '" + e.member + "'" + didYouMean(e.member, fieldNamesOf(base.name)))
     return fieldReadType(base.name, e.member)
 
 mut Analyzer::inferIndex(e: IndexExpr): Type
     let ot = inferExpr(e.object)
     inferExpr(e.index)
     if ot.kind == "any" then
-        return tAny()
+        return tAny
     if isNullable(ot) then
         err(e, "value of type '" + typeToString(ot) + "' is possibly null — narrow it before indexing")
     let base = stripNull(ot)
@@ -478,7 +624,7 @@ mut Analyzer::inferIndex(e: IndexExpr): Type
 
 mut Analyzer::inferArray(e: ArrayExpr): Type
     if #e.elements == 0 then
-        return tArray(tNever())
+        return tArray(tNever)
     let acc: Type? = null
     for el in e.elements do
         let et = inferExpr(el)
@@ -486,4 +632,4 @@ mut Analyzer::inferArray(e: ArrayExpr): Type
             acc = et
         else
             acc = unify(acc, et)
-    return tArray(acc or tNever())
+    return tArray(acc or tNever)

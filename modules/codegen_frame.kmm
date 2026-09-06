@@ -71,10 +71,15 @@ mut Codegen::exprType(e: Expression?): string
     if e is StringLiteral then
         return "string"
     if e is Identifier then
+        let ev = envTypeOf(e.name)
+        if ev != "" then
+            return ev
         if not hasLocal(e.name) and isCurField(e.name) then
             return fieldTypeOf(m_curClass, e.name)
         if not hasLocal(e.name) and isMacro(e.name) then
             return exprType(macroExprOf(e.name))
+        if not hasLocal(e.name) and isGlobalVar(e.name) then
+            return globalTypeOf(e.name)
         return typeOf(e.name)
     if e is NewExpr then
         return e.typeName
@@ -88,7 +93,7 @@ mut Codegen::exprType(e: Expression?): string
             return "int"
         return exprType(e.operand)
     if e is BinaryOp then
-        if e.op == "is" then
+        if e.op == "is" or e.op == "in" then
             return "int"
         if isCompareOp(e.op) then
             return "int"
@@ -97,11 +102,18 @@ mut Codegen::exprType(e: Expression?): string
             return "string"
         if e.op == "*" and exprType(e.left) == "string" then
             return "string"
+        // arithmetic and the `and`/`or` value-select idiom: a float on
+        // either side wins (`n > 0 and 1.0 or 0.0` is a float).
         if exprType(e.left) == "float" or exprType(e.right) == "float" then
             return "float"
+        if e.op == "and" or e.op == "or" then
+            return exprType(e.right)
         return "int"
     if e is CallExpr then
         let d = dotIndex(e.name)
+        // a dotted call may name an overload set / template through its
+        // "_"-joined form (`algorithm.sum` → overloaded `algorithm_sum`)
+        let cn = e.name
         if d > 0 then
             let r = e.name[0 to d]
             let mth = e.name[(d + 1) to e.name.length]
@@ -109,8 +121,23 @@ mut Codegen::exprType(e: Expression?): string
                 let owner = resolveMethodOwner(receiverType(r), mth)
                 if owner != "" then
                     return fnRet(owner + "__" + mth)
+            cn = m_backend.mangle(e.name)
+        if isTemplate(cn) and #templateDeclOf(cn).params == #e.args then
+            let gsym = ensureInstance(cn, tplArgTypes(e.args))
+            return lookupRet(gsym)
+        if countSourceName(cn) >= 2 then
+            return overloadRet(cn, e.args)
         return fnRet(e.name)
     return "int"
+
+// Slot type for a `case Type(field: bind)` binding — the field's declared
+// type with any trailing "?" removed (a nullable object still lives in an
+// 8-byte word).
+mut Codegen::structPatBindType(typeName: string, field: string): string
+    let ft = fieldTypeOf(typeName, field)
+    if #ft > 0 and ft[#ft - 1] == "?" then
+        return ft[0 to (#ft - 1)]
+    return ft
 
 // Pre-scan a statement list, reserving a slot for every variable it (or a
 // nested block) declares.
@@ -149,4 +176,9 @@ void Codegen::collectLocals(stmts: [Statement])
             m_matchTmp += 1
             addLocal(s.tmpName, "int", false)
             for c in s.cases do
+                let pat = c.pattern
+                if pat is StructPattern then
+                    for fp in pat.fields do
+                        if fp.bind != "" then
+                            addLocal(fp.bind, structPatBindType(pat.typeName, fp.field), false)
                 collectLocals(c.body)

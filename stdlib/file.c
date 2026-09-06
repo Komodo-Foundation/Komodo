@@ -48,6 +48,59 @@ void write_all(long argc, KmArg *items)
     fclose(f);
 }
 
+/* file.append_all(path, data)  — create if absent, otherwise append. */
+void append_all(long argc, KmArg *items)
+{
+    if (argc < 2) return;
+    const char *path = (const char *)items[0].value;
+    const char *data = (const char *)items[1].value;
+    FILE *f = fopen(path, "ab");
+    if (!f) return;
+    fputs(data, f);
+    fclose(f);
+}
+
+/* file.read_lines(path) : [string]
+ * The file split on '\n'; a trailing newline does not yield a final
+ * empty element.  '\r' before a '\n' is dropped.  Empty array on error. */
+KmArray *read_lines(long argc, KmArg *items)
+{
+    if (argc < 1) return km_array_new(0);
+    const char *path = (const char *)items[0].value;
+    FILE *f = fopen(path, "rb");
+    if (!f) return km_array_new(0);
+    fseek(f, 0, SEEK_END);
+    long n = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    char *buf = malloc((size_t)n + 1);
+    size_t got = fread(buf, 1, (size_t)n, f);
+    buf[got] = '\0';
+    fclose(f);
+
+    long lines = 1;
+    for (size_t i = 0; i < got; i++)
+        if (buf[i] == '\n') lines++;
+
+    KmArray *out = km_array_new(lines);
+    long li = 0;
+    size_t start = 0;
+    for (size_t i = 0; i <= got; i++) {
+        if (i == got || buf[i] == '\n') {
+            size_t end = i;
+            if (end > start && buf[end - 1] == '\r') end--;
+            if (i == got && start == got) break;   /* trailing newline */
+            char *line = malloc(end - start + 1);
+            memcpy(line, buf + start, end - start);
+            line[end - start] = '\0';
+            out->data[li++] = (long)line;
+            start = i + 1;
+        }
+    }
+    out->len = li;
+    free(buf);
+    return out;
+}
+
 /* file.list_dir(path) : [string]  — entry names in `path` (no "."/"..",
  * unsorted); empty array when `path` is not a directory. */
 KmArray *list_dir(long argc, KmArg *items)

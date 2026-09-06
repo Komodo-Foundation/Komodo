@@ -40,8 +40,22 @@ enum {
     KM_TAG_INT   = 0,
     KM_TAG_FLOAT = 1,
     KM_TAG_STR   = 2,
-    KM_TAG_BOOL  = 3
+    KM_TAG_BOOL  = 3,
+    KM_TAG_ARRAY = 4
 };
+
+/*
+ * An array-valued argument or return packs its element description into
+ * the tag word alongside KM_TAG_ARRAY:
+ *
+ *     bits  0..7   KM_TAG_ARRAY
+ *     bits  8..15  leaf scalar tag (KM_TAG_INT / FLOAT / STR / BOOL)
+ *     bits 16..23  nesting depth (1 for [int], 2 for [[int]], …)
+ *
+ * so  tag = KM_TAG_ARRAY + (leaf << 8) + (depth << 16)  and `value` is
+ * the KmArray*.  The compiler builds this in codegen_expr.kmm's
+ * arrayTag(); the consumers here dispatch on `tag & 0xFF`.
+ */
 
 /* Reinterpret a raw argument word as a double / from a double. */
 static inline double km_as_float(long bits)
@@ -57,12 +71,33 @@ static inline long km_from_float(double d)
     return bits;
 }
 
+/*
+ * Object lifetime.  A struct / class instance carries a reference count in
+ * the 8-byte word *just before* the handle ( (long *)handle - 1 ); the
+ * type-id word the rest of the runtime reads still sits at handle[0], so
+ * every existing field / vtable offset is unchanged.  `objNew` initialises
+ * the count to 1.
+ *
+ *   km_retain   — ++count            (reserved for a future full RC pass)
+ *   km_release  — --count; free the block (header included) at zero.  It
+ *                 does NOT recurse into fields: the compiler only emits it
+ *                 for objects a conservative escape analysis proved are
+ *                 unshared, so the count is always exactly 1 here.
+ *   km_drop_array — free a heap array the same analysis proved unshared
+ *                 (arrays carry no refcount word).
+ */
+void km_retain(void *handle);
+void km_release(void *handle);
+void km_drop_array(void *handle);
+
 /* ── compiler-internal runtime (operator lowerings, not Komodo calls) ── */
 KmArray *km_array_new(long len);
 KmArray *km_array_append(KmArray *dst, KmArray *src);
 KmArray *km_array_grow(KmArray *dst, KmArray *src);
+KmArray *km_array_repeat(KmArray *a, long n);
 const char *km_str_join(KmArray *parts, const char *sep);
 KmArray *km_array_slice(KmArray *a, long start, long end);
+const char *km_array_to_string(KmArray *a, long leaf, long depth);
 
 /* error handling — `throw msg` and the `f(args)?` protected-call guard.
  * `km_try_push` registers a jmp_buf reserved on the caller's stack;
@@ -83,22 +118,35 @@ long        km_str_eq(const char *a, const char *b);
 const char *km_str_slice(const char *s, long start, long end);
 const char *km_str_char(const char *s, long i);
 long        km_str_cmp(const char *a, const char *b);
+/* `x in coll` membership — 1 / 0 */
+long        km_in_str(const char *haystack, const char *needle);
+long        km_in_array(KmArray *a, long v, long leaf);
 const char *km_to_string(long tag, long value);
+/* "%g" for a double, but integral values keep a ".0" (Komodo float text) */
+void        km_fmt_double(char *buf, unsigned long cap, double d);
 
 /* ── module: console ── */
 void console_print(long argc, KmArg *items);
 void console_write(long argc, KmArg *items);
 void console_error(long argc, KmArg *items);
 
-/* ── module: algorithm ── */
-void algorithm_sort(long argc, KmArg *items);
-void algorithm_reverse(long argc, KmArg *items);
-long algorithm_sum(long argc, KmArg *items);
-long algorithm_max(long argc, KmArg *items);
-long algorithm_min(long argc, KmArg *items);
-long algorithm_contains(long argc, KmArg *items);
-long algorithm_index_of(long argc, KmArg *items);
-void algorithm_fill(long argc, KmArg *items);
+/* ── module: algorithm (C primitives; public overloads live in the .kmm) ── */
+void   km_algo_sort(long argc, KmArg *items);
+void   km_algo_reverse(long argc, KmArg *items);
+long   km_algo_sum(long argc, KmArg *items);
+long   km_algo_max(long argc, KmArg *items);
+long   km_algo_min(long argc, KmArg *items);
+long   km_algo_contains(long argc, KmArg *items);
+long   km_algo_index_of(long argc, KmArg *items);
+void   km_algo_fill(long argc, KmArg *items);
+void   km_algo_sortf(long argc, KmArg *items);
+double km_algo_sumf(long argc, KmArg *items);
+double km_algo_maxf(long argc, KmArg *items);
+double km_algo_minf(long argc, KmArg *items);
+void   km_algo_reversef(long argc, KmArg *items);
+void   km_algo_fillf(long argc, KmArg *items);
+long   km_algo_index_off(long argc, KmArg *items);
+long   km_algo_containsf(long argc, KmArg *items);
 
 /* ── module: math ── */
 long   math_abs(long argc, KmArg *items);
@@ -106,6 +154,50 @@ long   math_min(long argc, KmArg *items);
 long   math_max(long argc, KmArg *items);
 long   math_pow(long argc, KmArg *items);
 long   math_gcd(long argc, KmArg *items);
+long   math_clamp(long argc, KmArg *items);
+long   math_sign(long argc, KmArg *items);
 double math_sqrt(long argc, KmArg *items);
+double math_floor(long argc, KmArg *items);
+double math_ceil(long argc, KmArg *items);
+double math_round(long argc, KmArg *items);
+double math_trunc(long argc, KmArg *items);
+double math_fabs(long argc, KmArg *items);
+double math_sin(long argc, KmArg *items);
+double math_cos(long argc, KmArg *items);
+double math_tan(long argc, KmArg *items);
+double math_atan(long argc, KmArg *items);
+double math_atan2(long argc, KmArg *items);
+double math_exp(long argc, KmArg *items);
+double math_log(long argc, KmArg *items);
+double math_log2(long argc, KmArg *items);
+double math_log10(long argc, KmArg *items);
+double math_powf(long argc, KmArg *items);
+double math_hypot(long argc, KmArg *items);
+double math_pi(long argc, KmArg *items);
+double math_e(long argc, KmArg *items);
+
+/* ── module: file (extra) ── */
+void      append_all(long argc, KmArg *items);
+KmArray  *read_lines(long argc, KmArg *items);
+
+/* ── module: string ── */
+long        string_length(long argc, KmArg *items);
+KmArray    *string_split(long argc, KmArg *items);
+const char *string_join(long argc, KmArg *items);
+const char *string_trim(long argc, KmArg *items);
+const char *string_trim_start(long argc, KmArg *items);
+const char *string_trim_end(long argc, KmArg *items);
+const char *string_replace(long argc, KmArg *items);
+long        string_index_of(long argc, KmArg *items);
+long        string_contains(long argc, KmArg *items);
+long        string_starts_with(long argc, KmArg *items);
+long        string_ends_with(long argc, KmArg *items);
+const char *string_to_upper(long argc, KmArg *items);
+const char *string_to_lower(long argc, KmArg *items);
+const char *string_repeat(long argc, KmArg *items);
+const char *string_reverse(long argc, KmArg *items);
+const char *string_substring(long argc, KmArg *items);
+const char *string_pad_start(long argc, KmArg *items);
+const char *string_pad_end(long argc, KmArg *items);
 
 #endif /* KM_RUNTIME_H */

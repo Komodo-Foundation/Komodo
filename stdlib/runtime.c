@@ -9,12 +9,88 @@
 #include <unistd.h>
 #include "km_runtime.h"
 
+/* Render a double the Komodo way: like printf's "%g", but an integral
+ * value keeps a ".0" so it still reads as a float ("4.0", not "4").
+ * Non-finite ("inf"/"nan") and exponent forms are left as %g produced. */
+void km_fmt_double(char *buf, unsigned long cap, double d)
+{
+    snprintf(buf, cap, "%g", d);
+    for (const char *p = buf; *p; p++)
+        if (*p == '.' || *p == 'e' || *p == 'E' || *p == 'n' || *p == 'i')
+            return;
+    unsigned long len = strlen(buf);
+    if (len + 3 <= cap) {
+        buf[len] = '.';
+        buf[len + 1] = '0';
+        buf[len + 2] = '\0';
+    }
+}
+
+/* `needle in haystack` for strings — a substring test. */
+long km_in_str(const char *haystack, const char *needle)
+{
+    if (!haystack || !needle)
+        return 0;
+    return strstr(haystack, needle) != NULL;
+}
+
+/* `v in arr` — linear membership.  `leaf` is the element's scalar tag:
+ * 2 (string) compares with strcmp, anything else a raw 64-bit `==`
+ * (ints, bools, chars, and float bit patterns for exact matches). */
+long km_in_array(KmArray *a, long v, long leaf)
+{
+    if (!a)
+        return 0;
+    if (leaf == 2) {
+        const char *needle = (const char *)v;
+        for (long i = 0; i < a->len; i++) {
+            const char *e = (const char *)a->data[i];
+            if (e == needle || (e && needle && strcmp(e, needle) == 0))
+                return 1;
+        }
+        return 0;
+    }
+    for (long i = 0; i < a->len; i++)
+        if (a->data[i] == v)
+            return 1;
+    return 0;
+}
+
 KmArray *km_array_new(long len)
 {
     KmArray *a = malloc(sizeof(KmArray) + (size_t)len * sizeof(long));
     a->len = len;
     a->cap = len;
     return a;
+}
+
+/* ── object lifetime ──
+ * The refcount lives one word before the handle; `objNew` sets it to 1.
+ * `km_release` frees the whole block (rc word + payload) when the count
+ * reaches 0.  It never recurses into fields — the compiler only emits it
+ * for objects a conservative escape analysis proved are unshared. */
+void km_retain(void *handle)
+{
+    if (handle)
+        ((long *)handle)[-1] += 1;
+}
+
+void km_release(void *handle)
+{
+    if (!handle)
+        return;
+    long *rc = (long *)handle - 1;
+    if (--*rc > 0)
+        return;
+    free(rc);
+}
+
+/* Heap arrays carry no refcount word — the analysis that emits this has
+ * already proved the handle is the sole reference. */
+void km_drop_array(void *handle)
+{
+    if (handle)
+        free(handle);
 }
 
 /* `a + b` — returns a fresh array holding a's elements then b's; both
@@ -97,6 +173,18 @@ KmArray *km_array_slice(KmArray *a, long start, long end)
     return out;
 }
 
+/* `a * n` — a fresh array holding `a`'s elements repeated `n` times
+ * (n <= 0 yields an empty array). */
+KmArray *km_array_repeat(KmArray *a, long n)
+{
+    if (n < 0)
+        n = 0;
+    KmArray *out = km_array_new(a->len * n);
+    for (long i = 0; i < n; i++)
+        memcpy(out->data + i * a->len, a->data, (size_t)a->len * sizeof(long));
+    return out;
+}
+
 /* ── string operators ── */
 
 /* `s[start to end]` — a fresh NUL-terminated substring, same clamping. */
@@ -156,16 +244,68 @@ long km_str_eq(const char *a, const char *b)
     return strcmp(a, b) == 0;
 }
 
+/* Pretty-print an array for `print`/`string(x)` — see km_runtime.h for
+ * how `leaf`/`depth` were packed into the caller's tag.  `depth > 1`
+ * means each element is itself a KmArray*, printed the same way one
+ * level shallower; at `depth == 1` elements are read as `leaf`. */
+const char *km_array_to_string(KmArray *a, long leaf, long depth)
+{
+    if (!a) {
+        char *out = malloc(3);
+        strcpy(out, "[]");
+        return out;
+    }
+    size_t size = 0;
+    char *buf = NULL;
+    FILE *m = open_memstream(&buf, &size);
+    fputc('[', m);
+    for (long i = 0; i < a->len; i++) {
+        if (i)
+            fputs(", ", m);
+        long v = a->data[i];
+        if (depth > 1) {
+            const char *s = km_array_to_string((KmArray *)v, leaf, depth - 1);
+            fputs(s, m);
+            free((void *)s);
+        } else if (leaf == KM_TAG_FLOAT) {
+            char fb[64];
+            km_fmt_double(fb, sizeof fb, km_as_float(v));
+            fputs(fb, m);
+        } else if (leaf == KM_TAG_STR) {
+            fputc('"', m);
+            const char *s = v ? (const char *)v : "";
+            for (const char *p = s; *p; p++) {
+                if (*p == '"' || *p == '\\')
+                    fputc('\\', m);
+                fputc(*p, m);
+            }
+            fputc('"', m);
+        } else if (leaf == KM_TAG_BOOL) {
+            fputs(v ? "true" : "false", m);
+        } else if (leaf == KM_TAG_INT) {
+            fprintf(m, "%ld", v);
+        } else {
+            fputs("<?>", m);
+        }
+    }
+    fputc(']', m);
+    fclose(m);
+    return buf;
+}
+
 /* `string(x)` — tag is a compile-time constant (0 int / 1 float-bits /
- * 2 string / 3 bool); value is the raw payload word. */
+ * 2 string / 3 bool / packed array, see km_runtime.h); value is the raw
+ * payload word (an array's KmArray* for the array case). */
 const char *km_to_string(long tag, long value)
 {
+    if ((tag & 0xFF) == KM_TAG_ARRAY)
+        return km_array_to_string((KmArray *)value, (tag >> 8) & 0xFF, (tag >> 16) & 0xFF);
     char buf[64];
     switch (tag) {
     case 1: {
         double d;
         __builtin_memcpy(&d, &value, sizeof d);
-        snprintf(buf, sizeof buf, "%g", d);
+        km_fmt_double(buf, sizeof buf, d);
         break;
     }
     case 2:

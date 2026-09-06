@@ -1,0 +1,29 @@
+// Exercises the `string` standard library module.
+
+import console
+import string
+
+void main()
+    let raw = "  Komodo,Dragon,Lang  "
+    let s = string.trim(raw)
+    console.print("trim:", "[" + s + "]")
+
+    let parts = string.split(s, ",")
+    console.print("parts:", #parts)
+    for p in parts do
+        console.print("  -", p)
+
+    console.print("join:", string.join(parts, " / "))
+    console.print("upper:", string.to_upper(s))
+    console.print("lower:", string.to_lower(s))
+    console.print("replace:", string.replace("x-y-z", "-", "="))
+    console.print("contains Dragon:", string.contains(s, "Dragon"))
+    console.print("starts Komodo:", string.starts_with(s, "Komodo"))
+    console.print("ends Lang:", string.ends_with(s, "Lang"))
+    console.print("index of Dragon:", string.index_of(s, "Dragon"))
+    console.print("repeat:", string.repeat("ab", 3))
+    console.print("reverse:", string.reverse("abcde"))
+    console.print("substring:", string.substring("hello world", 6, 11))
+    console.print("pad_start:", "[" + string.pad_start("42", 5, "0") + "]")
+    console.print("pad_end:", "[" + string.pad_end("42", 5, ".") + "]")
+    console.print("length:", string.length("héllo"))

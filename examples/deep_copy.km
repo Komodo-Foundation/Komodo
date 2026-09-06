@@ -1,0 +1,36 @@
+// `copy(x)` — a deep copy.  Nested struct values are cloned recursively
+// and array fields get their own buffer, so mutating the copy never
+// touches the original.  It is also the explicit way to duplicate a
+// `unique` value instead of moving it.
+
+import console
+
+unique struct Handle
+    id: int
+
+shared struct Inner
+    tag: int = 0
+
+shared struct Box
+    label: string = ""
+    inner: Inner = new Inner(0)
+    nums: [int] = []
+
+void main()
+    let a = new Handle(7)
+    let b = copy(a)                 // a stays a live owner
+    b.id = 99
+    console.print("handle:", a.id, b.id)
+
+    let box = new Box("orig", new Inner(1), [10, 20])
+    let dup = copy(box)
+    dup.label = "dup"
+    dup.nums[0] = 99
+    let di = dup.inner
+    if di != null then
+        di.tag = 5
+    let bi = box.inner
+    if bi != null then
+        console.print("inner tag:", bi.tag)
+    console.print("label:", box.label, dup.label)
+    console.print("nums[0]:", box.nums[0], dup.nums[0])

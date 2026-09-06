@@ -1,0 +1,4 @@
+import console
+void main()
+    if true then
+        console.print("x")

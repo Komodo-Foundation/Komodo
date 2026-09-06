@@ -42,6 +42,16 @@ public
         for mac in prog.macros do
             pushMacro(mac.name, mac.init)
 
+        // Pass -0.5: top-level `let` variables. Record name → coarse type
+        // for load/store lowering, reserve one storage slot each in the
+        // backend, and keep the decls so `main` can run the initialisers.
+        m_globalDecls = prog.globals
+        for g in prog.globals do
+            let gty = g.resolvedType or "int"
+            m_globalNames += [g.name]
+            m_globalTypes += [gty]
+            m_backend.declareGlobal(g.name, gty)
+
         // Enum variants become plain integer constants: `Color::RED` (which
         // the parser has already reduced to the bare name `RED`) lowers to
         // its 0-based ordinal within its enum.
@@ -60,7 +70,11 @@ public
         // type can prepend its parent's fields (see `registerTypeFull`).
         let ordered = orderTypesByInheritance(prog)
         for d in ordered do
-            if d is StructDecl then
+            if d is StructDecl and d.isExtern then
+                // `extern type T` — an opaque C handle.  No layout, no
+                // type id, no `new`; its values are plain integers.
+                continue
+            else if d is StructDecl then
                 registerTypeFull(d.name, false, d.isAbstract, d.parent, memberNames(d.members), memberTypes(d.members), memberDefaults(d.members))
             else if d is ClassDecl then
                 registerTypeFull(d.name, true, d.isAbstract, d.parent, fieldNames(d.fields), fieldTypes(d.fields), fieldDefaults(d.fields))
@@ -83,19 +97,69 @@ public
         // methods are registered.
         buildVtables()
 
+        // Pass 0c: synthesise a `km_deepcopy_<T>` helper for every value
+        // type, so `copy(x)` has something to call.  Only when the program
+        // actually uses `copy` — otherwise the output is untouched.
+        if prog.usesCopy then
+            synthDeepCopiers(prog)
+
+        // Pass 1-pre: sift generic templates (a free function with one or
+        // more untyped parameters) out of `prog.functions`.  They are
+        // never emitted as-is — each call site monomorphizes a copy (see
+        // `ensureInstance`).  Removing them keeps every later
+        // index-aligned loop over `prog.functions` / `m_fn*` intact.
+        let concreteFns: [FunctionDecl] = []
+        for f in prog.functions do
+            if isTemplateDecl(f) then
+                m_tplNames += [f.name]
+                m_tplDecls += [f]
+            else
+                concreteFns += [f]
+        prog.functions = concreteFns
+
         // Pass 1: collect every function's signature (forward references
-        // and recursion are allowed).  Duplicates were rejected by the
-        // semantic analyser.
+        // and recursion are allowed).  Concrete duplicates were rejected
+        // by the semantic analyser; overloaded free functions (same name,
+        // different parameter types) sit side by side here.
         for func in prog.functions do
             m_fnNames += [func.name]
             m_fnRets += [retTypeOf(func.returnType)]
             m_fnKinds += [funcKind(func)]
             m_fnArity += [#func.params]
-            // An `extern` (C ABI) or a body-less prototype (Komodo ABI,
-            // e.g. the standard library) is resolved by the linker — do
-            // not register it as a program-local symbol or emit it.
-            if not func.isExtern and not func.isPrototype then
-                m_backend.declareFn(func.name)
+            m_fnSigs += [paramSig(func)]
+            m_fnLink += [func.name]
+
+        // Pass 1a: two free overloads with the identical normalized
+        // parameter-type list are a genuine duplicate (sema exempts every
+        // same-name set from its duplicate check to let overloading
+        // through, so this is where an exact repeat is caught).
+        let da = 0
+        while da < #prog.functions do
+            if isFreeFn(prog.functions[da]) then
+                let db = da + 1
+                while db < #prog.functions do
+                    if m_fnNames[db] == m_fnNames[da] and isFreeFn(prog.functions[db]) and sigsEqual(m_fnSigs[da], m_fnSigs[db]) then
+                        throw ("duplicate function '" + m_fnNames[da] + "' — two overloads have identical parameter types")
+                    db += 1
+            da += 1
+
+        // Pass 1b: give every overloaded free function a unique link name
+        // (source name + arity + parameter types), then declare each
+        // callable symbol.  An `extern` / prototype keeps its raw name
+        // and is left to the linker.
+        let pi1 = 0
+        while pi1 < #prog.functions do
+            if isFreeFn(prog.functions[pi1]) and countSourceName(m_fnNames[pi1]) >= 2 then
+                let ln = overloadSym(m_fnNames[pi1], m_fnSigs[pi1])
+                m_fnLink[pi1] = ln
+                prog.functions[pi1].linkName = ln
+            pi1 += 1
+        pi1 = 0
+        while pi1 < #prog.functions do
+            let fdef = prog.functions[pi1]
+            if not fdef.isExtern and not fdef.isPrototype then
+                m_backend.declareFn(m_fnLink[pi1])
+            pi1 += 1
 
         // Pass 2: lower each body.  "Returns on every path" and the
         // `fn` / `mut` mutation contract were enforced by the semantic
@@ -104,6 +168,21 @@ public
             if func.isExtern or func.isPrototype then
                 continue
             genFunction(func)
+
+        // Pass 2b: emit every monomorphized template instance requested
+        // during lowering.  Draining may enqueue further instances (an
+        // instance body calling the template with new argument types).
+        // sema never type-checks these bodies (the parameter types are
+        // per-call-site); the backend epilogue supplies a default return.
+        let gi = 0
+        while gi < #m_genQueue do
+            genFunction(m_genQueue[gi])
+            gi += 1
+
+        // Pass 2b: one native-ABI trampoline per Komodo function passed to
+        // C as a callback (collected while lowering `extern` calls).
+        for nm in m_trampNames do
+            m_backend.emitTrampoline(m_backend.mangle(nm), fnArity(nm))
 
         // Emit the per-class vtables + the type-id → vtable index table.
         emitVtables()
@@ -268,6 +347,88 @@ public
         m_typeFieldDefaults += [allDefs]
         m_typeOwnMethods += [[]]
 
+    // ── `copy(x)` deep-copy helpers ───────────────────────────────
+    //
+    //  For every non-abstract value type `T` the program can `copy`, a
+    //  function `km_deepcopy_T(src: T?): T?` is synthesised here and
+    //  lowered by the ordinary pipeline (Pass 1 registers it, Pass 2
+    //  emits it).  Its body clones `src` field by field: a struct/class
+    //  field recurses through that type's own helper, an array field is
+    //  buffer-cloned, everything else (scalars, strings, enums, opaque
+    //  handles, constructor-based classes) is shared by value.  Cyclic
+    //  data would recurse forever — the same caveat as a hand-written C
+    //  deep copy.
+
+    mut synthDeepCopiers(prog: Program)
+        // Which types get a helper — computed first so a field can refer
+        // to a type processed later.
+        for d in prog.structs do
+            if not d.isExtern and not d.isAbstract and d.container == null then
+                m_deepCopierTypes += [d.name]
+        for c in prog.classes do
+            if not c.isAbstract and not classHasCtor(c) then
+                m_deepCopierTypes += [c.name]
+        for nm in m_deepCopierTypes do
+            prog.functions += [makeDeepCopier(nm)]
+
+    mut deepCopierExists(name: string): bool
+        return listHas(m_deepCopierTypes, name)
+
+    fn classHasCtor(c: ClassDecl): bool
+        for m in c.methods do
+            if m.isConstructor then
+                return true
+        return false
+
+    mut makeDeepCopier(typeName: string): FunctionDecl
+        let ti = typeIndex(typeName)
+        let fnames = m_typeFieldNames[ti]
+        let ftypes = m_typeFieldTypes[ti]
+        let f = new FunctionDecl("km_deepcopy_" + typeName)
+        f.params = [new Param("src", typeName + "?")]
+        f.returnType = typeName + "?"
+
+        let body: [Statement] = []
+        // if src == null then return src
+        let guard = new IfStmt()
+        guard.cond = new BinaryOp("==", new Identifier("src"), new NullLiteral())
+        let g1 = new ReturnStmt()
+        g1.value = new Identifier("src")
+        guard.thenBody = [g1]
+        body += [guard]
+        // let c = new T()
+        let cdecl = new VarDecl("c")
+        cdecl.declaredType = typeName
+        cdecl.init = new NewExpr(typeName, [])
+        body += [cdecl]
+        // c.<field> = <clone of src.<field>>
+        let i = 0
+        while i < #fnames do
+            let fa = new FieldAssignStmt()
+            fa.object = new Identifier("c")
+            fa.field = fnames[i]
+            fa.op = "="
+            fa.value = fieldCopyExpr(new MemberExpr(new Identifier("src"), fnames[i]), ftypes[i])
+            body += [fa]
+            i += 1
+        let ret = new ReturnStmt()
+        ret.value = new Identifier("c")
+        body += [ret]
+        f.body = body
+        return f
+
+    // How field `read` (already an lvalue expression) is duplicated.
+    mut fieldCopyExpr(read: Expression, ftype: string): Expression
+        let base = stripOpt(ftype) or ftype
+        if isArrayType(base) then
+            // `src.f[0 to #src.f]` — a fresh buffer (elements shared).
+            let sl = new SliceExpr()
+            sl.object = read
+            return sl
+        if deepCopierExists(base) then
+            return new CallExpr("km_deepcopy_" + base, [read])
+        return read
+
     // Record a method name declared directly on `className` (used to
     // resolve inherited method calls to the class that defines them).
     mut registerMethod(className: string, methodName: string)
@@ -285,6 +446,16 @@ public
         if i < 0 or i >= #defs then
             return null
         return defs[i]
+
+    // Coarse type of a field by slot index (for positional `new T(...)`).
+    mut fieldTypeAt(typeName: string, i: int): string
+        let ti = typeIndex(typeName)
+        if ti < 0 then
+            return "int"
+        let ts = m_typeFieldTypes[ti]
+        if i < 0 or i >= #ts then
+            return "int"
+        return ts[i]
 
     mut isAbstractType(name: string): bool
         let ti = typeIndex(name)
@@ -501,6 +672,21 @@ public
     mut hasFn(name: string): bool
         return listHas(m_fnNames, name)
 
+    // `a` is a bare Komodo function name used as an `extern` call argument
+    // — codegen passes C a pointer to that function's trampoline.
+    mut isCallbackArg(a: Identifier): bool
+        let nm = a.name
+        if hasLocal(nm) or isMacro(nm) or isGlobalVar(nm) or isCurField(nm) then
+            return false
+        if not hasFn(nm) then
+            return false
+        let k = fnKind(nm)
+        return k != "" and k != "extern"
+
+    mut recordTramp(name: string)
+        if not listHas(m_trampNames, name) then
+            m_trampNames += [name]
+
     // ── macro registry ────────────────────────────────────────────
     //
     // `m_macroNames` / `m_macroExprs` are a stack. Entering a block
@@ -533,6 +719,28 @@ public
             throw ("macro '" + name + "' has no value")
         m_macroNames += [name]
         m_macroExprs += [e]
+
+    // ── top-level variable registry ─────────────────────────────
+
+    mut isGlobalVar(name: string): bool
+        return listHas(m_globalNames, name)
+
+    mut globalTypeOf(name: string): string
+        let i = 0
+        while i < #m_globalNames do
+            if m_globalNames[i] == name then
+                return m_globalTypes[i]
+            i += 1
+        return "int"
+
+    // Evaluate each top-level initialiser once and store it into its
+    // slot.  Emitted at the very top of `main`, in source order, so a
+    // later initialiser can read an earlier global.
+    void genGlobalInits()
+        for g in m_globalDecls do
+            if g.init != null then
+                genExpr(g.init)
+                m_backend.storeGlobal(g.name, g.resolvedType or "int")
 
     mut typeIsClass(name: string): bool
         let ti = typeIndex(name)
@@ -637,6 +845,404 @@ public
             i += 1
         return false
 
+    // ── function overloading ──────────────────────────────────────
+    //
+    //  A free function (no owner class, not extern / prototype) may be
+    //  declared more than once under one name with different parameter
+    //  types.  Each overload is emitted under a unique `overloadSym` link
+    //  name; a call site picks the overload from the static argument
+    //  types and, when those leave more than one candidate, emits a
+    //  runtime tag / type-id check that dispatches to the right one.
+
+    fn isFreeFn(func: FunctionDecl): bool
+        return func.ownerClass == null and not func.isExtern and not func.isPrototype
+
+    // Coarse parameter type, matched to what `exprType` / the call ABI can
+    // tell apart: `int` (also bool / char / int widths / unknown),
+    // `float`, `string`, `bool`, an object type name, or `any` (untyped).
+    mut normParamType(t: string?): string
+        let s = stripOpt(t)
+        if s == null then
+            return "any"
+        if s == "float" or s == "string" or s == "bool" then
+            return s
+        if isObjType(s) then
+            return s
+        // an array type keeps its shape so `[int]` and `[float]` overloads
+        // are distinct; the leaf is normalised the same way
+        if isArrayType(s) then
+            return "[" + normParamType(elemTypeOf(s)) + "]"
+        return "int"
+
+    mut paramSig(func: FunctionDecl): [string]
+        let out: [string] = []
+        for p in func.params do
+            out += [normParamType(p.declaredType)]
+        return out
+
+    mut countSourceName(name: string): int
+        let n = 0
+        let i = 0
+        while i < #m_fnNames do
+            if m_fnNames[i] == name then
+                n += 1
+            i += 1
+        return n
+
+    fn overloadSym(name: string, sig: [string]): string
+        let s = name + "__ov" + string(#sig)
+        for p in sig do
+            s = s + "_" + symSafeType(p)
+        return s
+
+    // A normalised param type made label-safe: `[int]` → `arr_int`,
+    // `[[float]]` → `arr_arr_float` (drop every `]`, `[` → `arr_`).
+    fn symSafeType(t: string): string
+        let out = ""
+        let i = 0
+        while i < t.length do
+            let c = t[i]
+            if c == "[" then
+                out = out + "arr_"
+            else if c != "]" then
+                out = out + c
+            i += 1
+        return out
+
+    mut sigsEqual(a: [string], b: [string]): bool
+        if #a != #b then
+            return false
+        let i = 0
+        while i < #a do
+            if a[i] != b[i] then
+                return false
+            i += 1
+        return true
+
+    // Indices of every registered overload of a free function `name` with
+    // exactly `argc` parameters.
+    mut arityCandidates(name: string, argc: int): [int]
+        let out: [int] = []
+        let i = 0
+        while i < #m_fnNames do
+            if m_fnNames[i] == name and m_fnArity[i] == argc then
+                out += [i]
+            i += 1
+        return out
+
+    // How well argument `a` fits a parameter normalized to `p`:
+    //   2 = a definite static match   1 = possible (decided at runtime)
+    //   0 = incompatible
+    mut argFit(p: string, a: Expression?): int
+        if p == "any" then
+            return 1
+        let at = exprType(a)
+        // array parameter — match the normalised shape exactly; an empty
+        // literal (`[]` ⇒ `[never]` / `[int]`) fits any array param
+        if isArrayType(p) then
+            if not isArrayType(at) then
+                return 0
+            let na = "[" + normParamType(elemTypeOf(at)) + "]"
+            if na == p then
+                return 2
+            if elemTypeOf(at) == "never" then
+                return 1
+            return 0
+        if p == "float" then
+            if at == "float" then
+                return 2
+            return 0
+        if p == "string" then
+            if at == "string" then
+                return 2
+            return 0
+        if p == "bool" then
+            if a is BoolLiteral then
+                return 2
+            if at == "int" then
+                return 1
+            return 0
+        if p == "int" then
+            if a is BoolLiteral then
+                return 1
+            if at == "int" then
+                return 2
+            return 0
+        // p is an object type
+        if not isObjType(at) then
+            return 0
+        if at == p then
+            return 2
+        if isDescendantOf(at, p) then
+            return 2
+        if isDescendantOf(p, at) then
+            return 1
+        return 0
+
+    // Minimum fit across all parameters (0 ⇒ the whole overload is out).
+    mut sigFit(sig: [string], args: [Expression]): int
+        let worst = 2
+        let i = 0
+        while i < #sig do
+            let f = argFit(sig[i], args[i])
+            if f < worst then
+                worst = f
+            i += 1
+        return worst
+
+    // Larger ⇒ more specific ⇒ tried first at runtime.
+    mut sigSpecificity(sig: [string], args: [Expression]): int
+        let total = 0
+        let i = 0
+        while i < #sig do
+            let p = sig[i]
+            if p == "any" then
+                total += 0
+            else if isObjType(p) then
+                let at = exprType(args[i])
+                if at == p then
+                    total += 3
+                else if isDescendantOf(at, p) then
+                    total += 2
+                else
+                    total += 1
+            else
+                total += 3
+            i += 1
+        return total
+
+    mut orderBySpecificity(idxs: [int], args: [Expression]): [int]
+        let out: [int] = []
+        for x in idxs do
+            out += [x]
+        let i = 1
+        while i < #out do
+            let cur = out[i]
+            let key = sigSpecificity(m_fnSigs[cur], args)
+            let j = i - 1
+            while j >= 0 and sigSpecificity(m_fnSigs[out[j]], args) < key do
+                out[j + 1] = out[j]
+                j -= 1
+            out[j + 1] = cur
+            i += 1
+        return out
+
+    // Resolve an overloaded call.  Returns a registry index when it is
+    // statically decided, -2 when a runtime dispatch is required (order
+    // left in `m_ovOrder`), or throws on a genuine mismatch / ambiguity.
+    mut selectOverload(name: string, args: [Expression]): int
+        let byArity = arityCandidates(name, #args)
+        if #byArity == 0 then
+            throw ("no overload of '" + name + "' takes " + string(#args) + " argument(s)")
+        if #byArity == 1 then
+            return byArity[0]
+        let exact: [int] = []
+        let scored: [int] = []
+        for i in byArity do
+            let f = sigFit(m_fnSigs[i], args)
+            if f == 2 then
+                exact += [i]
+            if f > 0 then
+                scored += [i]
+        if #exact == 1 then
+            return exact[0]
+        if #exact > 1 then
+            throw ("ambiguous overloaded call to '" + name + "'")
+        if #scored == 0 then
+            throw ("no overload of '" + name + "' matches the argument types")
+        if #scored == 1 then
+            return scored[0]
+        m_ovOrder = orderBySpecificity(scored, args)
+        return 0 - 2
+
+    // Non-throwing return-type lookup for an overloaded call (static type
+    // classifier).  Falls back to int when candidates disagree.
+    mut overloadRet(name: string, args: [Expression]): string
+        let byArity = arityCandidates(name, #args)
+        if #byArity == 0 then
+            return "int"
+        if #byArity == 1 then
+            return m_fnRets[byArity[0]]
+        let exact: [int] = []
+        let scored: [int] = []
+        for i in byArity do
+            let f = sigFit(m_fnSigs[i], args)
+            if f == 2 then
+                exact += [i]
+            if f > 0 then
+                scored += [i]
+        if #exact >= 1 then
+            return m_fnRets[exact[0]]
+        if #scored == 0 then
+            return m_fnRets[byArity[0]]
+        let r = m_fnRets[scored[0]]
+        for i in scored do
+            if m_fnRets[i] != r then
+                return "int"
+        return r
+
+    // ── generic (implicit-type) functions ────────────────────────
+    //
+    //  A free function with one or more untyped parameters is a
+    //  *template*: never emitted on its own.  Every call site classifies
+    //  its argument types and asks for a monomorphized copy
+    //  (`name__g<argc>_<t1>_<t2>…`) specialized to those types.
+
+    fn isTemplateDecl(func: FunctionDecl): bool
+        if func.ownerClass != null or func.isExtern or func.isPrototype or func.variadic then
+            return false
+        if func.name == "main" then
+            return false
+        for p in func.params do
+            if p.declaredType == null then
+                return true
+        return false
+
+    mut isTemplate(name: string): bool
+        let i = 0
+        while i < #m_tplNames do
+            if m_tplNames[i] == name then
+                return true
+            i += 1
+        return false
+
+    mut templateDeclOf(name: string): FunctionDecl
+        let i = 0
+        while i < #m_tplNames do
+            if m_tplNames[i] == name then
+                return m_tplDecls[i]
+            i += 1
+        return m_tplDecls[0]
+
+    mut genDone(sym: string): bool
+        for s in m_genDone do
+            if s == sym then
+                return true
+        return false
+
+    // Concrete classification of each argument at a template call site.
+    // Anything not pinned to float / string / bool / an object type is
+    // treated as an integer (the uniform 64-bit slot).
+    mut tplArgTypes(args: [Expression]): [string]
+        let out: [string] = []
+        for a in args do
+            let t = exprType(a)
+            if t != "float" and t != "string" and t != "bool" and not isObjType(t) then
+                t = "int"
+            out += [t]
+        return out
+
+    fn instSym(name: string, types: [string]): string
+        let s = name + "__g" + string(#types)
+        for t in types do
+            s = s + "_" + t
+        return s
+
+    // Auxiliary name→type environment, consulted by `exprType` while a
+    // template's return type is inferred (before its instance has a frame).
+    mut envTypeOf(name: string): string
+        let i = 0
+        while i < #m_envNames do
+            if m_envNames[i] == name then
+                return m_envTypes[i]
+            i += 1
+        return ""
+
+    mut firstReturnType(stmts: [Statement]): string
+        for s in stmts do
+            if s is ReturnStmt then
+                if s.value == null then
+                    return "void"
+                return exprType(s.value)
+            if s is IfStmt then
+                let a = firstReturnType(s.thenBody)
+                if a != "" then
+                    return a
+                let b = firstReturnType(s.elseBody)
+                if b != "" then
+                    return b
+            if s is WhileStmt then
+                let w = firstReturnType(s.body)
+                if w != "" then
+                    return w
+            if s is ForStmt then
+                let f = firstReturnType(s.body)
+                if f != "" then
+                    return f
+            if s is ForInStmt then
+                let g = firstReturnType(s.body)
+                if g != "" then
+                    return g
+        return ""
+
+    mut inferReturnType(body: [Statement], pnames: [string], ptypes: [string]): string
+        let saveN = m_envNames
+        let saveT = m_envTypes
+        m_envNames = pnames
+        m_envTypes = ptypes
+        let r = firstReturnType(body)
+        m_envNames = saveN
+        m_envTypes = saveT
+        return r
+
+    // `""` / `"void"` ⇒ no return annotation (procedure); float / string
+    // keep it; everything else (int / bool / object handle) rides an
+    // integer slot, so annotate it `int`.
+    fn retAnnot(rt: string): string?
+        if rt == "" or rt == "void" then
+            return null
+        if rt == "float" or rt == "string" then
+            return rt
+        return "int"
+
+    mut lookupRet(sym: string): string
+        let i = 0
+        while i < #m_fnNames do
+            if m_fnNames[i] == sym then
+                return m_fnRets[i]
+            i += 1
+        return "int"
+
+    // Ensure a monomorphized instance of template `name` specialized to
+    // `argTypes` is registered and queued for emission; return its symbol.
+    mut ensureInstance(name: string, argTypes: [string]): string
+        let sym = instSym(name, argTypes)
+        if genDone(sym) then
+            return sym
+        m_genDone += [sym]
+        let tpl = templateDeclOf(name)
+        let ps: [Param] = []
+        let pnames: [string] = []
+        let i = 0
+        while i < #tpl.params do
+            let sp = tpl.params[i]
+            let ty = sp.declaredType
+            if ty == null then
+                ty = argTypes[i]
+            ps += [new Param(sp.name, ty, sp.defaultValue, sp.modifier)]
+            pnames += [sp.name]
+            i += 1
+        let rt = inferReturnType(tpl.body, pnames, argTypes)
+        let inst = new FunctionDecl(sym)
+        inst.params = ps
+        inst.body = tpl.body
+        inst.isVoid = tpl.isVoid or rt == "" or rt == "void"
+        inst.isMut = tpl.isMut
+        inst.returnType = retAnnot(rt)
+        inst.linkName = sym
+        let rtStore = rt
+        if rt == "" or rt == "void" then
+            rtStore = "int"
+        m_fnNames += [sym]
+        m_fnRets += [rtStore]
+        m_fnKinds += [funcKind(inst)]
+        m_fnArity += [#ps]
+        m_fnSigs += [paramSig(inst)]
+        m_fnLink += [sym]
+        m_backend.declareFn(sym)
+        m_genQueue += [inst]
+        return sym
+
 private
     // ── the target ─────────────────────────────────────────────────
     m_backend: Backend
@@ -646,10 +1252,43 @@ private
     m_fnRets: [string] = []
     m_fnKinds: [string] = []      // "fn" (pure) / "mut" / "void"
     m_fnArity: [int] = []
+    // normalized parameter-type list per function (overload resolution)
+    m_fnSigs: [[string]] = []
+    // symbol each function is emitted / called under — differs from its
+    // source name only for overloaded free functions and generic instances
+    m_fnLink: [string] = []
+    // scratch: candidate order for the last runtime-dispatched call
+    m_ovOrder: [int] = []
+
+    // ── generic (implicit-type) function templates ────────────────
+    m_tplNames: [string] = []
+    m_tplDecls: [FunctionDecl] = []
+    m_genDone: [string] = []          // instance symbols already registered
+    m_genQueue: [FunctionDecl] = []   // instances awaiting body emission
+    // name→type env for return-type inference over a template body
+    m_envNames: [string] = []
+    m_envTypes: [string] = []
+    // Komodo functions referenced as C callbacks — one trampoline each.
+    m_trampNames: [string] = []
+    // value types that have a synthesised `km_deepcopy_<T>` helper
+    m_deepCopierTypes: [string] = []
+
+    // ── conservative auto-free (per function) ─────────────────────
+    // Names of `let`-bound heap locals proved never to escape, and their
+    // frame offsets split by kind.  `m_escaped` is scratch for the walk.
+    m_freeNames: [string] = []
+    m_freeObjOffs: [int] = []
+    m_freeArrOffs: [int] = []
+    m_escaped: [string] = []
 
     // ── top-level macros (`let NAME be EXPR`) ─────────────────────
     m_macroNames: [string] = []
     m_macroExprs: [Expression?] = []
+
+    // ── top-level variables (`let NAME [: T] = EXPR`) ────────────
+    m_globalNames: [string] = []
+    m_globalTypes: [string] = []
+    m_globalDecls: [VarDecl] = []
 
     // ── enum variants → 0-based ordinal ──────────────────────────
     m_enumNames: [string] = []
@@ -684,6 +1323,10 @@ private
     m_curRet: string = "int"
     m_curVoid: bool = false
     m_curKind: string = "fn"
+    // true while lowering a dotted library call redirected to an overload
+    // wrapper — exempts it from the "pure `fn` can't call a void" rule,
+    // as a linked-prototype library call always was.
+    m_libCall: bool = false
 
     // labels for the innermost enclosing loop (break / continue targets)
     m_loopBreak: [string] = []

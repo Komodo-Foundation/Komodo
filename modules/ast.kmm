@@ -48,6 +48,9 @@ struct NullLiteral : Literal
 
 struct Identifier : Expression
     name: string
+    // For `ns::member` the namespace before the final `::` (flat after
+    // merge, so only used for module-privacy diagnostics). "" otherwise.
+    qualifier: string = ""
 
 // Binary arithmetic / comparison / logical (`and`, `or`) - `op` is the
 // source operator text.
@@ -64,6 +67,9 @@ struct UnaryOp : Expression
 struct CallExpr : Expression
     name: string
     args: [Expression] = []
+    // `ns::member(args)` — the namespace before the final `::` (kept only
+    // for module-privacy diagnostics; the call still targets `name`).
+    qualifier: string = ""
     // `name(args)?` — a protected call: yields null instead of
     // propagating a thrown error out of the callee.
     protected: bool = false
@@ -134,6 +140,10 @@ struct VarDecl : Statement
     // The analyser's inferred/declared type for this binding (coarse
     // string form), so frame layout does not re-infer it.
     resolvedType: string? = null
+    // For a top-level `let` (global / macro): its module + `public` /
+    // `private` section, mirroring `Declaration`.
+    modOwner: string = ""
+    visMod: string = "public"
 
 struct AssignStmt : Statement
     name: string
@@ -182,6 +192,24 @@ struct ForInStmt : Statement
     iterable: Expression? = null
     body: [Statement] = []
 
+// One field slot of a struct pattern (`case Type(field: <sub>, …)`).
+// Exactly one of `lit` / `bind` is set:
+//   • `lit != null`  — match iff `subject.field == lit` (a literal).
+//   • `bind != ""`   — bind `subject.field` to a fresh local `bind`.
+struct FieldPattern
+    field: string
+    lit: Expression? = null
+    bind: string = ""
+
+// A destructuring pattern in a `case`: `Type(field: pat, shorthand, …)`.
+// Matches when the subject's runtime type is `typeName` (or a subtype)
+// and every field sub-pattern matches.  Parsed only for a capitalised
+// name immediately followed by `(`, so ordinary value patterns are
+// unaffected.
+struct StructPattern : Expression
+    typeName: string
+    fields: [FieldPattern] = []
+
 struct MatchCase
     pattern: Expression? = null
     body: [Statement] = []
@@ -206,6 +234,12 @@ struct ContinueStmt : Statement
 // ─── Declarations ─────────────────────────────────────────────────────
 
 abstract struct Declaration : ASTNode
+    // `module NAME` a file's declarations belong to (flat after merge),
+    // and whether a `public` / `private` section marked it. Enforcement
+    // is best-effort — a `private` member is rejected only when reached
+    // through its module name from a different module.
+    moduleOwner: string = ""
+    visibility: string = "public"
 
 // A function / method parameter. `modifier` is `public` / `private` for
 // constructor-parameter fields, else null.
@@ -237,6 +271,11 @@ struct FunctionDecl : Declaration
     // For a method / constructor lowered to a free function: the class it
     // came from (so an unqualified field name resolves against `self`).
     ownerClass: string? = null
+    // When this free function participates in overloading (or is a
+    // monomorphised generic instance), the unique symbol it is emitted
+    // under — source name + arity + parameter types. null for the common
+    // case, where it is emitted under `name`.
+    linkName: string? = null
 
 struct StructMember
     name: string
@@ -251,6 +290,17 @@ struct StructDecl : Declaration
     // A fixed-width int container (`struct Flags : u32`), or null.
     container: string? = null
     isAbstract: bool = false
+    // `extern type T` - an opaque, pointer-sized C handle: a distinct
+    // nominal type with no fields that cannot be constructed with `new`.
+    // Codegen treats its values as plain integers; the analyzer keeps it
+    // separate from `int` and from every other handle type.
+    isExtern: bool = false
+    // `unique struct T` - a value of this type has a single owner: binding,
+    // assigning, storing or returning it *moves* it, and the source
+    // location is left invalid.  Runtime representation is unchanged; the
+    // analyzer enforces the ownership rule.  `shared` (the default) opts
+    // back into ordinary aliasing.
+    isUnique: bool = false
 
 struct ClassField
     name: string
@@ -271,13 +321,30 @@ struct EnumDecl : Declaration
 struct ImportDecl : Declaration
     path: string
 
+// `link name` (a bare identifier → the linker flag `-lname`) or
+// `link "path/to/file.c"` (a quoted path, passed to the linker as-is,
+// relative to wherever the compiler is invoked from) — only valid inside
+// a module (a file that starts with `module <name>`; the parser rejects
+// it elsewhere). Declares what a library's interface file needs linked
+// in alongside it — see design.md's "Standard library" section and
+// stdlib/sdl2.kmm. Codegen ignores this; it is a build-time detail the
+// driver (main.km) collects into `<program>.links` for the `komodo` CLI.
+struct LinkDecl : Declaration
+    target: string
+    isPath: bool = false
+
 // ─── Program ──────────────────────────────────────────────────────────
 
 struct Program
     // Set once the semantic analyser has walked and annotated the tree.
     analyzed: bool = false
+    // Set by the analyser when it sees a `copy(x)` call anywhere — codegen
+    // only synthesises the per-type deep-copy helpers when this is true, so
+    // a program that never copies is byte-for-byte unaffected.
+    usesCopy: bool = false
     moduleName: string? = null
     imports: [ImportDecl] = []
+    links: [LinkDecl] = []
     enums: [EnumDecl] = []
     structs: [StructDecl] = []
     classes: [ClassDecl] = []
@@ -286,6 +353,10 @@ struct Program
     // in the program is replaced by a fresh lowering of EXPR at codegen
     // time; nothing is allocated for the name itself.
     macros: [VarDecl] = []
+    // Top-level `let NAME [: T] = EXPR` variables: one process-wide
+    // storage slot each, visible (read + write) to every function. Their
+    // initialisers run once, in source order, at the start of `main`.
+    globals: [VarDecl] = []
     // All top-level declarations in source order, for traversal that
     // needs the original ordering (e.g. registering a base type before
     // the type that inherits it).

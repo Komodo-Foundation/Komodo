@@ -8,6 +8,24 @@ only, for keeping the implementation and sample code coherent.
 - `.km` — program (has a `main`). `.kmm` — module (library).
 - `module <name>` — first line of a module file. All files declaring the same
   module name are auto-merged into one namespace.
+- A module body may carry **`public` / `private` section labels**, like a
+  class:
+
+  ```
+  module greet
+  public
+      fn hello(who: string): string
+          return banner() + who
+  private
+      fn banner(): string
+          return "Hello, "
+  ```
+
+  A `private` member is module-local: reaching it through the module name
+  from *another* module (`greet::banner()`) is a compile error. Members
+  in the same module call it freely, and a member with no section is
+  `public`. Enforcement covers functions reached as `mod::name`; it does
+  not (yet) cover private globals or types.
 - `import <name>` — pull in a module. `<name>.kmm` is resolved from the
   directory tree of the file being compiled (and, as a fallback, the
   compiler's own directory, which is where the standard library lives);
@@ -49,6 +67,13 @@ only, for keeping the implementation and sample code coherent.
 - Nullable: `T?` (e.g. `char?`, `string?`, `Expression?`).
 - Annotations are written `name: Type`, after params, vars, members, and as
   function return types.
+- **`float`** is IEEE-754 double throughout — locals, parameters, returns,
+  struct / class fields, and array elements. `+ - * / %`, all six
+  comparisons, and unary `-` work on it; an `int` operand in a mixed
+  expression is widened. Where a numeric type is *inferred* from a mix,
+  `float` wins over `int` (`[1, 2.5]` is `[float]`; `cond and 1 or 2.5`
+  is `float`). A `float` prints in `%g` form but keeps a trailing `.0`
+  when it is integral (`4.0`, not `4`), so it always reads back as a float.
 
 ## Variables
 
@@ -108,6 +133,23 @@ mut name(): [Token]                 // mutates receiver / instance state
   (`arr[i] = v`). Reassigning the function's own locals does not count,
   and the check does not follow calls. `void` procedures and constructors
   are unconstrained.
+- **Overloading** — a *free* function may be declared more than once under
+  one name with different parameter lists (by count or by type). An exact
+  repeat of the normalized parameter types is an error. A call is resolved
+  from the static argument types; when a base-typed object argument leaves
+  several candidates viable, the compiler emits a runtime header type-id
+  check that dispatches to the matching overload (most-specific first, and
+  `abort`s if none matches at run time). Two equally-good static matches
+  are an "ambiguous call" error. Methods, constructors, `extern` and
+  prototype functions do not overload.
+- **Generic (implicit-type) functions** — a *free* function with one or
+  more un-annotated parameters (`fn add(a, b)  return a + b`) is a
+  *template*: it is never emitted on its own. Each call site classifies
+  its argument types and the compiler monomorphizes a specialized copy, so
+  `add(1, 2)` is an integer add and `add("a", "b")` a string concat.
+  Typed and untyped parameters may be mixed (`fn scale(v, k: int)`). A
+  template does not also overload (a name clash with any other declaration
+  of that name is an error).
 
 ## Structs
 
@@ -118,7 +160,8 @@ struct Token
     line: int = 0                    // default values allowed
 
 abstract struct Expression : ASTNode        // abstract base, inheritance
-abstract shared struct ASTNode             // `shared` modifier
+abstract shared struct ASTNode             // `shared` modifier (the default)
+unique struct FileHandle                    // `unique` modifier — single owner
 struct Flags : u32                          // fixed-width int container
 ```
 
@@ -127,6 +170,19 @@ struct Flags : u32                          // fixed-width int container
 - `new Name(a, b, …)` builds a heap value, binding args to fields in
   declaration order (unset fields are zero); `obj.field` reads/writes a
   field; a struct is passed and returned by handle.
+- Ownership modifiers (before `struct`, combinable with `abstract`):
+  - `shared` — the default: values alias freely, `let b = a` gives two
+    handles to one value.
+  - `unique` — the value has exactly one owner. Binding it (`let b = a`),
+    assigning it (`x = a`), storing it into a field or array element, or
+    returning it *moves* it; the source name is then invalid and any read
+    of it is an error until a fresh value revives it (`a = new …`). The
+    runtime representation is identical to `shared` — this is a
+    compile-time check only. `unique` is inherited by subtypes. The
+    analyzer tracks ownership per local binding, so moving a `unique`
+    value *out of* a field, array element, or global is rejected; move the
+    owning value instead. Passing a `unique` value to a function is a
+    borrow, not a move (the callee is not tracked across the call).
 
 ## Classes
 
@@ -166,8 +222,8 @@ enum TokenType
 
 ## Expressions & operators
 
-Precedence low → high: `or`, `and`, comparison, bitwise, additive,
-multiplicative, unary, postfix.
+Precedence low → high: `or`, `and`, `is` / `in`, comparison, bitwise,
+additive, multiplicative, unary, postfix.
 
 - Arithmetic: `+ - * / %`
 - Comparison: `== != < <= > >=`
@@ -176,8 +232,14 @@ multiplicative, unary, postfix.
 - Conditional value: Lua-style `cond and whenTrue or whenFalse` (built from
   short-circuit `and`/`or`); there is no C-style `?:` operator
 - Unary: `-x`, `not x` / `!x`, `#x` (length of array or string)
-- Assignment: `x = v`, `x += v`, `x -= v`; also `obj.field = v`, `arr[i] = v`
+- Assignment: `x = v` and the compound forms `x += v`, `x -= v`, `x *= v`,
+  `x /= v`, `x %= v` (`lhs <op>= v` ≡ `lhs = lhs <op> v`) — on a plain
+  name, `obj.field`, or `arr[i]`. `+=` also appends to an array / global
+  array (`arr += [x]`, `arr += other`) and concatenates strings.
 - Type test: `expr is TypeName`
+- Membership: `x in coll` — a bool. `coll` a string ⇒ substring test
+  (`"at" in "cat"`, a `char` left operand is a 1-char string); `coll` an
+  array ⇒ element test by value (`==`, `strcmp` for `[string]`).
 - Grouping: `( expr )`
 - Construction: `new Type(args)`
 
@@ -227,6 +289,10 @@ return expr
 
 ### match
 
+The `case` arms are indented under `match`; each arm has an indented body.
+An arm's pattern is a value expression (matched with `==`, or string
+equality when it is a string literal) or a **struct pattern**.
+
 ```
 match text
     case "true"
@@ -236,6 +302,29 @@ match text
     else
         type = TokenType::IDENT
 ```
+
+**Struct patterns** — `case Type(field: sub, …)` — match when the
+subject's runtime type is `Type` (or a subtype) and every field
+sub-pattern matches. A sub-pattern is either a **literal** (compared to
+that field with `==`) or a **binding**: a bare identifier that introduces
+a local bound to the field's value for the arm body. `field: name` binds
+`subject.field` to `name`; `name` on its own is shorthand for
+`name: name`.
+
+```
+match user
+    case User(name: "admin", role: "superuser")
+        …                                   // both fields equal
+    case User(role: "admin", name)
+        print("admin: " + name)             // matches role, binds name
+    case User(name, role, age)
+        …                                   // binds all three
+```
+
+The subject's type must be in `Type`'s hierarchy; unknown fields, an
+unrelated pattern type, and (for now) `float` fields are compile errors.
+Struct patterns do not yet nest, and do not contribute to enum
+exhaustiveness — add an `else` (or a bare `case Type(…)`) for a fallback.
 
 ### Errors
 
@@ -269,39 +358,75 @@ stackvm backend emits `THROW` / `TRY` / `ENDTRY` opcodes.
 
 ```
 extern fn SDL_Init(flags: int): int
-extern fn SDL_CreateWindow(t: string, x: int, y: int, w: int, h: int, f: int): int
-extern void SDL_Delay(ms: int)
 extern void SDL_Quit()
+
+extern type SDL_Window              // an opaque, pointer-sized C handle
+
+extern "SDL2"                       // a block: one library, many decls
+    type SDL_Renderer
+    fn  SDL_CreateWindow(t: string, x: int, y: int, w: int, h: int, f: int): SDL_Window
+    fn  SDL_CreateRenderer(win: SDL_Window, index: int, flags: int): SDL_Renderer
+    void SDL_DestroyWindow(win: SDL_Window)
 ```
 
 - `extern fn` / `extern void` — a prototype only, no body. The symbol is
-  resolved by the linker under its raw C name.
+  resolved by the linker under its raw C name. A trailing `...` makes it
+  variadic (`printf`).
+- **`extern type Name`** — an *opaque handle*: a distinct, pointer-sized
+  nominal type with no fields. It cannot be built with `new` (a C function
+  hands you one), supports only `==` / `!=` (`h == 0` for a NULL check —
+  never arithmetic), and is not interchangeable with `int` or with another
+  handle type. At run time it is just a machine word, so it costs nothing.
+  An explicit base (`extern type Fd : int`) is accepted and ignored.
+- **`extern "lib"` block** — one indented group of `type` / `fn` / `void`
+  declarations that all belong to library `"lib"`. The header string is
+  also the link directive: a bare name links `-lname`, a path or flag
+  (`"vendor/foo.c"`, `"-lm"`) is passed to the linker as-is. Unlike the
+  `link` keyword it needs no enclosing `module`, so a one-off program can
+  bind a C library inline; the driver records it into `<file>.links` and
+  `komodo` links it automatically.
 - Calls use the full native System V AMD64 C ABI (not Komodo's
   `(tag,value)[]` ABI):
-  - integer / pointer / `string` args fill `rdi, rsi, rdx, rcx, r8, r9`,
-    then spill to the stack — any number of arguments;
+  - integer / pointer / `string` / handle args fill `rdi, rsi, rdx, rcx,
+    r8, r9`, then spill to the stack — any number of arguments;
   - `float` args fill `xmm0..7`, then spill;
   - `al` is set to the number of xmm registers used, so C varargs
     (`printf`, …) work;
   - `: float` return type comes back in `xmm0`; any other return type
-    (pointer included) comes back in `rax` as a plain 64-bit `int`.
+    (pointer / handle included) comes back in `rax` as a plain 64-bit int.
+- **C callbacks.** A bare Komodo function name passed as an `extern` call
+  argument is handed to C as a function pointer: the compiler emits a
+  System V ABI *trampoline* that repackages the integer-register arguments
+  into Komodo's call ABI and invokes the function. The target may take up
+  to 6 plain-machine-word parameters (int / bool / char / string / handle)
+  and return one or `void` — no `float`, no arrays. See
+  `examples/ffi_callback.km`.
 - `data(arr)` — the element pointer of a Komodo array, for passing a
   writable buffer / out-param to C (e.g. `SDL_PollEvent(data(ev))`). Read
   results back with ordinary `arr[i]`.
-- Not supported: passing/returning structs by value, and Komodo function
-  pointers as C callbacks.
-- Link the library by passing linker flags to `build.sh` after the output
-  name, e.g. `./build.sh app.km x86 ./app -lSDL2`.
+- Not supported: passing/returning structs by value; `float` in a callback
+  signature; a callback with more than 6 parameters.
+- With `build.sh` (the interpreter path) pass link flags after the output
+  name — `./build.sh app.km x86 ./app -lSDL2`; the `komodo` CLI reads
+  `<file>.links` and needs none.
 
 ## Built-ins
 
 A handful of names the compiler lowers directly (no `import`, no library):
 
-- `print(...)` — write values.
-- `string(x)` — convert any value to its text form.
+- `print(...)` — write values. A `float` argument is shown in `%g` form
+  with a trailing `.0` kept when integral.
+- `string(x)` — convert any value to its text form (same `float` rule).
 - `join(parts, sep)` — concatenate a `[string]` with `sep` between, in
   one pass (avoids the O(n²) churn of repeated `s = s + line`).
 - `data(arr)` — an array's element pointer, for handing a buffer to C.
+- `copy(x)` — a deep copy of `x`. Struct / class fields are cloned
+  recursively (through a synthesised `km_deepcopy_<T>` per value type),
+  array fields get a fresh buffer; scalars, strings, enum values and
+  opaque handles are copied by value. The source is *read*, never moved —
+  `copy(a)` is the explicit way to duplicate a `unique` value while
+  keeping `a` a live owner. Constructor-based classes and `extern type`
+  handles have no deep copy; cyclic data recurses forever.
 
 ## Standard library
 
@@ -309,19 +434,56 @@ The standard library has **no special treatment** — each part is an
 ordinary Komodo module, resolved and type-checked like any other. Each
 ships as a `.kmm` file of prototype declarations (bodies linked from
 `stdlib/*.c`), found automatically under the compiler's own directory, so
-`import console` / `import math` / `import algorithm` / `import file` work
-out of the box from anywhere.
+`import console` / `import math` / `import string` / `import algorithm` /
+`import file` work out of the box from anywhere.
 
 | Module | Members |
 |---|---|
 | `console` | `print`, `write`, `error` (all variadic) |
-| `math` | `abs`, `min`, `max`, `pow`, `gcd`, `sqrt` |
-| `algorithm` | `sort`, `reverse`, `sum`, `max`, `min`, `contains`, `index_of`, `fill` |
-| `file` | `exists`, `read_all`, `write_all`, `find` |
+| `math` | ints: `abs`, `min`, `max`, `pow`, `gcd`, `clamp`, `sign`; floats: `sqrt`, `floor`, `ceil`, `round`, `trunc`, `fabs`, `sin`, `cos`, `tan`, `atan`, `atan2`, `exp`, `log`, `log2`, `log10`, `powf`, `hypot`; constants `pi()`, `e()` |
+| `string` | `length`, `split`, `join`, `trim`, `trim_start`, `trim_end`, `replace`, `index_of`, `contains`, `starts_with`, `ends_with`, `to_upper`, `to_lower`, `repeat`, `reverse`, `substring`, `pad_start`, `pad_end` |
+| `algorithm` | `sort`, `reverse`, `sum`, `max`, `min`, `contains`, `index_of`, `fill` — each **overloaded** for `[int]` and `[float]` (same call, resolved on the array's element type) |
+| `file` | `exists`, `read_all`, `read_lines`, `write_all`, `append_all`, `find`, `list_dir` |
+| `sdl2` | a System-V-ABI subset of SDL2 (window / renderer / events) — see `stdlib/sdl2.kmm` |
+
+`math` / `string` / `algorithm` members carry a module-name prefix on
+their symbol (`math_abs`, `string_split`, `algorithm_sort`), so they are
+reached with a **dot** — `math.abs(x)`, `string.split(s, ",")`,
+`algorithm.sort(xs)`. A dotted call whose `"_"`-joined name is an
+overload set (as every `algorithm` op is) resolves like any other
+overload. `file` and `console` are bare symbols reached with the `::`
+scope operator that drops the namespace — `file::read_all(path)`. (The
+bare `string(x)` value-to-text built-in is unrelated to `import string`.)
 
 To add another library, drop a `name.kmm` (prototypes) plus its
 implementation object next to the others — nothing in the compiler needs
-to change.
+to change. For a *system* library there's no object to drop in: write the
+prototypes as `extern fn` (native C ABI — see "Foreign functions" above)
+and declare what the linker needs with **`link`** — a keyword, valid only
+inside a module (a file starting with `module <name>`; the parser rejects
+it anywhere else):
+
+```
+module sdl2
+
+link SDL2
+
+extern fn SDL_Init(flags: int): int
+…
+```
+
+- `link Name` — a bare identifier — becomes the linker flag `-lName`.
+- `link "path/to/file.c"` — a quoted string — is passed to the linker
+  as-is (relative to wherever the compiler is invoked from), for a
+  companion source file rather than an installed system library.
+
+`kmc`'s driver resolves every `link` reachable from a program (the same
+traversal it uses for `import`) into ready linker tokens and writes them
+to `<file>.links`; the `komodo` CLI just reads that file and adds them to
+the `gcc` step — no scanning, no special-casing in the compiler or the
+CLI beyond parsing the keyword itself. `import sdl2` is enough on its
+own; no `-lSDL2` on the command line. This is how `stdlib/sdl2.kmm` links
+itself — copy the pattern for any other C library.
 
 ## Semantic analysis
 
@@ -358,6 +520,11 @@ What it does:
   mutation contract, `break` / `continue` only inside a loop, no
   instantiation of an `abstract` type, no duplicate function / type /
   macro, single-inheritance cycle detection.
+- **Ownership.** A `unique struct` value has one owner: binding, assigning,
+  storing or returning it moves it, and reading the moved-from name is an
+  error until a fresh value revives it. Move state is merged conservatively
+  across `if` / `match` arms and loop bodies (moved on any path ⇒ moved
+  after).
 
 A semantic error is reported as `line:col: message` and stops
 compilation.
@@ -392,3 +559,32 @@ string literals carrying backslash escapes, and the bitwise operators
 (`^` is exponentiation in interpreter expression context but XOR
 natively).  A folded boolean is emitted as the int `1` / `0`, so
 `print` still shows it the way the comparison it replaced was shown.
+
+## Memory
+
+A struct / class instance carries an 8-byte **reference count** in the
+word *before* the handle, so the type-id word and every field / vtable
+offset are unchanged; `new` sets it to 1. The runtime exposes
+`km_retain` / `km_release` (`stdlib/runtime.c`) — `km_release` frees the
+whole block, header included, at count zero, without recursing into
+fields.
+
+Codegen then runs a **conservative escape analysis** (`Codegen::computeFreeable`
+in `modules/codegen_stmt.kmm`) per function. A `let`-bound local of heap
+type (struct / class handle, or array) is *freeable* when:
+
+- every initialiser and `=` value for it is a **fresh** producer — `new`,
+  an array literal, or `copy(...)`; and
+- it never **escapes**: not returned, not stored into a field / element /
+  global, not passed to a call, not aliased to another binding, not used
+  as a method receiver, not handed to `data()`. Only pass-through reads
+  (`v.f`, `v[i]`, `#v`, `v == null`) keep it freeable.
+
+Such a value has refcount 1 for its whole life, so the compiler emits an
+unconditional free — `km_release` for objects, `km_drop_array` for arrays
+(arrays carry no count word) — at every `return`, at fall-through
+function exit, and before each fresh reassignment (the slot is
+zero-initialised so the first release is a harmless no-op). Everything
+the analysis is unsure about, and the fields / elements *inside* a freed
+object, are left to leak; cyclic structures always leak. The `stackvm`
+backend treats the hooks as no-ops.

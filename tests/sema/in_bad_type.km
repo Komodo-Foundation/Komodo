@@ -1,0 +1,4 @@
+import console
+void main()
+    let n = 5
+    console.print(n in 42)

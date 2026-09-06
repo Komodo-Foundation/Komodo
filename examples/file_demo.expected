@@ -1,0 +1,9 @@
+exists: 1
+contents:
+first
+second
+third
+line count: 3
+  | first
+  | second
+  | third

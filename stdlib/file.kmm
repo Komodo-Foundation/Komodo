@@ -5,6 +5,8 @@ module file
 
 fn exists(path: string): int
 fn read_all(path: string): string
+fn read_lines(path: string): [string]
 void write_all(path: string, data: string)
+void append_all(path: string, data: string)
 fn find(name: string, from: string): string?
 fn list_dir(path: string): [string]

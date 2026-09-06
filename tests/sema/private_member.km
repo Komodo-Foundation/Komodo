@@ -1,0 +1,4 @@
+import console
+import secret
+void main()
+    console.print(secret::key())

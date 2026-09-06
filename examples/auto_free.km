@@ -1,0 +1,27 @@
+// Conservative automatic freeing.  A `let`-bound struct / array that the
+// compiler proves never escapes (never returned, stored, aliased or
+// passed) is released at scope exit and on each fresh reassignment — so
+// this loop allocates a million short-lived points without growing the
+// heap.  Anything that might be shared is left alone.
+
+import console
+
+shared struct Point
+    x: int = 0
+    y: int = 0
+
+void main()
+    let acc = 0
+    let i = 0
+    while i < 1000000 do
+        let p = new Point(i, i)          // freed every iteration
+        acc = acc + (p.x - p.y)
+        i = i + 1
+    console.print("acc =", acc)
+
+    let scratch = [0, 0, 0]              // freeable array
+    let k = 0
+    while k < 4 do
+        scratch = [k, k + 1, k + 2]      // previous buffer freed
+        k = k + 1
+    console.print("scratch sum =", scratch[0] + scratch[1] + scratch[2])

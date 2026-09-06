@@ -1,0 +1,31 @@
+module string
+
+// The string library.  Bodies are linked from stdlib/string.c; these
+// prototypes give the compiler the call signatures.  Reached as
+// `string.NAME(...)`, which the compiler mangles to the flat linker
+// symbol `string_NAME` — the same scheme `math` / `algorithm` use.
+//
+// (The bare `string(x)` value-to-text conversion is an unrelated compiler
+// built-in and is unaffected by importing this module.)
+//
+// Predicates return int (1 / 0), matching `algorithm` and `file`.
+// Offsets are byte offsets; -1 means "not found".
+
+fn string_length(s: string): int
+fn string_split(s: string, sep: string): [string]
+fn string_join(parts: [string], sep: string): string
+fn string_trim(s: string): string
+fn string_trim_start(s: string): string
+fn string_trim_end(s: string): string
+fn string_replace(s: string, from: string, to: string): string
+fn string_index_of(s: string, sub: string): int
+fn string_contains(s: string, sub: string): int
+fn string_starts_with(s: string, prefix: string): int
+fn string_ends_with(s: string, suffix: string): int
+fn string_to_upper(s: string): string
+fn string_to_lower(s: string): string
+fn string_repeat(s: string, n: int): string
+fn string_reverse(s: string): string
+fn string_substring(s: string, start: int, end: int): string
+fn string_pad_start(s: string, width: int, pad: string): string
+fn string_pad_end(s: string, width: int, pad: string): string

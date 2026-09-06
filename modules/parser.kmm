@@ -10,56 +10,103 @@ public
         let prog = new Program()
         while true do
             skipNewlines()
+            // a `public` / `private` section label at module top level —
+            // its visibility applies to the following declarations until
+            // the next label, the next `module` line, or a closing dedent.
+            if at(TokenType::IDENT) and (peek().lexeme == "public" or peek().lexeme == "private") then
+                m_curVis = peek().lexeme
+                eat()
+                skipNewlines()
+                if at(TokenType::INDENT) then
+                    eat()
+                    m_secIndent = true
+                continue
+            if m_secIndent and at(TokenType::DEDENT) then
+                eat()
+                m_secIndent = false
+                m_curVis = "public"
+                continue
             if at(TokenType::EOF) then
                 break
             if at(TokenType::EXTERN) then
-                prog.functions += [parseExtern()]
+                parseExternInto(prog)
             else if at(TokenType::FN) or at(TokenType::MUT) or at(TokenType::VOID) then
                 let fdecl = parseFunction()
+                stampDecl(fdecl)
                 if fdecl.ownerClass == null then
                     prog.functions += [fdecl]
                 else
                     // `void Class::method(...)` written outside the class
                     m_pendingMethods += [fdecl]
             else if at(TokenType::STRUCT) then
-                prog.structs += [parseStruct()]
+                let sd0 = parseStruct()
+                stampDecl(sd0)
+                prog.structs += [sd0]
             else if at(TokenType::CLASS) then
-                prog.classes += [parseClass()]
+                let cd0 = parseClass()
+                stampDecl(cd0)
+                prog.classes += [cd0]
             else if at(TokenType::ENUM) then
-                prog.enums += [parseEnum()]
-            else if at(TokenType::IDENT) and (peek().lexeme == "abstract" or peek().lexeme == "shared") then
-                // leading type modifiers: `abstract` / `shared` before
-                // `struct` / `class`.  `shared` is parsed and ignored
-                // (all handles are plain pointers in the compiler).
+                let ed0 = parseEnum()
+                stampDecl(ed0)
+                prog.enums += [ed0]
+            else if at(TokenType::IDENT) and isTypeModifier(peek().lexeme) then
+                // leading type modifiers: `abstract` / `shared` / `unique`
+                // before `struct` / `class`.  `shared` is parsed and
+                // ignored — ordinary aliasing is the default.  `unique`
+                // marks single-owner move semantics (structs only; on a
+                // class it is accepted and ignored).
                 let isAbs = false
-                while at(TokenType::IDENT) and (peek().lexeme == "abstract" or peek().lexeme == "shared") do
+                let isUniq = false
+                while at(TokenType::IDENT) and isTypeModifier(peek().lexeme) do
                     if peek().lexeme == "abstract" then
                         isAbs = true
+                    else if peek().lexeme == "unique" then
+                        isUniq = true
                     eat()
                 if at(TokenType::STRUCT) then
                     let sd = parseStruct()
                     sd.isAbstract = isAbs
+                    sd.isUnique = isUniq
+                    stampDecl(sd)
                     prog.structs += [sd]
                 else if at(TokenType::CLASS) then
                     let cd = parseClass()
                     cd.isAbstract = isAbs
+                    stampDecl(cd)
                     prog.classes += [cd]
                 else
                     throw ("expected `struct` or `class` after type modifier")
             else if at(TokenType::LET) then
-                // `let NAME be EXPR` at top level — a compile-time macro.
-                prog.macros += [parseVarDecl()]
+                // `let NAME be EXPR` — a compile-time macro; `let NAME
+                // [: T] = EXPR` (or a bare `let NAME : T`) — a top-level
+                // variable with its own storage.
+                let vd = parseVarDecl()
+                vd.visMod = m_curVis
+                vd.modOwner = m_curModule
+                if vd.immutable then
+                    prog.macros += [vd]
+                else
+                    prog.globals += [vd]
             else if at(TokenType::IMPORT) then
                 eat()
                 eat()
                 continue
             else if at(TokenType::MODULE) then
                 // `module <name>` — namespaces are flat after the driver
-                // merges the imported files, so just record and move on.
+                // merges the imported files; record the name so each
+                // declaration below can be attributed to its module.
                 eat()
+                m_inModule = true
+                m_curVis = "public"
+                m_secIndent = false
                 if not at(TokenType::NEWLINE) and not at(TokenType::EOF) then
                     prog.moduleName = peek().lexeme
+                    m_curModule = peek().lexeme
                     eat()
+                continue
+            else if at(TokenType::LINK) then
+                prog.links += [parseLink()]
                 continue
             else
                 throw ("Unexpected top-level token: " + string(peek().lexeme))
@@ -75,22 +122,63 @@ public
             cls.methods += [m]
         return prog
 
+    // Attribute a top-level declaration to the module it was parsed in
+    // and the visibility section it sat under.
+    mut stampDecl(d: Declaration)
+        d.moduleOwner = m_curModule
+        d.visibility = m_curVis
+
     mut findClass(prog: Program, name: string?): ClassDecl?
         for c in prog.classes do
             if c.name == name then
                 return c
         return null
+
+    // A bare identifier that may lead a `struct` / `class` declaration.
+    fn isTypeModifier(lexeme: string): bool
+        return lexeme == "abstract" or lexeme == "shared" or lexeme == "unique"
 private
     m_tokens: [Token]
     m_pos: int = 0
     // `Class::method` bodies collected during the top-level sweep and
     // re-attached to their classes once parsing finishes.
     m_pendingMethods: [FunctionDecl] = []
+    // true from the first `module <name>` line seen onward — `link` is
+    // only legal in a module, and files are concatenated whole (each
+    // one's own lines stay in order), so this is correct per file even
+    // though the parser runs over the merged token stream.
+    m_inModule: bool = false
+    // module name + visibility section currently in effect during the
+    // top-level sweep (see `stampDecl`).
+    m_curModule: string = ""
+    m_curVis: string = "public"
+    m_secIndent: bool = false
             
     mut peek(): Token
         if m_pos >= #m_tokens then
             return m_tokens[#m_tokens - 1]
         return m_tokens[m_pos]
+
+    // `n` tokens ahead of the cursor, clamped to the trailing EOF token.
+    mut peekAt(n: int): Token
+        let i = m_pos + n
+        if i >= #m_tokens then
+            return m_tokens[#m_tokens - 1]
+        return m_tokens[i]
+
+    // First character of `s` is an ASCII uppercase letter (the naming
+    // convention for every struct / class / enum type).
+    mut startsUpper(s: string): bool
+        if #s == 0 then
+            return false
+        let up = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+        let c = s[0]
+        let i = 0
+        while i < #up do
+            if up[i] == c then
+                return true
+            i += 1
+        return false
 
     mut eat(): Token
         let t = peek()
@@ -151,10 +239,60 @@ private
             name = name + "?"
         return name
 
-    // `extern fn name(params): type`  /  `extern void name(params)`
-    // A prototype only — no body follows.
-    mut parseExtern(): FunctionDecl
+    // Foreign declarations.  Three forms:
+    //
+    //   extern fn name(params): T          — a single C prototype
+    //   extern void name(params)
+    //   extern type Name                   — an opaque pointer-sized handle
+    //
+    //   extern "SDL2"                       — a block: one library, many
+    //       type SDL_Window                   declarations, no repeated
+    //       fn SDL_CreateWindow(...): SDL_Window   `extern` / `fn` noise.
+    //       void SDL_DestroyWindow(w: SDL_Window)
+    //
+    // The block header string names what to link: a bare library (`"SDL2"`
+    // → `-lSDL2`) or a companion path (`"vendor/foo.c"`, kept as-is).  It
+    // is recorded as a `LinkDecl` so the driver links it automatically —
+    // and, unlike the `link` keyword, a block `extern` needs no enclosing
+    // `module`, so a one-off program can bind a C library inline.
+    mut parseExternInto(prog: Program)
         eat()                       // extern
+        if at(TokenType::STRING) then
+            let lexeme = peek().lexeme
+            eat()
+            let target = lexeme[1 to (lexeme.length - 1)]
+            prog.links += [new LinkDecl(target, externLibIsPath(target))]
+            skipNewlines()
+            if at(TokenType::INDENT) then
+                eat()
+                while not at(TokenType::DEDENT) and not at(TokenType::EOF) do
+                    skipNewlines()
+                    if at(TokenType::DEDENT) or at(TokenType::EOF) then
+                        break
+                    parseExternMemberInto(prog)
+                    skipNewlines()
+                if at(TokenType::DEDENT) then
+                    eat()
+            return
+        parseExternMemberInto(prog)
+
+    // One foreign declaration — `fn` / `void` prototype or `type` handle —
+    // with the leading `extern` (or block indent) already consumed.
+    mut parseExternMemberInto(prog: Program)
+        if at(TokenType::IDENT) and peek().lexeme == "type" then
+            eat()                   // type
+            let name = peek().lexeme
+            eat()
+            if at(TokenType::COLON) then
+                // `extern type Fd : int` — an explicit base is accepted and
+                // ignored; every handle is one pointer-sized machine word.
+                eat()
+                parseType()
+            skipNewlines()
+            let sd = new StructDecl(name)
+            sd.isExtern = true
+            prog.structs += [sd]
+            return
         let isVoid = at(TokenType::VOID)
         eat()                       // fn | void
         let name = peek().lexeme
@@ -168,11 +306,26 @@ private
             returnType = parseType()
         skipNewlines()
         let decl = new FunctionDecl(name)
-        decl.params = params
+        decl.params = trimVariadic(params)
+        decl.variadic = paramsAreVariadic(params)
         decl.returnType = returnType
         decl.isVoid = isVoid
         decl.isExtern = true
-        return decl
+        prog.functions += [decl]
+
+    // How a block-`extern` header string should reach the linker: a path /
+    // flag is passed through as-is (`isPath`), a bare name becomes `-lname`.
+    fn externLibIsPath(s: string): bool
+        if #s == 0 then
+            return false
+        if s[0] == "-" or s[0] == "/" or s[0] == "." then
+            return true
+        let i = 0
+        while i < #s do
+            if s[i] == "/" or s[i] == "." then
+                return true
+            i += 1
+        return false
 
     mut parseFunction(): FunctionDecl
         // one or two leading keywords: `fn` / `void` / `mut`, and the
@@ -314,6 +467,21 @@ private
         decl.variants = variants
         return decl
 
+    // `link name` (a bare identifier → `-lname`) or `link "path.c"` (a
+    // quoted path, linked as-is) — only inside a module.
+    mut parseLink(): LinkDecl
+        eat()                       // link
+        if not m_inModule then
+            throw "`link` may only be used inside a module (a file starting with `module <name>`)"
+        if at(TokenType::STRING) then
+            let lexeme = peek().lexeme
+            eat()
+            let path = lexeme[1 to (lexeme.length - 1)]
+            return new LinkDecl(path, true)
+        let name = peek().lexeme
+        eat()
+        return new LinkDecl(name, false)
+
     // `match subject` then `case <expr>` / `else` arms, each with an
     // indented body.
     mut parseMatch(): MatchStmt
@@ -330,7 +498,7 @@ private
                 let mc = new MatchCase()
                 if at(TokenType::CASE) then
                     eat()
-                    mc.pattern = parseExpression()
+                    mc.pattern = parseCasePattern()
                 else if at(TokenType::ELSE) then
                     eat()
                     mc.isDefault = true
@@ -351,6 +519,43 @@ private
         stmt.subject = subject
         stmt.cases = cases
         return stmt
+
+    // A `case` pattern: a struct-destructuring pattern when it is a
+    // capitalised type name immediately followed by `(`, otherwise an
+    // ordinary value expression (`case 3`, `case "x"`, `case VARIANT`).
+    mut parseCasePattern(): Expression?
+        if at(TokenType::IDENT) and startsUpper(peek().lexeme) and peekAt(1).type == TokenType::OPEN_PAREN then
+            return parseStructPattern()
+        return parseExpression()
+
+    // `Type(field: <lit>, field: bindIdent, shorthandBind, …)`
+    mut parseStructPattern(): Expression?
+        let sp = new StructPattern()
+        sp.typeName = peek().lexeme
+        eat()                           // Type
+        eat()                           // (
+        while not at(TokenType::CLOSE_PAREN) and not at(TokenType::EOF) do
+            let fp = new FieldPattern()
+            fp.field = peek().lexeme
+            eat()                       // field name (or shorthand binding)
+            if at(TokenType::COLON) then
+                eat()
+                // a lone identifier before `,` / `)` is a binding target;
+                // anything else is a literal sub-pattern to compare
+                if at(TokenType::IDENT) and (peekAt(1).type == TokenType::COMMA or peekAt(1).type == TokenType::CLOSE_PAREN) then
+                    fp.bind = peek().lexeme
+                    eat()
+                else
+                    fp.lit = parseExpression()
+            else
+                // `case Type(name)` — shorthand for `name: name`
+                fp.bind = fp.field
+            sp.fields += [fp]
+            if at(TokenType::COMMA) then
+                eat()
+        if at(TokenType::CLOSE_PAREN) then
+            eat()
+        return sp
 
     // `constructor(params)` + body — lowered like a void method.
     mut parseCtor(): FunctionDecl
@@ -495,7 +700,7 @@ private
         if expr == null then
             return null
 
-        if at(TokenType::EQUALS) or at(TokenType::PLUS_EQ) or at(TokenType::MINUS_EQ) then
+        if at(TokenType::EQUALS) or at(TokenType::PLUS_EQ) or at(TokenType::MINUS_EQ) or at(TokenType::STAR_EQ) or at(TokenType::SLASH_EQ) or at(TokenType::PERCENT_EQ) then
             let op = peek().lexeme
             eat()
             let value = parseExpression()
@@ -707,6 +912,12 @@ private
             eat()
             let right = parseBitwise()
             return new BinaryOp(op, left, right)
+        // `x in coll` — membership: a substring of a string, or an
+        // element of an array.  Yields a bool.
+        if at(TokenType::IN) then
+            eat()
+            let right = parseBitwise()
+            return new BinaryOp("in", left, right)
         return left
 
     mut parseBitwise(): Expression?
@@ -806,7 +1017,9 @@ private
                     if not at(TokenType::CLOSE_PAREN) then
                         eat()
                 eat()
-                expr = new CallExpr(expr.name, args)
+                let ce = new CallExpr(expr.name, args)
+                ce.qualifier = expr.qualifier
+                expr = ce
             else if at(TokenType::QUESTION) and expr is CallExpr then
                 eat()
                 expr.protected = true
@@ -888,11 +1101,16 @@ private
             let name = peek().lexeme
             eat()
             // `ns::member` — the namespace is dropped (flat after merge);
-            // `a::b::c` keeps the last segment.
+            // `a::b::c` keeps the last segment.  The segment just before
+            // the final `::` is kept on the node for module-privacy checks.
+            let qual = ""
             while at(TokenType::SCOPE) do
                 eat()
+                qual = name
                 name = peek().lexeme
                 eat()
-            return new Identifier(name)
+            let id = new Identifier(name)
+            id.qualifier = qual
+            return id
 
         return null

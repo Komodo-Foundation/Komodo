@@ -1,0 +1,28 @@
+// Exercises the expanded `math` standard library module.
+
+import console
+import math
+
+void main()
+    // integer helpers
+    console.print("abs(-9):", math.abs(-9))
+    console.print("min/max:", math.min(3, 8), math.max(3, 8))
+    console.print("pow(3,4):", math.pow(3, 4))
+    console.print("gcd(54,24):", math.gcd(54, 24))
+    console.print("clamp(20,0,10):", math.clamp(20, 0, 10))
+    console.print("clamp(-5,0,10):", math.clamp(-5, 0, 10))
+    console.print("sign:", math.sign(-3), math.sign(0), math.sign(7))
+
+    // floating-point helpers
+    console.print("sqrt(2):", math.sqrt(2.0))
+    console.print("floor(3.7):", math.floor(3.7))
+    console.print("ceil(3.1):", math.ceil(3.1))
+    console.print("round(2.5):", math.round(2.5))
+    console.print("trunc(-3.9):", math.trunc(-3.9))
+    console.print("fabs(-2.5):", math.fabs(-2.5))
+    console.print("powf(2.0,0.5):", math.powf(2.0, 0.5))
+    console.print("hypot(3,4):", math.hypot(3.0, 4.0))
+    console.print("exp(0):", math.exp(0.0))
+    console.print("log(1):", math.log(1.0))
+    console.print("log2(8):", math.log2(8.0))
+    console.print("log10(1000):", math.log10(1000.0))

@@ -22,6 +22,8 @@ private
     m_text: string = ""
     m_forInVi: int = 0     // frame offsets of the current for-in loop's
     m_forInVa: int = 0     // hidden cursor / handle locals
+    m_dispEnd: string = ""  // overload dispatch: shared exit label
+    m_dispNext: string = "" // overload dispatch: current case's skip label
     m_tryCatch: [string] = []  // protected-call: catch labels (nesting stack)
     m_tryDone: [string] = []   // protected-call: done labels (nesting stack)
 
@@ -83,6 +85,17 @@ void StackVMBackend::loadLocal(off: int, ty: string)
 
 void StackVMBackend::storeLocal(off: int, ty: string)
     op("STL " + string(off))
+
+// ── top-level variables (named global cells) ──────────────────────
+
+void StackVMBackend::declareGlobal(name: string, ty: string)
+    emit("GLOBAL " + name)
+
+void StackVMBackend::loadGlobal(name: string, ty: string)
+    op("LDG " + name)
+
+void StackVMBackend::storeGlobal(name: string, ty: string)
+    op("STG " + name)
 
 // ── operand-stack scratch — the machine is already a stack ──────────
 
@@ -147,6 +160,22 @@ void StackVMBackend::binaryFloat(op_: string)
         op("FMUL")
     else if op_ == "/" then
         op("FDIV")
+    else if op_ == "%" then
+        op("FMOD")
+
+void StackVMBackend::compareFloat(op_: string)
+    if op_ == "==" then
+        op("FEQ")
+    else if op_ == "!=" then
+        op("FNE")
+    else if op_ == "<" then
+        op("FLT")
+    else if op_ == ">" then
+        op("FGT")
+    else if op_ == "<=" then
+        op("FLE")
+    else
+        op("FGE")
 
 void StackVMBackend::negFloat()
     op("FNEG")
@@ -158,6 +187,9 @@ void StackVMBackend::cvtFloatToInt()
     op("F2I")
 
 void StackVMBackend::floatToBits()
+    return
+
+void StackVMBackend::bitsToFloat()
     return
 
 // ── strings ────────────────────────────────────────────────────────
@@ -207,6 +239,12 @@ void StackVMBackend::arrayAppendToField(idx: int)
 
 void StackVMBackend::arrayAppendAcc()
     op("AAPPENDX")
+
+void StackVMBackend::arrayGrowAcc()
+    op("AGROWX")
+
+void StackVMBackend::arrayRepeat()
+    op("AREPEATX")
 
 void StackVMBackend::toStringOf(tag: int)
     op("TOSTR " + string(tag))
@@ -297,6 +335,37 @@ void StackVMBackend::callArgStore(j: int)
 void StackVMBackend::callFrameEnd(name: string, n: int)
     op("CALL " + mangle(name) + " " + string(n))
 
+// ── overload dispatch ─────────────────────────────────────────────
+//  The argument buffer is already built.  Each candidate tests argument
+//  tags / type ids and skips to its `next` label on a mismatch; a full
+//  match CALLs the overload and jumps to the shared exit.
+
+mut StackVMBackend::dispatchBegin()
+    m_dispEnd = newLabel()
+
+mut StackVMBackend::dispatchCaseBegin()
+    m_dispNext = newLabel()
+
+void StackVMBackend::dispatchTestTag(j: int, tag: int)
+    op("DTAG " + string(j) + " " + string(tag) + " " + m_dispNext)
+
+mut StackVMBackend::dispatchTestType(j: int, ids: [int])
+    let s = "DTYPE " + string(j) + " " + m_dispNext
+    for id in ids do
+        s = s + " " + string(id)
+    op(s)
+
+void StackVMBackend::dispatchCall(sym: string, n: int)
+    op("CALL " + mangle(sym) + " " + string(n))
+    op("JMP " + m_dispEnd)
+
+void StackVMBackend::dispatchCaseEnd()
+    emit(m_dispNext + ":")
+
+mut StackVMBackend::dispatchEnd(n: int)
+    op("ABORT")
+    emit(m_dispEnd + ":")
+
 // C FFI — operands are already stacked in argument order; a distinct
 // opcode marks it as a native C call rather than a Komodo one.
 void StackVMBackend::cCallBegin(n: int)
@@ -310,6 +379,33 @@ void StackVMBackend::cCallEnd(name: string, classes: [string])
 
 void StackVMBackend::arrayDataPtr()
     op("ADATA")
+
+// `needle in haystack` (strings) — both on the stack.
+void StackVMBackend::strIn()
+    op("SIN")
+
+// `v in arr` — arr and candidate on the stack; leaf tag as an operand.
+void StackVMBackend::arrayIn(leaf: int)
+    op("AIN " + string(leaf))
+
+// C callbacks — the stack VM has no native-ABI story yet; emit a marker
+// so a future interpreter can bind it, and keep codegen target-agnostic.
+void StackVMBackend::loadFnPtr(sym: string)
+    op("PUSHFN " + sym)
+
+mut StackVMBackend::emitTrampoline(sym: string, argc: int)
+    op("; trampoline " + sym + " / " + string(argc) + " args")
+
+// Conservative auto-free — no-ops for the VM (a future GC / interpreter
+// owns object lifetime); codegen stays target-agnostic.
+void StackVMBackend::zeroFreeableSlots(offsets: [int])
+    return
+
+mut StackVMBackend::emitScopeReleases(objOffsets: [int], arrOffsets: [int], preserveAcc: bool, accIsFloat: bool)
+    return
+
+mut StackVMBackend::releaseStoreLocal(off: int, isArray: bool)
+    op("STL " + string(off))
 
 // ── error handling ────────────────────────────────────────────────
 //

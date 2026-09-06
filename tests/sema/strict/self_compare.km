@@ -1,0 +1,5 @@
+import console
+void main()
+    let n = 10
+    if n == n then
+        console.print("x")

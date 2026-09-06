@@ -1,0 +1,7 @@
+import console
+struct Point
+    x: int
+    y: int
+void main()
+    let p = new Point(1, 2)
+    console.print(p.ex)

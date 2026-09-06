@@ -1,43 +1,30 @@
-// Calling a real C library (SDL2) straight from Komodo through `extern fn`.
+// Calling a real C library (SDL2) straight from Komodo through the
+// `sdl2` module — an ordinary Komodo import, not a special case.
 //
-// Build & run (only the shared library is needed, not the -dev headers):
-//   ./build.sh demos/sdl_window.km x86 ./sdl_window  -lSDL2
+// Build & run:
+//   komodo demos/sdl_window.km
+//
+// No `-lSDL2` on the command line: `stdlib/sdl2.kmm` declares
+// `link SDL2` (a real keyword, valid only inside a module), and `komodo`
+// links it automatically. Only the shared library needs to be installed,
+// not the -dev headers. Write the same kind of file — `extern fn`
+// prototypes + one `link` line — to wire up any other C library the same
+// way; see stdlib/sdl2.kmm and design.md's "Standard library" section.
 //
 // Opens an 800x600 window and runs a real event loop — pumping SDL_Event
 // records through a Komodo array with `data()` — until the window is
 // closed or a key is pressed.
-//
-// `extern fn` uses the native C ABI: ints/pointers in rdi..r9, floats in
-// xmm0..7, the rest spill to the stack, float results come back in xmm0.
-// `data(arr)` yields an array's element pointer for writable C buffers.
 
-extern fn SDL_Init(flags: int): int
-extern fn SDL_CreateWindow(title: string, x: int, y: int, w: int, h: int, flags: int): int
-extern fn SDL_CreateRenderer(window: int, index: int, flags: int): int
-extern fn SDL_SetRenderDrawColor(renderer: int, r: int, g: int, b: int, a: int): int
-extern fn SDL_RenderClear(renderer: int): int
-extern void SDL_RenderPresent(renderer: int)
-extern fn SDL_PollEvent(event: int): int
-extern void SDL_Delay(ms: int)
-extern void SDL_DestroyRenderer(renderer: int)
-extern void SDL_DestroyWindow(window: int)
-extern void SDL_Quit()
+import sdl2
 
 extern fn puts(s: string): int
 
-let SDL_INIT_VIDEO be 32
-let CENTERED be 805240832        // SDL_WINDOWPOS_CENTERED
-let SHOWN be 4                   // SDL_WINDOW_SHOWN
-let SDL_QUIT be 256              // 0x100
-let SDL_KEYDOWN be 768           // 0x300
-
 void main()
-
-    if SDL_Init(SDL_INIT_VIDEO) != 0 then
+    if sdl2::SDL_Init(SDL_INIT_VIDEO) != 0 then
         puts("SDL_Init failed")
         return
 
-    let window = SDL_CreateWindow("Komodo + SDL2", CENTERED, CENTERED, 800, 600, SHOWN)
+    let window = SDL_CreateWindow("Komodo + SDL2", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 800, 600, SDL_WINDOW_SHOWN)
     if window == 0 then
         puts("CreateWindow failed")
         SDL_Quit()
@@ -53,7 +40,7 @@ void main()
     while running == 1 do
         while SDL_PollEvent(data(ev)) == 1 do
             let kind = ev[0] & 4294967295          // low 32 bits = event type
-            if kind == SDL_QUIT or kind == SDL_KEYDOWN then
+            if kind == SDL_EVENT_QUIT or kind == SDL_EVENT_KEYDOWN then
                 running = 0
 
         // also bail after ~5s so the demo ends on a headless box

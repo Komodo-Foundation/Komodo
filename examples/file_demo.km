@@ -1,0 +1,21 @@
+// Exercises the `file` standard library module: write / append / read /
+// read_lines / exists.  Uses a fixed temp path; write_all truncates, so
+// the output is the same on every run.
+
+import console
+import file
+
+void main()
+    let path = "/tmp/komodo_file_demo.txt"
+    file::write_all(path, "first\n")
+    file::append_all(path, "second\n")
+    file::append_all(path, "third\n")
+
+    console.print("exists:", file::exists(path))
+    console.print("contents:")
+    console.write(file::read_all(path))
+
+    let lines = file::read_lines(path)
+    console.print("line count:", #lines)
+    for ln in lines do
+        console.print("  |", ln)
