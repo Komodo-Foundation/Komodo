@@ -25,6 +25,7 @@ enum TokenType
     EXTERN
     MODULE
     IMPORT
+    LINK
     CONSTRUCTOR
     VOID
     RETURN
@@ -261,6 +262,8 @@ private
                 type = TokenType::NOT
             case "import"
                 type = TokenType::IMPORT
+            case "link"
+                type = TokenType::LINK
             case "mut"
                 type = TokenType::MUT
             case "extern"

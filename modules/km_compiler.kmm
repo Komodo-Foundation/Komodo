@@ -32,8 +32,11 @@ import file
 fn compile(source: string, target: string): string
     return compileOpt(source, target, false, "none")
 
-// `strict` turns on the analyser's lint-level diagnostics (implicit-any
-// bindings, dead code, …); the default checks always run.
+// `strict` turns the analyser's style lints (implicit-any bindings,
+// redundant `mut`, …) into hard errors.  Regardless of `strict`, the
+// analyser always prints non-fatal warnings for bad-practice constructs
+// — `x / 0`, `x == x`, `x = x`, a constant `if`, an empty loop body —
+// which `strict` likewise escalates to errors.
 fn compileWith(source: string, target: string, strict: bool): string
     return compileOpt(source, target, strict, "none")
 
@@ -51,19 +54,16 @@ fn compileOpt(source: string, target: string, strict: bool, opt: string): string
     let optimizer = new Optimizer(opt)
     optimizer.run(ast)
 
-    let gen = new Codegen(selectBackend(target, opt != "none"))
+    let gen = new Codegen(selectBackend(target))
     return gen.compileProgram(ast)
 
 // The one place that knows the set of targets.  Add a case here after
-// writing a new `<T>Backend : Backend`.  `intern` enables the x86
-// constant pool (optimiser level >= low).
-fn selectBackend(target: string, intern: bool): Backend
+// writing a new `<T>Backend : Backend`.
+fn selectBackend(target: string): Backend
     if target == "stackvm" then
         return new StackVMBackend()
     if target == "x86" or target == "" then
-        let b = new X86Backend()
-        b.setIntern(intern)
-        return b
+        return new X86Backend()
     throw ("unknown target '" + target + "' (known: x86, stackvm)")
 
 void save(asm: string, path: string)

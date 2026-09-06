@@ -19,10 +19,14 @@ class X86Backend : Backend
 private
     m_lines: [string] = []         // .text body, one entry per line
     m_rodata: string = ""          // .rodata lines (dq / db)
+    m_globals: [string] = []       // top-level variable names → .bss cells
     m_doubleId: int = 0
     m_stringId: int = 0
-    // constant-pool dedup (enabled at optimisation level >= low)
-    m_intern: bool = false
+    // constant-pool dedup: identical .rodata constants (doubles and
+    // immutable string literals) share one label.  Always on — the pool
+    // holds read-only data, so merging entries never changes behaviour
+    // and is independent of the optimiser level.
+    m_intern: bool = true
     m_poolKeys: [string] = []      // "d:<value>" / "s:<lexeme>"
     m_poolLabels: [string] = []
     m_externs: [string] = []       // link-time symbols to `extern`
@@ -32,6 +36,8 @@ private
     m_vtblText: string = ""         // `__vt_<id>: dq …` lines
     m_vtabCount: int = 0            // number of registered type ids
     m_vtabSet: [int] = []           // ids that have a real vtable
+    m_dispEnd: string = ""          // overload dispatch: shared exit label
+    m_dispNext: string = ""         // overload dispatch: current case's skip label
     m_tryCatch: [string] = []       // protected-call: catch labels (nesting stack)
     m_tryDone: [string] = []        // protected-call: done labels (nesting stack)
 
@@ -57,10 +63,6 @@ void X86Backend::emitCall(sym: string)
     ins("mov rsp, rbx")
 
 // ── .rodata interning ──────────────────────────────────────────────
-
-// enable / disable constant-pool deduplication
-void X86Backend::setIntern(on: bool)
-    m_intern = on
 
 mut X86Backend::poolFind(key: string): string
     if not m_intern then
@@ -188,6 +190,27 @@ void X86Backend::storeLocal(off: int, ty: string)
     else
         ins("mov [rbp - " + string(off) + "], rax")
 
+// ── top-level variables ───────────────────────────────────────────
+// One 8-byte cell each in .bss (label `KG_<name>`), zero-initialised by
+// the loader; the program's own initialiser code runs at the top of
+// `main`.
+
+void X86Backend::declareGlobal(name: string, ty: string)
+    if not listHas(m_globals, name) then
+        m_globals += [name]
+
+void X86Backend::loadGlobal(name: string, ty: string)
+    if ty == "float" then
+        ins("movsd xmm0, [rel KG_" + name + "]")
+    else
+        ins("mov rax, [rel KG_" + name + "]")
+
+void X86Backend::storeGlobal(name: string, ty: string)
+    if ty == "float" then
+        ins("movsd [rel KG_" + name + "], xmm0")
+    else
+        ins("mov [rel KG_" + name + "], rax")
+
 // ── operand-stack scratch ──────────────────────────────────────────
 
 void X86Backend::pushAcc()
@@ -270,6 +293,33 @@ void X86Backend::binaryFloat(op: string)
         ins("mulsd xmm0, xmm1")
     else if op == "/" then
         ins("divsd xmm0, xmm1")
+    else if op == "%" then
+        // C `fmod(x, y)` — x in xmm0, y in xmm1 (already placed above).
+        recordExtern("fmod")
+        emitCall("fmod")
+
+// `a <cmp> b` on floats — left spilled by pushAccFloat(), right in xmm0.
+// `ucomisd` sets CF/ZF/PF; the setcc that follows reads them.  NaN
+// (unordered ⇒ PF=1) is treated as "not equal / not less" — no NaN-safe
+// special-casing.
+void X86Backend::compareFloat(op: string)
+    ins("movsd xmm1, xmm0")          // right
+    ins("movsd xmm0, [rsp]")         // left
+    ins("add rsp, 16")
+    ins("ucomisd xmm0, xmm1")
+    if op == "==" then
+        ins("sete al")
+    else if op == "!=" then
+        ins("setne al")
+    else if op == ">" then
+        ins("seta al")
+    else if op == ">=" then
+        ins("setae al")
+    else if op == "<" then
+        ins("setb al")
+    else
+        ins("setbe al")
+    ins("movzx eax, al")
 
 void X86Backend::negFloat()
     ins("movsd xmm1, xmm0")
@@ -284,6 +334,12 @@ void X86Backend::cvtFloatToInt()
 
 void X86Backend::floatToBits()
     ins("movq rax, xmm0")
+
+// The inverse: reinterpret the 64 bits in rax as a double in xmm0.  Used
+// after a raw 8-byte read (array element, struct field) whose static type
+// is `float`, to restore the "float lives in xmm0" convention.
+void X86Backend::bitsToFloat()
+    ins("movq xmm0, rax")
 
 // ── strings ────────────────────────────────────────────────────────
 
@@ -379,15 +435,70 @@ void X86Backend::arrayEnd()
 // both), so every field offset is shifted by 8.
 mut X86Backend::objNew(typeId: int, nFields: int)
     m_usesMalloc = true
-    let bytes = (nFields + 1) * 8
+    // one extra word for the refcount, which sits just *before* the
+    // handle — so the type-id word and every field offset are unchanged.
+    let bytes = (nFields + 2) * 8
     ins("mov rdi, " + string(bytes))
     emitCall("malloc")
+    ins("mov qword [rax], 1")               // refcount = 1
+    ins("add rax, 8")                       // handle = block + 8
     ins("mov qword [rax], " + string(typeId))
     let k = 0
     while k < nFields do
         ins("mov qword [rax + " + string(8 + k * 8) + "], 0")
         k += 1
     ins("push rax")
+
+// ── object / array lifetime (conservative auto-free) ──────────────
+//
+//  The compiler's escape analysis (codegen_stmt.kmm) hands each function
+//  the frame offsets of its `let`-bound heap locals that provably never
+//  escape — those are freed here, and only here.
+
+void X86Backend::zeroFreeableSlots(offsets: [int])
+    for off in offsets do
+        ins("mov qword [rbp - " + string(off) + "], 0")
+
+// Release every freeable local.  `preserveAcc` keeps the return value
+// alive across the C calls (each `km_release` clobbers rax and every xmm);
+// `accIsFloat` says whether it rides in xmm0 rather than rax.
+mut X86Backend::emitScopeReleases(objOffsets: [int], arrOffsets: [int], preserveAcc: bool, accIsFloat: bool)
+    if #objOffsets == 0 and #arrOffsets == 0 then
+        return
+    if preserveAcc then
+        if accIsFloat then
+            ins("sub rsp, 16")
+            ins("movsd [rsp], xmm0")
+        else
+            ins("push rax")
+    for off in objOffsets do
+        ins("mov rdi, [rbp - " + string(off) + "]")
+        recordExtern("km_release")
+        emitCall("km_release")
+    for off in arrOffsets do
+        ins("mov rdi, [rbp - " + string(off) + "]")
+        recordExtern("km_drop_array")
+        emitCall("km_drop_array")
+    if preserveAcc then
+        if accIsFloat then
+            ins("movsd xmm0, [rsp]")
+            ins("add rsp, 16")
+        else
+            ins("pop rax")
+
+// `v = <fresh>` for a freeable local: drop the value it held first.  The
+// new value is already in rax.
+mut X86Backend::releaseStoreLocal(off: int, isArray: bool)
+    ins("push rax")
+    ins("mov rdi, [rbp - " + string(off) + "]")
+    if isArray then
+        recordExtern("km_drop_array")
+        emitCall("km_drop_array")
+    else
+        recordExtern("km_release")
+        emitCall("km_release")
+    ins("pop rax")
+    ins("mov [rbp - " + string(off) + "], rax")
 
 // value in rax, handle at [rsp] (positional field init for `new`)
 void X86Backend::objSetField(idx: int)
@@ -467,6 +578,21 @@ mut X86Backend::arrayAppendAcc()
     ins("mov rsi, rax")
     ins("pop rdi")
     emitCall("km_array_append")
+
+// `g += elem` for an array global — array in rax, the element spilled by
+// pushAcc().  → km_array_grow(array, elem); new handle left in rax.
+mut X86Backend::arrayGrowAcc()
+    m_usesAppend = true
+    ins("mov rdi, rax")
+    ins("pop rsi")
+    emitCall("km_array_grow")
+
+// `arr * n` — count in rax, array spilled by pushAcc().
+mut X86Backend::arrayRepeat()
+    ins("mov rsi, rax")
+    ins("pop rdi")
+    recordExtern("km_array_repeat")
+    emitCall("km_array_repeat")
 
 // `self.field += src` (array append) — src in rax, receiver spilled by
 // pushAcc().  self.field = km_array_append(self.field, src).
@@ -584,6 +710,56 @@ mut X86Backend::callFrameEnd(name: string, n: int)
     ins("mov rdi, " + string(n))
     ins("mov rsi, rsp")
     emitCall(sym)
+    ins("add rsp, " + string(n * 16))
+
+// ── overload dispatch ─────────────────────────────────────────────
+//
+//  The (tag,value)[] frame is already built at [rsp].  For each candidate
+//  overload, `dispatchTest*` compare argument tags / header type ids and
+//  `jne` to that case's skip label; on a full match `dispatchCall` calls
+//  the overload and jumps to the shared exit.  No runtime match ⇒
+//  `abort`.
+
+mut X86Backend::dispatchBegin()
+    m_dispEnd = newLabel()
+
+mut X86Backend::dispatchCaseBegin()
+    m_dispNext = newLabel()
+
+// arg `j`'s tag word must equal `tag`.
+void X86Backend::dispatchTestTag(j: int, tag: int)
+    ins("cmp qword [rsp + " + string(j * 16) + "], " + string(tag))
+    ins("jne " + m_dispNext)
+
+// arg `j` must be a non-null object handle whose header type id is one
+// of `ids`.
+mut X86Backend::dispatchTestType(j: int, ids: [int])
+    ins("mov rax, [rsp + " + string(j * 16 + 8) + "]")
+    ins("test rax, rax")
+    ins("jz " + m_dispNext)
+    ins("mov rax, [rax]")
+    let okL = newLabel()
+    for id in ids do
+        ins("cmp rax, " + string(id))
+        ins("je " + okL)
+    ins("jmp " + m_dispNext)
+    label(okL)
+
+mut X86Backend::dispatchCall(sym: string, n: int)
+    let s = mangle(sym)
+    recordExtern(s)
+    ins("mov rdi, " + string(n))
+    ins("mov rsi, rsp")
+    emitCall(s)
+    ins("jmp " + m_dispEnd)
+
+void X86Backend::dispatchCaseEnd()
+    label(m_dispNext)
+
+mut X86Backend::dispatchEnd(n: int)
+    recordExtern("abort")
+    emitCall("abort")
+    label(m_dispEnd)
     ins("add rsp, " + string(n * 16))
 
 // Virtual dispatch: the (tag,value)[] frame is already built (arg 0 = the
@@ -705,6 +881,44 @@ mut X86Backend::cCallEnd(name: string, classes: [string])
 void X86Backend::arrayDataPtr()
     ins("add rax, 16")
 
+// ── C callbacks ───────────────────────────────────────────────────
+//
+//  A Komodo function passed to C rides in as `&km_tramp_<sym>`.  The
+//  trampoline is a native System V AMD64 entry point that repackages its
+//  integer-register arguments as the Komodo call ABI (rdi = argc,
+//  rsi = &KmArg[argc]; each KmArg is {tag, value}, tag 0 = int) and tail-
+//  logically calls the real function, whose result is already in rax.
+//  Integer/pointer arguments only, up to 6 — the analyser enforces it.
+
+void X86Backend::loadFnPtr(sym: string)
+    ins("lea rax, [rel km_tramp_" + sym + "]")
+
+mut X86Backend::emitTrampoline(sym: string, argc: int)
+    let n = argc
+    if n < 0 then
+        n = 0
+    if n > 6 then
+        n = 6
+    label("km_tramp_" + sym)
+    ins("push rbp")
+    ins("mov rbp, rsp")
+    if n > 0 then
+        // n * 16 keeps rsp 16-aligned for the call below
+        ins("sub rsp, " + string(n * 16))
+    let regs = ["rdi", "rsi", "rdx", "rcx", "r8", "r9"]
+    let i = 0
+    while i < n do
+        ins("mov qword [rsp + " + string(i * 16) + "], 0")
+        ins("mov [rsp + " + string(i * 16 + 8) + "], " + regs[i])
+        i += 1
+    ins("mov rdi, " + string(n))
+    ins("mov rsi, rsp")
+    ins("call " + sym)
+    ins("mov rsp, rbp")
+    ins("pop rbp")
+    ins("ret")
+    emit("")
+
 // ── error handling ────────────────────────────────────────────────
 //
 //  `throw msg` — the message pointer is in rax.  `km_throw` never
@@ -792,7 +1006,14 @@ fn X86Backend::intListHas(xs: [int], v: int): bool
     return false
 
 fn X86Backend::footer(): string
-    let r = "\nsection .rodata\n" + m_rodata
+    let r = ""
+    if #m_globals > 0 then
+        r = r + "\nsection .bss\n"
+        let gi = 0
+        while gi < #m_globals do
+            r = r + "KG_" + m_globals[gi] + ": resq 1\n"
+            gi += 1
+    r = r + "\nsection .rodata\n" + m_rodata
     if m_vtabCount > 0 then
         r = r + m_vtblText
         r = r + "__km_vtab: dq "

@@ -9,7 +9,8 @@
 #   komodo -O max file.km             optimize (none|low|medium|max, 0-3)
 #   komodo --strict file.km           enable strict analysis diagnostics
 #   komodo -t stackvm -S file.km      target the stack-VM backend
-#   komodo file.km -- -lSDL2 -Ipath   extra flags/objects for the linker
+#   komodo demos/sdl_window.km        SDL2 is linked automatically (see below)
+#   komodo file.km -- -lfoo -Ipath    extra flags/objects for the linker
 #
 # This is a thin wrapper around the native, self-hosted compiler `kmc`:
 # it drives kmc for the front end, then nasm + gcc for assembly and
@@ -17,15 +18,44 @@
 # (so it still finds kmc/stdlib/ when invoked through a symlink on your
 # PATH — see install.sh) and needs no interpreter at all.
 #
+# ── Build cache ────────────────────────────────────────────────────────
+# Repeated builds are made cheap by a content-addressed cache under
+# $KOMODO_CACHE (default: ${XDG_CACHE_HOME:-~/.cache}/komodo):
+#
+#   fe/   front-end output (<src>.asm/.deps/.links) keyed on the source,
+#         its transitive deps, the target/opt/strict flags and the kmc
+#         binary. A hit skips running kmc entirely.
+#   obj/  each stdlib/*.c compiled once, keyed on its contents + toolchain.
+#         Replaces "recompile every stdlib .c on every build".
+#   bin/  the finished executable, keyed on the exact assembly + link
+#         inputs. A hit skips nasm and gcc entirely.
+#
+# The cache is pure derived data: delete it anytime, or `komodo --clean`.
+# `--no-cache` bypasses it for one run; `--time` prints per-phase timings.
+#
+# ── Automatic linking ─────────────────────────────────────────────────
+# `link` is a real Komodo keyword, valid only inside a module (see
+# stdlib/sdl2.kmm) —
+#
+#     link SDL2                library name  ->  -lSDL2
+#     link "vendor/extra.c"    a path, passed to the linker as-is
+#
+# kmc's own parser enforces where `link` may appear; its driver (main.km)
+# resolves every `link` reachable from the program (same traversal as its
+# `import`s) into ready linker tokens and writes them to <file>.links,
+# which komodo just reads. `--` below is only for one-off extras with no
+# interface file of their own yet — not routine -l flags a library
+# should already be declaring itself.
+#
 set -uo pipefail
 
 # ── resolve our real location (works through a symlink) ──────────────
 self="${BASH_SOURCE[0]}"
 while [[ -L "$self" ]]; do
-    link="$(readlink "$self")"
-    case "$link" in
-        /*) self="$link" ;;
-        *)  self="$(dirname "$self")/$link" ;;
+    dest="$(readlink "$self")"
+    case "$dest" in
+        /*) self="$dest" ;;
+        *)  self="$(dirname "$self")/$dest" ;;
     esac
 done
 here="$(cd "$(dirname "$self")" && pwd)"
@@ -41,22 +71,38 @@ usage: komodo [options] <file.km> [-- <extra linker args>]
   -t, --target <name>   x86 (default) | stackvm
   -O <level>             optimization level: none|low|medium|max, or 0-3
                          (default: none)
-      --strict           enable the analyser's strict-mode diagnostics
+      --strict           turn every analyser warning into a hard error
+                         (bad-practice warnings — `x / 0`, `x == x`,
+                         `x = x`, a constant `if`, unreachable code — are
+                         printed by default; --strict makes them fatal)
   -S, --emit-asm         stop after writing <file>.asm (no assemble/link/run)
   -c, --compile          assemble + link, but do not run the result
   -k, --kmc <path>       use this kmc binary instead of the one alongside
                          komodo (same as $KMC)
+      --no-cache         ignore the build cache for this run (still fills it)
+      --clean            delete the build cache (and <file>'s local
+                         .asm/.o/.deps/.links, if a file is given) and exit
+      --time             print how long each phase took
+  -v, --verbose          echo the nasm / gcc commands as they run
   -q, --quiet            only print the program's own output
   -h, --help             show this help
   -V, --version          show version info
 
-Anything after a literal `--` is passed to the linker (gcc): extra .c /
-.o / .a files, -l flags, -I/-L paths. $KM_CC_INPUTS is read the same way.
+Libraries link themselves: a module may declare `link Name` or
+`link "file.c"` (see stdlib/sdl2.kmm) naming what the linker needs, and
+komodo adds it automatically — no manual -l flags for those.
+
+Anything after a literal `--` is extra, on top of that: .c / .o / .a
+files, -l flags, -I/-L paths for something with no interface file yet.
+$KM_CC_INPUTS is read the same way.
+
+The build cache lives under $KOMODO_CACHE
+(default ${XDG_CACHE_HOME:-~/.cache}/komodo); it is safe to delete.
 
 Examples:
   komodo hello.km
   komodo -O max -o build/app src/main.km
-  komodo demos/sdl_window.km -- -lSDL2
+  komodo demos/sdl_window.km              # -lSDL2 comes from stdlib/sdl2.kmm
 EOF
 }
 
@@ -67,9 +113,15 @@ strict=""
 mode="run"          # run | compile | emit-asm
 out=""
 quiet=0
+verbose=0
+show_time=0
+no_cache=0
+do_clean=0
 kmc="${KMC:-$here/kmc}"
 src=""
 extra_cc=( ${KM_CC_INPUTS:-} )
+
+cache="${KOMODO_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/komodo}"
 
 normalize_opt() {
     case "$1" in
@@ -95,6 +147,10 @@ while [[ $# -gt 0 ]]; do
         -S|--emit-asm) mode="emit-asm"; shift ;;
         -c|--compile) mode="compile"; shift ;;
         -k|--kmc)     kmc="$2"; shift 2 ;;
+        --no-cache)   no_cache=1; shift ;;
+        --clean)      do_clean=1; shift ;;
+        --time)       show_time=1; shift ;;
+        -v|--verbose) verbose=1; shift ;;
         -q|--quiet)   quiet=1; shift ;;
         --)           shift; extra_cc+=( "$@" ); break ;;
         -*)
@@ -112,6 +168,23 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+log()  { [[ $quiet -eq 1 ]] || echo "$@" >&2; }
+vlog() { [[ $verbose -eq 1 ]] && echo "+ $*" >&2; return 0; }
+
+# ── --clean: wipe derived data and leave ───────────────────────────
+if [[ $do_clean -eq 1 ]]; then
+    if [[ -d "$cache" ]]; then
+        rm -rf "$cache" && echo "$prog: removed $cache"
+    else
+        echo "$prog: nothing cached at $cache"
+    fi
+    if [[ -n "$src" ]]; then
+        rm -f "$src.asm" "$src.o" "$src.links" "$src.deps"
+        echo "$prog: removed $src.{asm,o,links,deps}"
+    fi
+    exit 0
+fi
+
 [[ -n "$src" ]] || { usage >&2; exit 2; }
 [[ -f "$src" ]] || { echo "$prog: no such file: $src" >&2; exit 1; }
 [[ -x "$kmc" ]] || { echo "$prog: no native compiler at '$kmc' — build one with ./build-self.sh (or pass -k / set \$KMC)" >&2; exit 1; }
@@ -119,13 +192,97 @@ done
 out="${out:-${src%.km}}"
 asm="$src.asm"
 obj="$src.o"
+linkfile="$src.links"
+depfile="$src.deps"
 
-log() { [[ $quiet -eq 1 ]] || echo "$@" >&2; }
+# ── small helpers ─────────────────────────────────────────────────
+now_ms() { echo $(( $(date +%s%N) / 1000000 )); }
+report() {  # report <label> <start-ms> [note]
+    [[ $show_time -eq 1 ]] || return 0
+    local ms=$(( $(now_ms) - $2 ))
+    printf '  %-11s %5d ms%s\n' "$1" "$ms" "${3:+  $3}" >&2
+}
+sha_file() { sha256sum -- "$1" 2>/dev/null | cut -d' ' -f1; }
+sha_str()  { printf '%s' "$1" | sha256sum | cut -d' ' -f1; }
+
+# A stable id for the parts of the toolchain whose output we cache.
+tool_id="gcc:$(gcc -dumpversion 2>/dev/null)|nasm:$(nasm -v 2>/dev/null | head -1)"
+
+# The whole C runtime (stdlib/*.c + its headers) is a link input on every
+# x86 build. Fold its contents into both the object-cache key and the
+# finished-binary key, so editing any of it invalidates cleanly even when
+# the generated assembly is unchanged.
+stdlib_sig="$(cat "$here"/stdlib/*.c "$here"/stdlib/*.h 2>/dev/null | sha256sum | cut -d' ' -f1)"
+
+cache_ok=0
+if [[ $no_cache -eq 0 ]] && mkdir -p "$cache/fe" "$cache/obj" "$cache/bin" 2>/dev/null; then
+    cache_ok=1
+fi
+
+# kmc resolves every `link` declaration reachable from the program (the
+# real keyword — see stdlib/sdl2.kmm) into ready linker tokens and writes
+# them, one per line, to $linkfile. No scanning on komodo's side.
+read_link_flags() {
+    [[ -f "$linkfile" ]] || return 0
+    local tok
+    while IFS= read -r tok || [[ -n "$tok" ]]; do
+        [[ -n "$tok" ]] && printf '%s\n' "$tok"
+    done < "$linkfile"
+}
 
 # ── 1. Komodo front end + codegen ─────────────────────────────────
-log "compiling $src  (target: $target, -O$opt${strict:+, strict})"
-"$kmc" "$src" "$target" $strict $opt
-[[ -f "$asm" ]] || { echo "$prog: kmc produced no $asm" >&2; exit 1; }
+#
+# Front-end cache key: the source's absolute path + target/opt/strict +
+# the kmc binary's fingerprint. The cached entry also carries a manifest
+# of every file kmc read last time (mtime+size); if the source, any of
+# those deps, or kmc itself is newer, the entry is stale and kmc reruns.
+src_abs="$(cd "$(dirname "$src")" && pwd)/$(basename "$src")"
+kmc_fp="$(stat -c '%Y:%s' -- "$kmc" 2>/dev/null || echo '?')"
+fe_key="$(sha_str "$src_abs|$target|$opt|$strict|kmc=$kmc_fp")"
+fe_asm="$cache/fe/$fe_key.asm"
+fe_links="$cache/fe/$fe_key.links"
+fe_deps="$cache/fe/$fe_key.deps"
+fe_stamp="$cache/fe/$fe_key.manifest"
+
+# Manifest of the current on-disk state of the source + last run's deps.
+# Sorted, so it is a set comparison — kmc lists deps in directory order,
+# which is not stable run to run.
+fe_manifest() {
+    { printf '%s\n' "$src"; [[ -f "$depfile" ]] && cat -- "$depfile"; } \
+    | while IFS= read -r f || [[ -n "$f" ]]; do
+        [[ -n "$f" ]] || continue
+        stat -c '%n	%Y	%s' -- "$f" 2>/dev/null || printf '%s\tMISSING\t0\n' "$f"
+    done | LC_ALL=C sort -u
+}
+
+fe_is_fresh() {
+    [[ $cache_ok -eq 1 && -f "$fe_stamp" && -f "$fe_asm" && -f "$depfile" ]] || return 1
+    diff -q <(fe_manifest) "$fe_stamp" >/dev/null 2>&1
+}
+
+t=$(now_ms)
+if fe_is_fresh; then
+    cp -p "$fe_asm" "$asm"
+    [[ -f "$fe_links" ]] && cp -p "$fe_links" "$linkfile" || rm -f "$linkfile"
+    [[ -f "$fe_deps"  ]] && cp -p "$fe_deps"  "$depfile"
+    log "compiling $src  (target: $target, -O$opt${strict:+, strict}) — cached"
+    report "front end" "$t" "cached"
+else
+    log "compiling $src  (target: $target, -O$opt${strict:+, strict})"
+    vlog "$kmc" "$src" "$target" $strict $opt
+    # kmc's only stdout is a "wrote <file>.asm" progress line; keep stdout
+    # clean (just the program's output in `run` mode, and consistent
+    # whether or not the front end was served from cache).
+    "$kmc" "$src" "$target" $strict $opt 1>&2 || exit 1
+    [[ -f "$asm" ]] || { echo "$prog: kmc produced no $asm" >&2; exit 1; }
+    if [[ $cache_ok -eq 1 ]]; then
+        cp -p "$asm" "$fe_asm"
+        [[ -f "$linkfile" ]] && cp -p "$linkfile" "$fe_links" || rm -f "$fe_links"
+        [[ -f "$depfile"  ]] && cp -p "$depfile"  "$fe_deps"
+        fe_manifest > "$fe_stamp"
+    fi
+    report "front end" "$t"
+fi
 
 if [[ "$mode" == "emit-asm" ]]; then
     exit 0
@@ -135,13 +292,62 @@ if [[ "$target" != "x86" ]]; then
     exit 0
 fi
 
-# ── 2. assemble ────────────────────────────────────────────────────
-nasm -f elf64 "$asm" -o "$obj" || exit 1
+# ── link inputs ───────────────────────────────────────────────────
+mapfile -t auto_cc < <(read_link_flags)
+if [[ $quiet -eq 0 && ${#auto_cc[@]} -gt 0 ]]; then
+    log "auto-linking: ${auto_cc[*]}"
+fi
 
-# ── 3. link ────────────────────────────────────────────────────────
-gcc -no-pie -I"$here/stdlib" -o "$out" "$obj" "$here"/stdlib/*.c \
-    ${extra_cc[@]+"${extra_cc[@]}"} -lm || exit 1
-log "built $out"
+# ── 2+3. assemble + link, or reuse a cached executable ────────────
+#
+# The finished binary is keyed on the exact assembly kmc produced plus
+# every link input (auto + manual) and the toolchain id. A hit means
+# nasm and gcc can both be skipped.
+link_sig="$(printf '%s\n' "${auto_cc[@]:-}" "${extra_cc[@]:-}" | LC_ALL=C sort | sha256sum | cut -d' ' -f1)"
+bin_key="$(sha_str "asm=$(sha_file "$asm")|link=$link_sig|stdlib=$stdlib_sig|$tool_id")"
+bin_hit="$cache/bin/$bin_key"
+
+if [[ $cache_ok -eq 1 && -f "$bin_hit" ]]; then
+    t=$(now_ms)
+    cp -p "$bin_hit" "$out"
+    chmod +x "$out"
+    report "assemble" "$t" "cached"
+    report "link" "$t" "cached"
+    log "built $out (cached)"
+else
+    # 2. assemble
+    t=$(now_ms)
+    vlog nasm -f elf64 "$asm" -o "$obj"
+    nasm -f elf64 "$asm" -o "$obj" || exit 1
+    report "assemble" "$t"
+
+    # 3. link — stdlib/*.c is compiled once into $cache/obj and reused.
+    t=$(now_ms)
+    stdlib_inputs=()
+    if [[ $cache_ok -eq 1 ]]; then
+        for c in "$here"/stdlib/*.c; do
+            oh="$(sha_str "stdlib-obj-v1|$tool_id|stdlib=$stdlib_sig|$(sha_file "$c")")"
+            oo="$cache/obj/$oh.o"
+            if [[ ! -f "$oo" ]]; then
+                vlog gcc -no-pie -I"$here/stdlib" -c "$c" -o "$oo"
+                gcc -no-pie -I"$here/stdlib" -c "$c" -o "$oo.tmp.$$" || exit 1
+                mv -f "$oo.tmp.$$" "$oo"
+            fi
+            stdlib_inputs+=( "$oo" )
+        done
+    else
+        stdlib_inputs=( "$here"/stdlib/*.c )
+    fi
+
+    vlog gcc -no-pie -I"$here/stdlib" -o "$out" "$obj" "${stdlib_inputs[@]}" \
+        ${auto_cc[@]+"${auto_cc[@]}"} ${extra_cc[@]+"${extra_cc[@]}"} -lm
+    gcc -no-pie -I"$here/stdlib" -o "$out" "$obj" "${stdlib_inputs[@]}" \
+        ${auto_cc[@]+"${auto_cc[@]}"} ${extra_cc[@]+"${extra_cc[@]}"} -lm || exit 1
+    report "link" "$t"
+    log "built $out"
+
+    [[ $cache_ok -eq 1 ]] && cp -p "$out" "$bin_hit"
+fi
 
 if [[ "$mode" == "compile" ]]; then
     exit 0
@@ -149,7 +355,9 @@ fi
 
 # ── 4. run ─────────────────────────────────────────────────────────
 log "── running $out ──"
+t=$(now_ms)
 case "$out" in */*|/*) "$out" ;; *) "./$out" ;; esac
 status=$?
+report "run" "$t"
 log "── exit $status ──"
 exit $status

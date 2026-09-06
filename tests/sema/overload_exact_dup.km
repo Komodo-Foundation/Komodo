@@ -1,0 +1,6 @@
+fn f(a: int): int
+    return a
+fn f(b: int): int
+    return b
+void main()
+    print(f(1))

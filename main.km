@@ -46,11 +46,21 @@ void main(args)
     // enough whether `stdlib/` is a subdirectory or holds kmc itself.
     let stdlibProbe = dirOf(selfPath) + "/probe.km"
 
-    let source = gather(fileName, stdlibProbe)
-    let asm = km_compiler::compileOpt(source, target, strict, opt)
+    let gathered = gather(fileName, stdlibProbe)
+    file::write_all(fileName + ".deps", join(gathered.deps, "\n"))
+    file::write_all(fileName + ".links", join(gathered.links, "\n"))
+    let asm = km_compiler::compileOpt(gathered.source, target, strict, opt)
 
     let outputPath = fileName + ".asm"
     km_compiler::save(asm, outputPath)
+
+// `gather`'s result: the merged source, the exact file list it was built
+// from, and every `link` target declared across those files, already
+// resolved to a ready linker token ("-lname", or a quoted path as-is).
+struct GatherResult
+    source: string
+    deps: [string]
+    links: [string]
 
 fn listHas(xs: [string], v: string) : bool
     for x in xs do
@@ -112,13 +122,18 @@ fn moduleOnLine(line: string) : string
 
 // Read `rootPath`, everything reachable from its `import` lines, and —
 // for every module file pulled in — every sibling file declaring that
-// same module (breadth-first, each file once).  All sources joined.
+// same module (breadth-first, each file once).  Returns the sources
+// joined, the exact file list that went into that (for `<rootPath>.deps`),
+// and every `link` target declared across those files (for
+// `<rootPath>.links`) — see `linkTargets` for what that keyword does and
+// design.md's "Standard library" section for the full picture.
 // `stdlibProbe` is a throwaway path inside the compiler's own directory,
 // a second search root for the standard library.
-fn gather(rootPath: string, stdlibProbe: string) : string
+fn gather(rootPath: string, stdlibProbe: string) : GatherResult
     let seen: [string] = []
     let queue: [string] = [rootPath]
     let out = ""
+    let links: [string] = []
 
     while #queue > 0 do
         let p = queue[0]
@@ -138,9 +153,23 @@ fn gather(rootPath: string, stdlibProbe: string) : string
             if resolved != null and not listHas(seen, resolved) then
                 queue += [resolved]
 
-        // 2. merge sibling files of this file's own module
+        // 1b. a block `extern "lib"` links its library automatically, in
+        //     any file (unlike the `link` keyword it needs no `module`).
+        for t in externLinkTargets(src) do
+            if not listHas(links, t) then
+                links += [t]
+
+        // 2. a module file: merge its siblings, and collect its `link`s
+        //    (the parser enforces `link` is module-only too — see
+        //    parser.kmm's `parseLink` — this check is just the driver's
+        //    own, file-precise way to find the same declarations without
+        //    threading the AST back out of the compile).
         let mod = moduleOf(src)
         if mod != "" then
+            for t in linkTargets(src) do
+                if not listHas(links, t) then
+                    links += [t]
+
             let dir = dirOf(p)
             for entry in file::list_dir(dir) do
                 if isSource(entry) then
@@ -148,7 +177,95 @@ fn gather(rootPath: string, stdlibProbe: string) : string
                     if not listHas(seen, sib) and moduleOf(file::read_all(sib)) == mod then
                         queue += [sib]
 
+    return new GatherResult(out, seen, links)
+
+// `link <name>` (a bare identifier → the linker flag `-lname`) or
+// `link "path/to/file.c"` (a quoted path, kept as-is — relative to
+// wherever the compiler is invoked from, exactly like any other gcc
+// argument) on lines of `src`, resolved to ready linker tokens.  Mirrors
+// how the real keyword is parsed (parser.kmm's `parseLink`).
+fn linkTargets(src: string) : [string]
+    let out: [string] = []
+    let i = 0
+    let lineStart = 0
+    while i <= src.length do
+        if i == src.length or src[i] == "\n" then
+            let t = linkOnLine(src[lineStart to i])
+            if t != "" then
+                out += [t]
+            lineStart = i + 1
+        i += 1
     return out
+
+fn linkOnLine(line: string) : string
+    let a = 0
+    while a < line.length and (line[a] == " " or line[a] == "\t") do
+        a += 1
+    let rest = line[a to line.length]
+    if rest.length < 6 then
+        return ""
+    if rest[0 to 5] != "link " then
+        return ""
+    let b = 5
+    while b < rest.length and rest[b] == " " do
+        b += 1
+    if b >= rest.length then
+        return ""
+    if rest[b] == "\"" then
+        let s = b + 1
+        while s < rest.length and rest[s] != "\"" do
+            s += 1
+        return rest[(b + 1) to s]
+    let s = b
+    while s < rest.length and rest[s] != " " and rest[s] != "\r" and rest[s] != "\n" do
+        s += 1
+    return "-l" + rest[b to s]
+
+// Linker tokens from block-`extern "..."` headers.  A bare name becomes
+// `-lname`; a path or flag (contains `/` or `.`, or starts `-`) passes
+// through unchanged, exactly like `link "..."`.  Mirrors the parser's
+// `externLibIsPath`.
+fn externLinkTargets(src: string) : [string]
+    let out: [string] = []
+    let i = 0
+    let lineStart = 0
+    while i <= src.length do
+        if i == src.length or src[i] == "\n" then
+            let t = externOnLine(src[lineStart to i])
+            if t != "" then
+                out += [t]
+            lineStart = i + 1
+        i += 1
+    return out
+
+fn externOnLine(line: string) : string
+    let a = 0
+    while a < line.length and (line[a] == " " or line[a] == "\t") do
+        a += 1
+    let rest = line[a to line.length]
+    if rest.length < 9 then
+        return ""
+    if rest[0 to 7] != "extern " then
+        return ""
+    let b = 7
+    while b < rest.length and rest[b] == " " do
+        b += 1
+    if b >= rest.length or rest[b] != "\"" then
+        return ""
+    let s = b + 1
+    while s < rest.length and rest[s] != "\"" do
+        s += 1
+    let name = rest[(b + 1) to s]
+    if name.length == 0 then
+        return ""
+    if name[0] == "-" then
+        return name
+    let k = 0
+    while k < name.length do
+        if name[k] == "/" or name[k] == "." then
+            return name
+        k += 1
+    return "-l" + name
 
 // Names on `import <name>` lines, in source order.
 fn importNames(src: string) : [string]

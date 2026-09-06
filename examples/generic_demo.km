@@ -1,0 +1,27 @@
+// Implicit-type (generic) functions: a free function with one or more
+// un-annotated parameters is a template.  It is never emitted on its
+// own — each call site classifies its argument types and the compiler
+// monomorphizes a specialized copy.
+
+import console
+
+// `a` / `b` untyped → template.  `add(1, 2)` becomes an integer add,
+// `add("a", "b")` a string concat, `add(1.5, 2.0)` a float add.
+fn add(a, b)
+    return a + b
+
+// mixed: one typed, one untyped
+fn scale(v, k: int)
+    return v * k
+
+// generic that returns a bool-ish comparison
+fn bigger(a, b)
+    return a > b
+
+void main()
+    console.print(add(2, 3))
+    console.print(add("Komo", "do"))
+    console.print(add(1.5, 2.0))
+    console.print(scale(6, 7))
+    console.print(scale("ab", 3))
+    console.print(bigger(10, 4), bigger(2, 9))

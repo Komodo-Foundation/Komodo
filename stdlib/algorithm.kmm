@@ -11,3 +11,13 @@ fn algorithm_min(a: [int]): int
 fn algorithm_index_of(a: [int], v: int): int
 fn algorithm_contains(a: [int], v: int): int
 void algorithm_fill(a: [int], v: int)
+
+// float variants — element words carry IEEE-754 bit patterns.
+void algorithm_sort_f(a: [float])
+fn algorithm_sum_f(a: [float]): float
+fn algorithm_max_f(a: [float]): float
+fn algorithm_min_f(a: [float]): float
+void algorithm_reverse_f(a: [float])
+void algorithm_fill_f(a: [float], v: float)
+fn algorithm_index_of_f(a: [float], v: float): int
+fn algorithm_contains_f(a: [float], v: float): int

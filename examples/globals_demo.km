@@ -1,0 +1,32 @@
+// Top-level `let NAME = EXPR` declares a process-wide variable: one
+// storage slot, visible for read and write to every function.  Its
+// initialiser runs once, in source order, before `main`'s body.
+//
+// `let NAME be EXPR` (see macro_demo) stays a compile-time macro;
+// `let NAME = EXPR` here is a real mutable variable.
+
+import console
+
+let counter = 0
+let label: string = "hits"
+let scale = 2 * 5            // initialiser may be any expression
+let log: [int] = []
+
+fn hit(): int
+    counter = counter + 1   // written from a function
+    log += [counter]
+    return counter
+
+void main()
+    console.print(label, counter, "scale", scale)
+
+    hit()
+    hit()
+    hit()
+    counter += scale        // compound assignment on a global
+
+    console.print(label, counter)
+    console.print("log:", log)
+
+    label = label + "!"     // globals are mutable, any type
+    console.print(label)

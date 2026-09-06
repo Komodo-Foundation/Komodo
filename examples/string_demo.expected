@@ -1,0 +1,19 @@
+trim: [Komodo,Dragon,Lang]
+parts: 3
+  - Komodo
+  - Dragon
+  - Lang
+join: Komodo / Dragon / Lang
+upper: KOMODO,DRAGON,LANG
+lower: komodo,dragon,lang
+replace: x=y=z
+contains Dragon: 1
+starts Komodo: 1
+ends Lang: 1
+index of Dragon: 7
+repeat: ababab
+reverse: edcba
+substring: world
+pad_start: [00042]
+pad_end: [42...]
+length: 6

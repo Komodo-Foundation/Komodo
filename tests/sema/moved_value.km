@@ -1,0 +1,12 @@
+import console
+
+// A `unique` struct has single-owner semantics: binding it elsewhere
+// moves it, and the original name is left with nothing.
+unique struct Handle
+    id: int
+
+void main()
+    let a = new Handle(1)
+    let b = a                       // ownership moves a -> b
+    console.print("b = " + b.id)
+    console.print("a = " + a.id)    // error: `a` was moved away

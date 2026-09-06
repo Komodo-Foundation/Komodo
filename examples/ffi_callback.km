@@ -1,0 +1,16 @@
+// Passing a Komodo function to C as a native callback.
+//
+// `atexit` is plain libc — no library to link, no companion C file.  The
+// compiler emits a System V ABI trampoline for `farewell` and hands its
+// address to `atexit`; the C runtime calls it back after `main` returns.
+
+import console
+
+extern fn atexit(callback: int): int
+
+void farewell()
+    console.print("farewell, from a Komodo callback")
+
+void main()
+    atexit(farewell)
+    console.print("main running")

@@ -1,0 +1,7 @@
+import console
+fn f(a: int): int
+    return a
+fn f(a: string): string
+    return a
+void main()
+    console.print(f(1.5))

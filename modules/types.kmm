@@ -41,20 +41,16 @@ fn tArray(e: Type): Type
 fn tObject(n: string): Type
     return new Type("object", null, n)
 
-fn tNever(): Type
-    return new Type("never")
+let tNever be new Type("never")
 
 // The gradual escape hatch: an un-annotated parameter's type.  `any` is
 // assignable to and from everything, and reading a member / indexing /
 // calling on it yields `any` again.  `strict` mode reports the binding.
-fn tAny(): Type
-    return new Type("any")
+let tAny be new Type("any")
 
-fn tNull(): Type
-    return new Type("null")
+let tNull be new Type("null")
 
-fn tVoid(): Type
-    return new Type("void")
+let tVoid be new Type("void")
 
 // `T?` — idempotent, and `null` / `never` are left unchanged.
 fn tNullable(inner: Type): Type
@@ -116,7 +112,7 @@ fn typeToString(t: Type): string
                 s = s + ", "
             s = s + typeToString(t.members[i])
             i += 1
-        return s + "): " + typeToString(t.ret or tVoid())
+        return s + "): " + typeToString(t.ret or tVoid)
     return t.kind
 
 // The coarse tag the code generator keys off: one of "int", "float",
@@ -199,7 +195,7 @@ fn parseTypeBody(body: string): Type
     if #body >= 2 and body[0] == "[" and body[#body - 1] == "]" then
         return tArray(parseTypeStr(body[1 to (#body - 1)]))
     if body == "any" then
-        return tAny()
+        return tAny
     if isPrimName(body) then
         return tPrim(body)
     return tObject(body)

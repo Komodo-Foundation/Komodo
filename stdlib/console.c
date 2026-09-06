@@ -7,15 +7,25 @@
  * do all the formatting and arity handling.
  */
 #include <stdio.h>
+#include <stdlib.h>
 #include "km_runtime.h"
 
 static void write_arg(FILE *out, KmArg a)
 {
-    switch (a.tag) {
+    /* an array-valued arg packs (leaf, depth) above the base tag — see
+     * km_runtime.h — so dispatch on the low byte, not the raw tag. */
+    char fbuf[64];
+    switch (a.tag & 0xFF) {
     case KM_TAG_INT:   fprintf(out, "%ld", a.value);                 break;
-    case KM_TAG_FLOAT: fprintf(out, "%g", km_as_float(a.value));     break;
+    case KM_TAG_FLOAT: km_fmt_double(fbuf, sizeof fbuf, km_as_float(a.value)); fputs(fbuf, out); break;
     case KM_TAG_STR:   fputs((const char *)a.value, out);            break;
     case KM_TAG_BOOL:  fputs(a.value ? "true" : "false", out);       break;
+    case KM_TAG_ARRAY: {
+        const char *s = km_array_to_string((KmArray *)a.value, (a.tag >> 8) & 0xFF, (a.tag >> 16) & 0xFF);
+        fputs(s, out);
+        free((void *)s);
+        break;
+    }
     default:           fputs("<?>", out);                            break;
     }
 }

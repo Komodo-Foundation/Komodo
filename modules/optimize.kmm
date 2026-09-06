@@ -24,12 +24,10 @@ module km_compiler
 // Widest magnitude we fold to — comfortably inside a signed 64-bit int
 // on the native compiler, so the interpreter and self-hosted builds
 // agree on the result.
-fn FOLD_LIMIT(): int
-    return 1000000000000000000
+let FOLD_LIMIT be 1000000000000000000
 
 // Longest string a `"x" * n` fold is allowed to materialise.
-fn REPEAT_LIMIT(): int
-    return 4096
+let REPEAT_LIMIT be 4096
 
 class Optimizer
 public
@@ -44,6 +42,8 @@ public
             return
         for mac in prog.macros do
             mac.init = foldExpr(mac.init)
+        for g in prog.globals do
+            g.init = foldExpr(g.init)
         for fd in prog.functions do
             optFunction(fd)
         for cl in prog.classes do
@@ -293,7 +293,7 @@ public
         if e.op == "*" and l is StringLiteral and r is IntLiteral and plainStr(l.value) then
             let n = parseIntStr(r.value)
             let bodyLen = l.value.length - 2
-            if n >= 0 and n * bodyLen < REPEAT_LIMIT() then
+            if n >= 0 and n * bodyLen < REPEAT_LIMIT then
                 return mkStr(repeatStr(strBody(l.value), n))
 
         if m_dce then
@@ -324,7 +324,7 @@ public
     // exponentiation in interpreter expression context but XOR natively,
     // so folding them here would bake in a wrong constant.
     fn foldIntInt(op: string, a: int, b: int): Expression?
-        if absGE(a, FOLD_LIMIT()) or absGE(b, FOLD_LIMIT()) then
+        if absGE(a, FOLD_LIMIT) or absGE(b, FOLD_LIMIT) then
             return null
         if op == "+" then
             return guardInt(a + b)
@@ -355,7 +355,7 @@ public
         return null
 
     fn guardInt(v: int): Expression?
-        if v >= FOLD_LIMIT() or v <= (0 - FOLD_LIMIT()) then
+        if v >= FOLD_LIMIT or v <= (0 - FOLD_LIMIT) then
             return null
         return mkInt(v)
 

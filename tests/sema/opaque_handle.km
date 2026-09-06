@@ -1,0 +1,13 @@
+import console
+
+// `extern type` handles are nominal: distinct from int and from each
+// other, and never constructed with `new`.
+extern type Window
+extern type Renderer
+
+extern fn make_window(): Window
+extern void use_renderer(r: Renderer)
+
+void main()
+    let w = make_window()
+    use_renderer(w)          // error: a Window is not a Renderer

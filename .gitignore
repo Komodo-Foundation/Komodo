@@ -4,6 +4,8 @@
 *.asm
 *.o
 *.s
+*.deps
+*.links
 
 # build-self.sh output: the self-hosted compiler, plus `krun.sh main.km`.
 /kmc

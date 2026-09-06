@@ -1,0 +1,7 @@
+import console
+struct Point
+    x: int
+    y: int
+void main()
+    let count = 10
+    console.print(cont)

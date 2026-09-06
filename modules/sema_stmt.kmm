@@ -21,7 +21,7 @@ mut Analyzer::checkFunction(fd: FunctionDecl, owner: string)
     m_curKind = kindOf(fd)
     m_curVoid = (fd.isVoid or fd.returnType == null)
     if m_curVoid then
-        m_curRet = tVoid()
+        m_curRet = tVoid
     else
         m_curRet = parseTypeStr(fd.returnType)
     m_loopDepth = 0
@@ -31,7 +31,7 @@ mut Analyzer::checkFunction(fd: FunctionDecl, owner: string)
         scopeAdd("self", tObject(owner), true)
 
     for p in fd.params do
-        let pt = tAny()
+        let pt = tAny
         if p.declaredType != null then
             pt = parseTypeStr(p.declaredType)
         else
@@ -164,10 +164,12 @@ mut Analyzer::macroRestoreToBase()
 mut Analyzer::checkBlock(stmts: [Statement])
     let mark = macroMark()
     let dead = false
+    let reported = false
     for s in stmts do
-        if dead then
-            warn(s, "unreachable code")
-            dead = true
+        if dead and not reported then
+            // bad practice: a statement can never be reached
+            lint(s, "unreachable code")
+            reported = true
         checkStmt(s)
         if stmtDiverges(s) then
             dead = true
@@ -237,6 +239,36 @@ mut Analyzer::checkVarDecl(s: VarDecl)
     s.resolvedType = typeToLegacy(bound)
     scopeAdd(s.name, bound, false)
 
+    // `let y = x` transfers ownership of a `unique` value out of `x`.
+    if initT != null then
+        consumeMove(s.init, initT)
+
+// Ownership transfer of `e` (whose already-inferred type is `t`).  Only
+// `unique` values move; everything else aliases freely and this is a
+// no-op.  A plain local identifier is marked moved (later reads error);
+// moving a `unique` value out of a field / element / global is rejected
+// outright, since the analyzer tracks ownership per local binding only;
+// a freshly constructed value (`new T(...)`, a call result) has no prior
+// owner to invalidate.
+mut Analyzer::consumeMove(e: Expression?, t: Type)
+    if e == null then
+        return
+    let bt = stripNull(t)
+    if bt.kind != "object" or not isUniqueType(bt.name) then
+        return
+    if e is Identifier then
+        if scopeIndex(e.name) >= 0 then
+            markMoved(e.name, e)
+        else if isCurField(e.name) or isGlobalVar(e.name) then
+            err(e, "cannot move `unique` value out of '" + e.name + "' — it is not a locally owned binding")
+        return
+    if e is MemberExpr then
+        err(e, "cannot move `unique` value of type '" + bt.name + "' out of field '" + e.member + "' — move the value that owns it instead")
+        return
+    if e is IndexExpr then
+        err(e, "cannot move `unique` value of type '" + bt.name + "' out of an array element")
+        return
+
 // A binding with no annotation takes the initialiser's type, but a bare
 // `null` widens to nothing useful — keep it nullable-unknown as int?.
 mut Analyzer::widenForBinding(t: Type): Type
@@ -261,12 +293,31 @@ mut Analyzer::checkAssign(s: AssignStmt)
             checkAssignable(s, curClassFieldType(s.name), vt, "field '" + s.name + "'")
         // `field += v` (array append or numeric) / `field -= v` — permissive,
         // mirrors codegen's two lowerings.
+        consumeMove(s.value, vt)
+        return
+
+    // assignment to a top-level variable (always mutable — no `be` form)
+    if not scopeHas(s.name) and not isCurField(s.name) and isGlobalVar(s.name) then
+        if s.op == "=" then
+            let gt = globalVarType(s.name)
+            checkAssignable(s, gt, vt, "'" + s.name + "'")
+            let rhs = s.value
+            if rhs is Identifier and rhs.name == s.name then
+                lint(s, "self-assignment of '" + s.name + "' has no effect")
+        // `g += v` / `g -= v` — permissive, mirrors codegen.
+        consumeMove(s.value, vt)
         return
 
     if not scopeHas(s.name) then
         err(s, "assignment to undeclared variable '" + s.name + "'")
     if scopeImmut(s.name) then
         err(s, "cannot reassign immutable binding '" + s.name + "' (declared with `be`)")
+
+    // bad practice: `x = x` — a no-op that usually means a typo.
+    if s.op == "=" then
+        let rhs = s.value
+        if rhs is Identifier and rhs.name == s.name then
+            lint(s, "self-assignment of '" + s.name + "' has no effect")
 
     let decl = scopeDeclType(s.name)
     if s.op == "+=" or s.op == "-=" then
@@ -277,6 +328,11 @@ mut Analyzer::checkAssign(s: AssignStmt)
     checkAssignable(s, decl, vt, "'" + s.name + "'")
     // a plain `=` re-widens the binding to (at most) its declared type
     scopeNarrow(s.name, narrowTo(decl, vt))
+    // `y = x` moves a `unique` value out of `x`; the fresh value now in
+    // `y` makes `y` an owner again even if it had been moved away earlier.
+    consumeMove(s.value, vt)
+    if s.op == "=" then
+        reviveBinding(s.name)
 
 mut Analyzer::checkFieldAssign(s: FieldAssignStmt)
     let ot = inferExpr(s.object)
@@ -287,7 +343,7 @@ mut Analyzer::checkFieldAssign(s: FieldAssignStmt)
     if base.kind != "object" or isEnumType(base.name) then
         err(s, "field assignment on a non-object (type '" + typeToString(ot) + "')")
     if not hasField(base.name, s.field) then
-        err(s, "type '" + base.name + "' has no field '" + s.field + "'")
+        err(s, "type '" + base.name + "' has no field '" + s.field + "'" + didYouMean(s.field, fieldNamesOf(base.name)))
     let op = pathOf(s.object)
     if op != "" then
         pathClear(op + "." + s.field)
@@ -295,6 +351,8 @@ mut Analyzer::checkFieldAssign(s: FieldAssignStmt)
     if s.op == "=" then
         checkAssignable(s, fieldReadType(base.name, s.field), vt, "field '" + s.field + "'")
     // `field += v` (append or numeric) / `field -= v` — permissive.
+    // storing into a field takes ownership of a `unique` value
+    consumeMove(s.value, vt)
 
 mut Analyzer::checkIndexAssign(s: IndexAssignStmt)
     let ot = inferExpr(s.object)
@@ -304,6 +362,8 @@ mut Analyzer::checkIndexAssign(s: IndexAssignStmt)
     if s.op == "=" and base.kind == "array" then
         checkAssignable(s, base.elem or tPrim("int"), vt, "array element")
     // `arr[i] += v` (append or numeric) / `arr[i] -= v` — permissive.
+    // storing into an element takes ownership of a `unique` value
+    consumeMove(s.value, vt)
 
 // ── return ────────────────────────────────────────────────────────
 
@@ -315,8 +375,10 @@ mut Analyzer::checkReturn(s: ReturnStmt)
     if s.value == null then
         err(s, "a value function must return a value")
     let vt = inferExpr(s.value)
-    let want = m_curRet or tVoid()
+    let want = m_curRet or tVoid
     checkAssignable(s, want, vt, "return value of '" + m_curFnName + "'")
+    // returning a `unique` value hands ownership to the caller
+    consumeMove(s.value, vt)
 
 // ── control flow with narrowing ───────────────────────────────────
 
@@ -324,14 +386,24 @@ mut Analyzer::checkIf(s: IfStmt)
     let cond = s.cond
     inferExpr(cond)
 
+    // bad practice: a constant `if` condition (`if true` / `if false`)
+    let cw = constTruthWord(cond)
+    if cw != "" then
+        lint(s, "`if` condition is always " + cw)
+
     let snap = scopeSnapshot()
     let pm = pathMark()
     let ps = pathSnap()
+    // ownership state entering the `if` — each arm starts from here, and
+    // the state after the `if` is the union of the arms that fall through.
+    let mPre = movedSnapshot()
     applyNarrowing(cond, true)
     checkBlock(s.thenBody)
     let thenDiverges = blockDiverges(s.thenBody)
+    let mThen = movedSnapshot()
     scopeApply(snap)
     pathRestore(pm, ps)
+    movedApply(mPre)
 
     if #s.elseBody > 0 then
         let snap2 = scopeSnapshot()
@@ -340,8 +412,16 @@ mut Analyzer::checkIf(s: IfStmt)
         applyNarrowing(cond, false)
         checkBlock(s.elseBody)
         let elseDiverges = blockDiverges(s.elseBody)
+        let mElse = movedSnapshot()
         scopeApply(snap2)
         pathRestore(pm2, ps2)
+        let aArm = mPre
+        if not thenDiverges then
+            aArm = mThen
+        let bArm = mPre
+        if not elseDiverges then
+            bArm = mElse
+        movedApply(movedUnion(aArm, bArm))
         // both sides restored; if exactly one arm fell through, keep its
         // guard-implied narrowing for the rest of the block
         if thenDiverges and not elseDiverges then
@@ -351,6 +431,8 @@ mut Analyzer::checkIf(s: IfStmt)
     else
         if thenDiverges then
             applyNarrowing(cond, false)
+        else
+            movedApply(movedUnion(mPre, mThen))
 
 mut Analyzer::checkWhile(s: WhileStmt)
     inferExpr(s.cond)
@@ -358,10 +440,13 @@ mut Analyzer::checkWhile(s: WhileStmt)
     let snap = scopeSnapshot()
     let pm = pathMark()
     let ps = pathSnap()
+    let mPre = movedSnapshot()
     applyNarrowing(s.cond, true)
     checkBlock(s.body)
+    let mBody = movedSnapshot()
     scopeApply(snap)
     pathRestore(pm, ps)
+    movedApply(movedUnion(mPre, mBody))
     m_loopDepth -= 1
 
 mut Analyzer::checkFor(s: ForStmt)
@@ -372,9 +457,12 @@ mut Analyzer::checkFor(s: ForStmt)
     let snap = scopeSnapshot()
     let pm = pathMark()
     let ps = pathSnap()
+    let mPre = movedSnapshot()
     checkBlock(s.body)
+    let mBody = movedSnapshot()
     scopeApply(snap)
     pathRestore(pm, ps)
+    movedApply(movedUnion(mPre, mBody))
     m_loopDepth -= 1
 
 mut Analyzer::checkForIn(s: ForInStmt)
@@ -382,7 +470,7 @@ mut Analyzer::checkForIn(s: ForInStmt)
     let base = stripNull(it)
     let elem = tPrim("int")
     if base.kind == "any" then
-        elem = tAny()
+        elem = tAny
     else if base.kind == "array" then
         elem = base.elem or tPrim("int")
     else if base.kind == "string" then
@@ -394,24 +482,38 @@ mut Analyzer::checkForIn(s: ForInStmt)
     let snap = scopeSnapshot()
     let pm = pathMark()
     let ps = pathSnap()
+    let mPre = movedSnapshot()
     checkBlock(s.body)
+    let mBody = movedSnapshot()
     scopeApply(snap)
     pathRestore(pm, ps)
+    movedApply(movedUnion(mPre, mBody))
     m_loopDepth -= 1
 
 mut Analyzer::checkMatch(s: MatchStmt)
     let subjT = inferExpr(s.subject)
     let hasDefault = false
     let covered: [string] = []
+    // each arm branches from the ownership state at the `match`; the state
+    // after is the union over the arms that fall through (plus the entry
+    // state, for the implicit no-match path).
+    let mPre = movedSnapshot()
+    let mAcc = mPre
     for c in s.cases do
         if c.isDefault then
             hasDefault = true
+        movedApply(mPre)
         let pat = c.pattern
-        if pat != null then
+        if pat is StructPattern then
+            checkStructPattern(pat, subjT)
+        else if pat != null then
             inferExpr(pat)
             if pat is Identifier then
                 covered += [pat.name]
         checkBlock(c.body)
+        if not blockDiverges(c.body) then
+            mAcc = movedUnion(mAcc, movedSnapshot())
+    movedApply(mAcc)
 
     let base = stripNull(subjT)
     let allCovered = false
@@ -425,6 +527,42 @@ mut Analyzer::checkMatch(s: MatchStmt)
                 err(s, "match on enum '" + base.name + "' is not exhaustive — missing: " + missing)
 
     s.exhaustive = hasDefault or allCovered
+
+// `case Type(field: <lit>, field: bind, …)` — a struct-destructuring arm.
+// The subject must be in `Type`'s hierarchy; each named field must exist;
+// a literal sub-pattern must be comparable to the field; a binding
+// introduces an (immutable) local of the field's type for the whole
+// match.  v1: no nested struct sub-patterns, and `float` fields cannot be
+// bound or literal-matched (the compare / slot paths are int/word only).
+mut Analyzer::checkStructPattern(p: StructPattern, subjT: Type)
+    let pn = p.typeName
+    if not isObjType(pn) or isEnumType(pn) then
+        err(p, "struct pattern names unknown type '" + pn + "'" + didYouMean(pn, typeCandidates()))
+    if isExternType(pn) then
+        err(p, "cannot destructure the opaque handle type '" + pn + "' in a pattern")
+    let sb = stripNull(subjT)
+    if sb.kind != "object" or isEnumType(sb.name) then
+        err(p, "struct pattern '" + pn + "(…)' used on non-struct subject of type '" + typeToString(subjT) + "'")
+    let sn = sb.name
+    if not (pn == sn or isDescendantOf(pn, sn) or isDescendantOf(sn, pn)) then
+        err(p, "struct pattern type '" + pn + "' is unrelated to subject type '" + sn + "'")
+    let seen: [string] = []
+    for fp in p.fields do
+        if listHas(seen, fp.field) then
+            err(p, "field '" + fp.field + "' named twice in pattern '" + pn + "'")
+        seen += [fp.field]
+        if not hasField(pn, fp.field) then
+            err(p, "type '" + pn + "' has no field '" + fp.field + "'" + didYouMean(fp.field, fieldNamesOf(pn)))
+        let ft = fieldReadType(pn, fp.field)
+        let fb = stripNull(ft)
+        if fb.kind == "float" then
+            err(p, "struct pattern cannot match on `float` field '" + fp.field + "' yet")
+        if fp.lit != null then
+            let lt = inferExpr(fp.lit)
+            if not (isAssignable(ft, lt) or isAssignable(lt, ft)) then
+                err(p, "pattern for field '" + fp.field + "': literal of type '" + typeToString(lt) + "' is not comparable to field type '" + typeToString(ft) + "'")
+        if fp.bind != "" then
+            scopeAdd(fp.bind, ft, true)
 
 // Comma-joined enum variants of `enumName` not present in `covered`.
 mut Analyzer::enumMissing(enumName: string, covered: [string]): string
@@ -499,7 +637,7 @@ mut Analyzer::applyNarrowing(cond: Expression?, sense: bool)
             if nm != "" then
                 let isNullBranch = (cond.op == "==") == sense
                 if isNullBranch then
-                    narrowKey(nm, tNull())
+                    narrowKey(nm, tNull)
                 else
                     narrowKeyNonNull(nm)
             return

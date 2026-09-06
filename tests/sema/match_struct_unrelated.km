@@ -1,0 +1,9 @@
+struct P
+    x: int
+struct Z
+    y: int
+void main()
+    let p = new P(1)
+    match p
+        case Z(y: 1)
+            print(1)
