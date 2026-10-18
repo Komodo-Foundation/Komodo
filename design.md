@@ -51,19 +51,37 @@ only, for keeping the implementation and sample code coherent.
 
 | Kind    | Examples |
 |---------|----------|
-| int     | `0`, `42`, `256` |
+| int     | `0`, `42`, `256`, `0xFF` (hex) |
 | float   | `2.0`, `3.14`, `2.0f`, `2f` (trailing `f` forces float) |
 | string  | `"hi"`, `"a\nb"` (backslash escapes) |
+| interp. string | `` `x = {a + 1}` `` — backtick-delimited; each `{expr}` is spliced in as `string(expr)` |
 | char    | `'a'`, `'\n'` |
 | bool    | `true`, `false` |
 | null    | `null` |
 | array   | `[]`, `[4, 15, 8]` |
 | range   | `a to b` (usable as a value) |
 
+An **interpolated string** is written with backticks: `` `Score {n}` ``. The
+lexer rewrites it in place to `("Score " + string(n) + "")` — an ordinary
+concatenation the rest of the pipeline never sees as special, so `{…}` may
+hold any expression (`` `{a > b and "hi" or "lo"}` ``) and the result is a
+plain `string`. Inside the text the usual `\n` / `\t` / `\\` escapes work,
+a literal backtick is `\` + `` ` ``, and `\{` / `\}` write literal braces.
+There is no format-spec syntax; a `float` prints in `string(x)`'s `%g`
+form, so round it first if you want fixed decimals.
+
 ## Types
 
 - Primitives: `int`, `uint`, `float`, `bool`, `string`, `char`.
 - Fixed-width integer containers: `u8`/`u16`/`u32`/`u64`, `i8`/`i16`/`i32`/`i64`.
+- Fixed-width floats: `f64` (a spelling of `float`) and **`f32`**. An `f32`
+  is arithmetically identical to `float` everywhere inside Komodo — it is
+  held and computed as a 64-bit double, shares every code path, and
+  `f32`↔`float`↔`int` mix freely. Its 32-bit width matters only at a
+  boundary: a `struct` field declared `f32` occupies 4 bytes in the C
+  layout used for a by-value FFI argument (see *Foreign functions*), and
+  an `extern` parameter / return typed `f32` binds a C `float` (not
+  `double`). Use it to mirror a C struct like raylib's `Vector3`.
 - Array: `[T]` (e.g. `[int]`, `[[Token]]`).
 - Nullable: `T?` (e.g. `char?`, `string?`, `Expression?`).
 - Annotations are written `name: Type`, after params, vars, members, and as
@@ -390,7 +408,9 @@ extern "SDL2"                       // a block: one library, many decls
   `(tag,value)[]` ABI):
   - integer / pointer / `string` / handle args fill `rdi, rsi, rdx, rcx,
     r8, r9`, then spill to the stack — any number of arguments;
-  - `float` args fill `xmm0..7`, then spill;
+  - `float` args fill `xmm0..7`, then spill; a Komodo `float` is a
+    64-bit IEEE double, so the C prototype it binds to must say `double`
+    (not `float`) for every such parameter and for a `: float` return;
   - `al` is set to the number of xmm registers used, so C varargs
     (`printf`, …) work;
   - `: float` return type comes back in `xmm0`; any other return type
@@ -405,8 +425,28 @@ extern "SDL2"                       // a block: one library, many decls
 - `data(arr)` — the element pointer of a Komodo array, for passing a
   writable buffer / out-param to C (e.g. `SDL_PollEvent(data(ev))`). Read
   results back with ordinary `arr[i]`.
-- Not supported: passing/returning structs by value; `float` in a callback
-  signature; a callback with more than 6 parameters.
+- **Structs by value — `copy(x)`.** An `extern` argument written
+  `copy(structVal)` is passed *by value*: the compiler repacks the
+  Komodo object (one 8-byte slot per field) into the tight C layout its
+  declared field types imply — `f32`→4 bytes, `i32`/`u32`→4, `u8`→1,
+  `float`/`int`→8 — in a static scratch buffer, then places it per the
+  System V AMD64 aggregate rules:
+  - ≤ 8 bytes → one eightbyte; ≤ 16 → two. Each eightbyte is SSE (an
+    `xmm` register) when every field in it is floating-point, otherwise
+    INTEGER (a GP register); it spills to the stack when the register
+    file is full. So `Vector2`→one `xmm`, `Vector3`→two `xmm`,
+    `Color{u8×4}`→one GP reg, `Rectangle`→two `xmm`.
+  - 17–192 bytes → MEMORY class: the whole aggregate goes in the stack
+    argument area, consuming no registers (this is how a 44-byte
+    `Camera3D` or a 64-byte `Matrix` is passed).
+  An `extern fn` whose declared **return** type is such a struct (≤ 16
+  bytes) is unpacked from `rax:rdx` / `xmm0:xmm1` into a fresh Komodo
+  object. A struct argument *without* `copy(...)` still passes the bare
+  handle as a pointer (for a `T*` parameter), as before. Nested struct
+  fields, arrays, and MEMORY-class returns are not supported; see
+  `stdlib/raylib.kmm` for a shim-free binding built on this.
+- Not supported in a callback: `float` in the signature; more than 6
+  parameters.
 - With `build.sh` (the interpreter path) pass link flags after the output
   name — `./build.sh app.km x86 ./app -lSDL2`; the `komodo` CLI reads
   `<file>.links` and needs none.
@@ -418,6 +458,10 @@ A handful of names the compiler lowers directly (no `import`, no library):
 - `print(...)` — write values. A `float` argument is shown in `%g` form
   with a trailing `.0` kept when integral.
 - `string(x)` — convert any value to its text form (same `float` rule).
+- `int(x)` — narrow a number to a 64-bit signed integer: a `float` /
+  `f32` is truncated toward zero (`cvttsd2si`), an integer-class value
+  passes through unchanged. This is the sanctioned float→int conversion;
+  a plain assignment / return stays width-checked and rejects it.
 - `join(parts, sep)` — concatenate a `[string]` with `sep` between, in
   one pass (avoids the O(n²) churn of repeated `s = s + line`).
 - `data(arr)` — an array's element pointer, for handing a buffer to C.
@@ -474,9 +518,16 @@ extern fn SDL_Init(flags: int): int
 ```
 
 - `link Name` — a bare identifier — becomes the linker flag `-lName`.
-- `link "path/to/file.c"` — a quoted string — is passed to the linker
-  as-is (relative to wherever the compiler is invoked from), for a
-  companion source file rather than an installed system library.
+  When a `Name.pc` exists, the `komodo` CLI expands it through
+  `pkg-config` — both `--static --libs` (the `-L` prefix and every
+  private transitive dependency) and `--cflags` (the `-I` for a
+  headers-in-a-prefix install), so a module's companion C shim can
+  `#include <lib.h>`.
+- `link "path/to/file.c"` — a quoted string — names a companion source
+  file rather than an installed system library. It is resolved against
+  the directory of the module file that declared it (unless already
+  absolute), so a library can ship its C shim next to its `.kmm` and
+  still be `import`ed from any directory.
 
 `kmc`'s driver resolves every `link` reachable from a program (the same
 traversal it uses for `import`) into ready linker tokens and writes them

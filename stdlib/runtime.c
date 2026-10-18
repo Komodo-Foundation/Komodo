@@ -191,7 +191,10 @@ KmArray *km_array_repeat(KmArray *a, long n)
 const char *km_str_slice(const char *s, long start, long end)
 {
     if (!s) s = "";
-    long n = (long)strlen(s);
+    /* Only measure as far as `end`: a short slice of a long string (a
+     * lexer cutting tokens out of its source) must not cost a full
+     * strlen each time. */
+    long n = end < 0 ? (long)strlen(s) : (long)strnlen(s, (size_t)end);
     if (end < 0 || end > n)
         end = n;
     if (start < 0)
@@ -240,7 +243,9 @@ long km_str_len(const char *s)
 /* `a == b` */
 long km_str_eq(const char *a, const char *b)
 {
-    if (!a || !b) return a == b;
+    if (a == b) return 1;           /* same pointer (interned literal / char) */
+    if (!a || !b) return 0;
+    if (*a != *b) return 0;         /* most mismatches differ at byte 0 */
     return strcmp(a, b) == 0;
 }
 
@@ -350,13 +355,22 @@ int main(int argc, char **argv)
 }
 
 /* `s[i]` — a fresh one-character string (a Komodo `char`). */
+/* `s[i]` — a one-character string.  Strings are immutable and never
+ * freed, so every result is drawn from one static table of the 256
+ * possible single-byte strings instead of a fresh 2-byte malloc per
+ * index (a lexer indexes every byte of its input).  Byte 0 maps to "". */
+static char km_char_strs[256][2];
+static int km_char_strs_ready;
+
 const char *km_str_char(const char *s, long i)
 {
     if (!s) return "";
-    char *out = malloc(2);
-    out[0] = s[i];
-    out[1] = '\0';
-    return out;
+    if (!km_char_strs_ready) {
+        for (int c = 0; c < 256; c++)
+            km_char_strs[c][0] = (char)c;
+        km_char_strs_ready = 1;
+    }
+    return km_char_strs[(unsigned char)s[i]];
 }
 
 /* `s1 <op> s2` ordering — like C strcmp. */
@@ -365,4 +379,35 @@ long km_str_cmp(const char *a, const char *b)
     if (!a) a = "";
     if (!b) b = "";
     return strcmp(a, b);
+}
+
+/* FNV-1a over the bytes of `s`, masked non-negative — the hash behind
+ * the compiler's name indexes (modules/support/strindex.kmm). */
+long km_str_hash(const char *s)
+{
+    unsigned long h = 1469598103934665603UL;
+    if (s)
+        for (; *s; s++)
+            h = (h ^ (unsigned char)*s) * 1099511628211UL;
+    return (long)(h & 0x7fffffffffffffffUL);
+}
+
+/* `s[start to end]` for a caller that already knows `n == #s` — the same
+ * clamping as km_str_slice, without re-measuring `s`.  The lexer cuts
+ * every token out of a source of hundreds of KB; measuring up to `end`
+ * each time made that quadratic. */
+const char *km_str_sub(const char *s, long n, long start, long end)
+{
+    if (!s) { s = ""; n = 0; }
+    if (end < 0 || end > n)
+        end = n;
+    if (start < 0)
+        start = 0;
+    if (start > end)
+        start = end;
+    long len = end - start;
+    char *out = malloc((size_t)len + 1);
+    memcpy(out, s + start, (size_t)len);
+    out[len] = '\0';
+    return out;
 }

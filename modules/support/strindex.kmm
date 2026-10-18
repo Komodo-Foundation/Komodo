@@ -1,0 +1,60 @@
+module km_compiler
+
+// ═══════════════════════════════════════════════════════════════════════
+//  StrIndex — a string → position hash index over a parallel name list.
+//
+//  The analyser and code generator keep their registries (functions,
+//  types) as parallel arrays and used to find a name by walking the
+//  list with `==`.  With a few thousand functions and a lookup per call
+//  site that linear scan was the largest cost left in a compile.  A
+//  StrIndex sits beside such a list: `add(name, i)` whenever `name` is
+//  appended at position `i`, then `first(name)` / `all(name)` answer in
+//  ~O(1).  Positions come back in insertion order, so `first` matches
+//  the old "first index whose name is equal" scan exactly — overloads
+//  (several entries for one name) keep working through `all`.
+//
+//  Hashing is a C helper (`km_str_hash`, stdlib/runtime.c); buckets are
+//  a fixed power-of-two table of position lists.
+// ═══════════════════════════════════════════════════════════════════════
+
+extern fn km_str_hash(s: string): int
+
+class StrIndex
+public
+    constructor()
+        let i = 0
+        while i < 1024 do
+            m_buckets += [[]]
+            i += 1
+
+    // Record that `key` sits at position `pos` of the indexed list.
+    mut add(key: string, pos: int)
+        let h = km_str_hash(key) % 1024
+        let b = m_buckets[h]
+        b += [#m_keys]
+        m_buckets[h] = b
+        m_keys += [key]
+        m_pos += [pos]
+
+    // The first position recorded for `key`, or -1.
+    mut first(key: string): int
+        for e in m_buckets[km_str_hash(key) % 1024] do
+            if m_keys[e] == key then
+                return m_pos[e]
+        return 0 - 1
+
+    // Every position recorded for `key`, in insertion order.
+    mut all(key: string): [int]
+        let out: [int] = []
+        for e in m_buckets[km_str_hash(key) % 1024] do
+            if m_keys[e] == key then
+                out += [m_pos[e]]
+        return out
+
+    mut has(key: string): bool
+        return first(key) >= 0
+
+private
+    m_buckets: [[int]] = []
+    m_keys: [string] = []
+    m_pos: [int] = []

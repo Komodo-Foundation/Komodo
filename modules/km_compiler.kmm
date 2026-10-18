@@ -54,13 +54,24 @@ fn compileWith(source: string, target: string, strict: bool): string
 
 // `opt` is one of "none" / "low" / "medium" / "max" — see optimize.kmm.
 fn compileOpt(source: string, target: string, strict: bool, opt: string): string
+    return compileMapped(source, target, strict, opt, [], [])
+
+// `compileOpt` for a source that is several files merged end to end:
+// `files[k]` begins at line `starts[k]` of `source`.  Diagnostics are
+// then reported against the original file (`locate`), and a parse error
+// is given the position of the token the parser stopped at.
+fn compileMapped(source: string, target: string, strict: bool, opt: string, files: [string], starts: [int]): string
     let lexer = new Lexer(source)
     let tokens = lexer.tokenize()
 
     let parser = new Parser(tokens)
-    let ast = parser.parseProgram()
+    let parsed = parser.parseProgram()?
+    if parsed == null then
+        throw (parser.position() + ": " + (km_error_message() or "parse error"))
+    let ast: Program = parsed
 
     let analyzer = new Analyzer(strict)
+    analyzer.setSourceMap(files, starts)
     analyzer.analyze(ast)
 
     let optimizer = new Optimizer(opt)
@@ -68,6 +79,41 @@ fn compileOpt(source: string, target: string, strict: bool, opt: string): string
 
     let gen = new Codegen(selectBackend(target))
     return gen.compileProgram(ast)
+
+extern fn km_error_message(): string?
+
+// Rewrite a leading "LINE:COL: " (a line of the merged translation
+// unit) as "file:line:COL: " in the file that line came from.  A
+// message without that prefix, or an empty map, comes back unchanged.
+fn locate(msg: string, files: [string], starts: [int]): string
+    if #files == 0 then
+        return msg
+    let n = msg.length
+    let i = 0
+    let line = 0
+    while i < n and msg[i] >= "0" and msg[i] <= "9" do
+        line = line * 10 + digitVal(msg[i])
+        i += 1
+    if i == 0 or i >= n or msg[i] != ":" then
+        return msg
+    let k = 0
+    let at = 0 - 1
+    while k < #starts do
+        if starts[k] <= line then
+            at = k
+        k += 1
+    if at < 0 then
+        return msg
+    return files[at] + ":" + string(line - starts[at] + 1) + msg[i to n]
+
+fn digitVal(c: char): int
+    let d = "0123456789"
+    let j = 0
+    while j < 10 do
+        if d[j] == c then
+            return j
+        j += 1
+    return 0
 
 // The one place that knows the set of targets.  Add a case here after
 // writing a new `<T>Backend : Backend`.

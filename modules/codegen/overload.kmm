@@ -35,6 +35,8 @@ mut Codegen::normParamType(t: string?): string
     let s = stripOpt(t)
     if s == null then
         return "any"
+    if s == "f32" or s == "f64" then
+        return "float"
     if s == "float" or s == "string" or s == "bool" then
         return s
     if isObjType(s) then
@@ -52,13 +54,7 @@ mut Codegen::paramSig(func: FunctionDecl): [string]
     return out
 
 mut Codegen::countSourceName(name: string): int
-    let n = 0
-    let i = 0
-    while i < #m_fnNames do
-        if m_fnNames[i] == name then
-            n += 1
-        i += 1
-    return n
+    return #m_fnIdx.all(name)
 
 fn Codegen::overloadSym(name: string, sig: [string]): string
     let s = name + "__ov" + string(#sig)
@@ -94,11 +90,9 @@ mut Codegen::sigsEqual(a: [string], b: [string]): bool
 // exactly `argc` parameters.
 mut Codegen::arityCandidates(name: string, argc: int): [int]
     let out: [int] = []
-    let i = 0
-    while i < #m_fnNames do
-        if m_fnNames[i] == name and m_fnArity[i] == argc then
+    for i in m_fnIdx.all(name) do
+        if m_fnArity[i] == argc then
             out += [i]
-        i += 1
     return out
 
 // How well argument `a` fits a parameter normalized to `p`:
@@ -367,12 +361,10 @@ fn Codegen::retAnnot(rt: string): string?
     return "int"
 
 mut Codegen::lookupRet(sym: string): string
-    let i = 0
-    while i < #m_fnNames do
-        if m_fnNames[i] == sym then
-            return m_fnRets[i]
-        i += 1
-    return "int"
+    let i = m_fnIdx.first(sym)
+    if i < 0 then
+        return "int"
+    return m_fnRets[i]
 
 // Ensure a monomorphized instance of template `name` specialized to
 // `argTypes` is registered and queued for emission; return its symbol.
@@ -404,11 +396,14 @@ mut Codegen::ensureInstance(name: string, argTypes: [string]): string
     let rtStore = rt
     if rt == "" or rt == "void" then
         rtStore = "int"
+    m_fnIdx.add(sym, #m_fnNames)
     m_fnNames += [sym]
     m_fnRets += [rtStore]
+    m_fnRetRaw += [rtStore]
     m_fnKinds += [funcKind(inst)]
     m_fnArity += [#ps]
     m_fnSigs += [paramSig(inst)]
+    m_fnRawParams += [rawParamList(inst)]
     m_fnLink += [sym]
     m_backend.declareFn(sym)
     m_genQueue += [inst]

@@ -36,6 +36,12 @@ class Analyzer
 public
     constructor(strict: bool)
         m_strict = strict
+        m_typeIdx = new StrIndex()
+        m_fnIdx = new StrIndex()
+
+    mut setSourceMap(files: [string], starts: [int])
+        m_srcFiles = files
+        m_srcStarts = starts
 
     mut analyze(prog: Program)
         // ── Pass 0: register enums, then types parent-before-child ──
@@ -64,7 +70,7 @@ public
                 if not hasFn(fd.name) then
                     registerFn(fd.name, "", fd)
                 continue
-            if (fd.name in m_fnNames) then
+            if hasFn(fd.name) then
                 err(fd, "duplicate function '" + fd.name + "'")
             registerFn(fd.name, "", fd)
         for cl in prog.classes do
@@ -97,7 +103,7 @@ public
 
         // non-fatal bad-practice warnings, in source order
         for w in m_lints do
-            print(w)
+            print(locate(w, m_srcFiles, m_srcStarts))
 
         prog.analyzed = true
         prog.usesCopy = m_usesCopy
@@ -225,6 +231,7 @@ public
     mut registerEnum(en: EnumDecl)
         if (en.name in m_typeNames) then
             err(en, "duplicate type '" + en.name + "'")
+        m_typeIdx.add(en.name, #m_typeNames)
         m_typeNames += [en.name]
         m_typeIsClass += [false]
         m_typeIsEnum += [true]
@@ -293,6 +300,7 @@ public
             allTypes += [ftypes[k]]
             allDef += [fdef[k]]
             k += 1
+        m_typeIdx.add(name, #m_typeNames)
         m_typeNames += [name]
         m_typeIsClass += [isClass]
         m_typeIsEnum += [false]
@@ -307,12 +315,7 @@ public
         m_enumVariants += [[]]
 
     mut typeIndex(name: string): int
-        let i = 0
-        while i < #m_typeNames do
-            if m_typeNames[i] == name then
-                return i
-            i += 1
-        return 0 - 1
+        return m_typeIdx.first(name)
 
     mut isObjType(name: string): bool
         return typeIndex(name) >= 0
@@ -442,6 +445,7 @@ public
     // ── function-signature registry ──────────────────────────────
 
     mut registerFn(sym: string, owner: string, fd: FunctionDecl)
+        m_fnIdx.add(sym, #m_fnNames)
         m_fnNames += [sym]
         m_fnOwner += [owner]
         let ptypes: [string] = []
@@ -484,12 +488,7 @@ public
         return "fn"
 
     mut fnIndex(sym: string): int
-        let i = 0
-        while i < #m_fnNames do
-            if m_fnNames[i] == sym then
-                return i
-            i += 1
-        return 0 - 1
+        return m_fnIdx.first(sym)
 
     mut hasFn(sym: string): bool
         return fnIndex(sym) >= 0
@@ -978,11 +977,15 @@ public
 
 private
     m_strict: bool = false
+    // merged-source line map, for reporting warnings per file (`locate`)
+    m_srcFiles: [string] = []
+    m_srcStarts: [int] = []
     // non-fatal warnings collected during analysis (see `lint`)
     m_lints: [string] = []
 
-    // type registry
+    // type registry (`m_typeIdx` hashes m_typeNames — see StrIndex)
     m_typeNames: [string] = []
+    m_typeIdx: StrIndex
     m_typeIsClass: [bool] = []
     m_typeIsEnum: [bool] = []
     m_typeIsAbstract: [bool] = []
@@ -1000,8 +1003,9 @@ private
     m_templateNames: [string] = []
     m_overloadNames: [string] = []
 
-    // function-signature registry
+    // function-signature registry (`m_fnIdx` hashes m_fnNames)
     m_fnNames: [string] = []
+    m_fnIdx: StrIndex
     m_fnOwner: [string] = []
     m_fnParamTypes: [[string]] = []
     m_fnRet: [string] = []

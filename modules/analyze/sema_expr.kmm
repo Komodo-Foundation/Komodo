@@ -246,7 +246,7 @@ mut Analyzer::unify(a: Type, b: Type): Type
     if typeToString(a) == typeToString(b) then
         return a
     if isNumeric(a) and isNumeric(b) then
-        if a.kind == "float" or b.kind == "float" then
+        if isFloatKind(a.kind) or isFloatKind(b.kind) then
             return tPrim("float")
         return tPrim("int")
     // fall back to the left side's shape (value-select keeps a value)
@@ -277,6 +277,18 @@ mut Analyzer::inferCall(e: CallExpr): Type
         for a in e.args do
             inferExpr(a)
         return tPrim("string")
+
+    // `int(x)` — numeric narrowing to a 64-bit signed integer.  A
+    // `float` / `f32` argument is truncated toward zero; an integer
+    // argument passes straight through.  This is the one sanctioned
+    // float→int conversion (plain assignment stays width-checked).
+    if e.name == "int" then
+        if #e.args != 1 then
+            err(e, "'int' takes exactly one argument")
+        let it = stripNull(inferExpr(e.args[0]))
+        if not isNumeric(it) and it.kind != "bool" and it.kind != "char" and it.kind != "any" then
+            err(e, "'int' expects a number, got '" + typeToString(it) + "'")
+        return tPrim("int")
 
     // `join(parts, sep)` — [string] joined into one string.
     if e.name == "join" then
@@ -312,6 +324,16 @@ mut Analyzer::inferCall(e: CallExpr): Type
         let meth = e.name[(dot + 1) to e.name.length]
         if isMethodReceiver(recv) then
             return inferMethodCall(e, recv, meth)
+        // `recv` is a value in scope (a local or a field of the current
+        // class) whose type is *not* an object — so `recv.meth(...)` is a
+        // method call on an array / string / primitive, and there is no
+        // such method. Caught here on purpose: otherwise the dotted name
+        // slips through to the module-qualified path below, is mangled to
+        // `recv_meth`, matches no declaration, is left unchecked, and only
+        // fails as `undefined reference to recv_meth` at link time.
+        if scopeHas(recv) or isCurField(recv) then
+            let rt = receiverType(recv)
+            err(e, "type '" + rt + "' has no method '" + meth + "'" + methodHint(rt, meth))
         // a module-qualified call — `console.print`, `math.sqrt`.  The
         // linked symbol is the "_"-joined form; if a declaration for it
         // was imported (stdlib/*.kmm, or any library), type-check against
@@ -457,9 +479,15 @@ mut Analyzer::checkArgs(node: ASTNode, name: string, params: [string], argTs: [T
 mut Analyzer::cAbiCompatible(want: Type, got: Type): bool
     let w = stripNull(want)
     let g = stripNull(got)
-    if w.kind == "float" then
-        return g.kind == "float" or isNumeric(g)
-    if g.kind == "float" then
+    // A struct-typed parameter: the caller passes either a pointer (the
+    // bare handle, today's behaviour) or the aggregate by value when the
+    // argument is written `copy(x)` — codegen picks the path.  Either way
+    // the same struct type (or a subtype) is what's expected.
+    if w.kind == "object" and not isExternType(w.name) then
+        return isAssignable(want, got) or typeToString(w) == typeToString(g)
+    if isFloatKind(w.kind) then
+        return isFloatKind(g.kind) or isNumeric(g)
+    if isFloatKind(g.kind) then
         return false
     // everything else is passed in an integer register
     return true
@@ -512,6 +540,20 @@ mut Analyzer::isMethodReceiver(recv: string): bool
         let ft = typeToString(stripNull(curClassFieldType(recv)))
         return isObjType(ft)
     return false
+
+// A one-line nudge for a method call that hit a type with no methods —
+// almost always someone reaching for `xs.push(v)` on an array. Empty
+// when there is nothing useful to add.
+mut Analyzer::methodHint(rt: string, meth: string): string
+    if rt.length > 0 and rt[0] == "[" then
+        if meth == "push" or meth == "append" or meth == "add" then
+            return " — append to an array with `xs += [item]`"
+        if meth == "pop" or meth == "removeLast" then
+            return " — drop the last item with `xs = xs[0 to #xs - 1]`"
+        if meth == "length" or meth == "size" or meth == "count" or meth == "len" then
+            return " — an array's length is `#xs`"
+        return " — arrays have no methods: grow with `xs += [item]`, length is `#xs`"
+    return ""
 
 // ── construction ───────────────────────────────────────────────────
 

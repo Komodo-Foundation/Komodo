@@ -4,6 +4,12 @@ class Parser
 public
     constructor(tokens: [Token])
         m_tokens = tokens
+
+    // "LINE:COL" of the token the parser is looking at — where a parse
+    // error is reported.
+    mut position(): string
+        let t = peek()
+        return string(t.line) + ":" + string(t.column)
     
     mut parseProgram(): Program
         skipNewlines()

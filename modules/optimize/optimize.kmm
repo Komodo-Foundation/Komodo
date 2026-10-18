@@ -486,7 +486,7 @@ public
             k += 1
         return out
 
-    // digits, with an optional leading '-'
+    // Parses decimal or hex integers (0x prefix for hex)
     fn parseIntStr(s: string): int
         if s.length == 0 then
             return 0
@@ -495,6 +495,19 @@ public
         if s[0] == "-" then
             neg = true
             i = 1
+
+        // Check for hex prefix (0x or 0X)
+        if i + 1 < s.length and s[i] == "0" and (s[i + 1] == "x" or s[i + 1] == "X") then
+            i += 2
+            let v = 0
+            while i < s.length do
+                v = v * 16 + hexDigit(s[i])
+                i += 1
+            if neg then
+                return 0 - v
+            return v
+
+        // Decimal parsing
         let v = 0
         while i < s.length do
             v = v * 10 + digit(s[i])
@@ -522,6 +535,41 @@ public
             return 8
         if c == "9" then
             return 9
+        return 0
+
+    fn hexDigit(c: char): int
+        if c == "0" then
+            return 0
+        if c == "1" then
+            return 1
+        if c == "2" then
+            return 2
+        if c == "3" then
+            return 3
+        if c == "4" then
+            return 4
+        if c == "5" then
+            return 5
+        if c == "6" then
+            return 6
+        if c == "7" then
+            return 7
+        if c == "8" then
+            return 8
+        if c == "9" then
+            return 9
+        if c == "a" or c == "A" then
+            return 10
+        if c == "b" or c == "B" then
+            return 11
+        if c == "c" or c == "C" then
+            return 12
+        if c == "d" or c == "D" then
+            return 13
+        if c == "e" or c == "E" then
+            return 14
+        if c == "f" or c == "F" then
+            return 15
         return 0
 
     fn needExpr(e: Expression?): Expression

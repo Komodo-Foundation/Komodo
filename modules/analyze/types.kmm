@@ -81,8 +81,16 @@ fn isIntKind(k: string): bool
         return true
     return false
 
+// A floating-point kind.  `f64` is a spelling of `float` and is folded
+// away in `parseTypeBody`; `f32` stays a distinct kind so struct layout
+// and the C FFI can narrow it to a 32-bit float at the boundary, but it
+// is arithmetically identical to `float` (a 64-bit double) everywhere
+// inside Komodo — `typeToLegacy` collapses it to "float".
+fn isFloatKind(k: string): bool
+    return k == "float" or k == "f32"
+
 fn isNumeric(t: Type): bool
-    if t.kind == "float" then
+    if isFloatKind(t.kind) then
         return true
     return isIntKind(t.kind)
 
@@ -125,7 +133,7 @@ fn typeToLegacy(t: Type): string
         return "[" + typeToLegacy(t.elem or tPrim("int")) + "]"
     if t.kind == "object" then
         return t.name
-    if t.kind == "float" then
+    if isFloatKind(t.kind) then
         return "float"
     if t.kind == "string" then
         return "string"
@@ -174,6 +182,8 @@ fn isOpt(t: string?): bool
 fn isPrimName(w: string): bool
     if w == "int" or w == "uint" or w == "float" or w == "bool" then
         return true
+    if w == "f32" or w == "f64" then
+        return true
     if w == "string" or w == "char" or w == "void" then
         return true
     return isIntKind(w)
@@ -196,6 +206,9 @@ fn parseTypeBody(body: string): Type
         return tArray(parseTypeStr(body[1 to (#body - 1)]))
     if body == "any" then
         return tAny
+    // `f64` is just `float`; `f32` keeps its own kind (see isFloatKind).
+    if body == "f64" then
+        return tPrim("float")
     if isPrimName(body) then
         return tPrim(body)
     return tObject(body)

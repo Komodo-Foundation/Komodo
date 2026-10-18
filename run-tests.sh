@@ -43,8 +43,9 @@ for name in "${names[@]}"; do
         fail=$((fail+1)); continue
     fi
 
-    # stackvm: compile only (must not error)
-    if ! "$komodo" -q -t stackvm -S "$src" >/dev/null 2>"$work/$name.vm.err"; then
+    # stackvm: compile only (must not error).  A source that needs the
+    # native C ABI opts out with a `stackvm: skip` comment.
+    if ! grep -q 'stackvm: skip' "$src" && ! "$komodo" -q -t stackvm -S "$src" >/dev/null 2>"$work/$name.vm.err"; then
         echo "FAIL     $name  (stackvm compile errored)"
         sed 's/^/           /' "$work/$name.vm.err"
         fail=$((fail+1)); continue

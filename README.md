@@ -117,9 +117,11 @@ always take effect.
 
 Each example is compiled + run on the x86 target and its output diffed against
 `examples/<name>.expected`, then also compiled with the `stackvm` target to keep
-the target-independent path honest. Both scripts run through the interpreter
-(`build.sh`); nothing currently drives them through `kmc`, though `komodo`
-compiles every example fine if you want to spot-check it by hand.
+the target-independent path honest (an example that needs the native C ABI
+opts out of the stackvm pass with a `stackvm: skip` comment). Both scripts
+drive the native compiler: `run-tests.sh` goes through `./komodo -q`,
+`run-sema-tests.sh` calls `./kmc` directly. Build `./kmc` first with
+`./build-self.sh`.
 
 ## Code generation
 
@@ -151,6 +153,15 @@ interpreter), `extern fn` C FFI (full System V AMD64 ABI), body-less function
 *prototypes* and `...` variadic parameters (how the standard library declares
 itself), and a static analyser (`modules/sema*.kmm`) with flow-sensitive
 null-safety, ahead of an optional constant-folding / dead-code optimizer.
+Also: interpolated strings (`` `n = {n + 1}` ``), hex literals (`0xFF`),
+`int(x)` float→int truncation, `f32` and by-value C structs (`copy(x)` to an
+`extern fn`, e.g. raylib's `Vector3` — see `stdlib/raylib.kmm`).
+
+Diagnostics are reported as `file:line:col: error: …` (or `warning:`)
+against the file the problem is in, imported modules included.
+
+**Compile speed**: `kmc` compiles its own ~11k lines in about 0.25 s
+(one front-end pass; lexing, slicing and name lookup are all linear).
 
 ## License
 

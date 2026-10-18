@@ -1,0 +1,65 @@
+// raylib, called with no C shim — every Vector3 / Color / Camera3D
+// crosses the FFI by value via `copy(...)`, and `f32` gives the struct
+// fields and the `float` scalars C's 32-bit width.
+//
+//   komodo demos/raylib_native.km
+//
+// Opens a window, orbits a perspective camera around a little scene of
+// spheres and a cube, and (headless-friendly) writes one screenshot and
+// exits after 90 frames.
+
+import raylib
+import console
+import math
+
+let W be 960
+let H be 540
+
+void main()
+    raylib::SetConfigFlags(FLAG_MSAA_4X_HINT)
+    raylib::InitWindow(W, H, "Komodo + raylib (shim-free)")
+    raylib::SetTargetFPS(60)
+
+    let sky = raylib::rl_rgb(18, 20, 28)
+    let ground = raylib::rl_rgb(38, 42, 52)
+    let cubeCol = raylib::rl_rgb(220, 120, 90)
+    let hi = raylib::rl_rgb(120, 200, 255)
+    let white = raylib::rl_rgb(235, 238, 245)
+
+    let frame = 0
+    while raylib::WindowShouldClose() == 0 and frame < 90 do
+        let t = raylib::GetTime()
+        let camx = math.sin(t * 0.6) * 8.0
+        let camz = math.cos(t * 0.6) * 8.0
+
+        let cam = raylib::rl_camera3d(camx, 5.0, camz, 0.0, 1.0, 0.0, 55.0)
+
+        raylib::BeginDrawing()
+        raylib::ClearBackground(copy(sky))
+
+        raylib::BeginMode3D(copy(cam))
+        raylib::DrawPlane(copy(raylib::rl_vec3(0.0, 0.0, 0.0)), copy(raylib::rl_vec2(24.0, 24.0)), copy(ground))
+        raylib::DrawGrid(24, 1.0)
+
+        raylib::DrawCube(copy(raylib::rl_vec3(0.0, 1.0, 0.0)), 2.0, 2.0, 2.0, copy(cubeCol))
+        raylib::DrawCubeWires(copy(raylib::rl_vec3(0.0, 1.0, 0.0)), 2.0, 2.0, 2.0, copy(raylib::rl_rgb(20, 20, 24)))
+
+        let i = 0
+        while i < 8 do
+            let a = i * 0.785398
+            let sx = math.cos(a + t) * 4.0
+            let sz = math.sin(a + t) * 4.0
+            raylib::DrawSphere(copy(raylib::rl_vec3(sx, 0.6, sz)), 0.5, copy(hi))
+            i += 1
+
+        raylib::EndMode3D()
+
+        raylib::DrawText("shim-free raylib - structs by value with copy()", 20, 20, 20, copy(white))
+        raylib::DrawFPS(20, 48)
+        raylib::EndDrawing()
+
+        frame += 1
+
+    raylib::TakeScreenshot("raylib_native.png")
+    raylib::CloseWindow()
+    console.print("ok — rendered", frame, "frames, wrote raylib_native.png")

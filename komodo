@@ -219,14 +219,54 @@ if [[ $no_cache -eq 0 ]] && mkdir -p "$cache/fe" "$cache/obj" "$cache/bin" 2>/de
     cache_ok=1
 fi
 
+# Where user-installed libraries land when there is no root access: a
+# `~/.local` / `/usr/local` prefix. gcc does not search these by default,
+# so we add them explicitly (both as a link path and an rpath, the latter
+# harmless for the static case) and let pkg-config find their .pc files.
+user_prefixes=( "$HOME/.local" /usr/local )
+for p in "${user_prefixes[@]}"; do
+    [[ -d "$p/lib/pkgconfig" ]] && PKG_CONFIG_PATH="$p/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+    [[ -d "$p/lib/x86_64-linux-gnu/pkgconfig" ]] && PKG_CONFIG_PATH="$p/lib/x86_64-linux-gnu/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+done
+export PKG_CONFIG_PATH
+prefix_ldflags=()
+for p in "${user_prefixes[@]}"; do
+    [[ -d "$p/lib" ]] && prefix_ldflags+=( -L"$p/lib" -Wl,-rpath,"$p/lib" )
+done
+
 # kmc resolves every `link` declaration reachable from the program (the
 # real keyword — see stdlib/sdl2.kmm) into ready linker tokens and writes
 # them, one per line, to $linkfile. No scanning on komodo's side.
+#
+# One extra step here: a bare `-lNAME` token (from `link NAME`) is run
+# through `pkg-config` when a NAME.pc exists. That turns `link raylib`
+# into the library's real link line — its `-L` prefix and every private
+# transitive dependency (`-lGL -lm -lpthread …` for a static raylib) —
+# plus its `--cflags` (`-I` for a headers-in-a-prefix install), so a
+# module's companion C shim can `#include <raylib.h>`. Instead of a lone
+# `-lraylib` that only resolves if the library is a bare .so on the
+# default search path with no deps of its own. Anything that is not a
+# plain `-lNAME`, or has no .pc, passes through untouched.
 read_link_flags() {
     [[ -f "$linkfile" ]] || return 0
-    local tok
+    local have_pc=0
+    command -v pkg-config >/dev/null 2>&1 && have_pc=1
+    local tok name expanded cflags
     while IFS= read -r tok || [[ -n "$tok" ]]; do
-        [[ -n "$tok" ]] && printf '%s\n' "$tok"
+        [[ -n "$tok" ]] || continue
+        if [[ $have_pc -eq 1 && "$tok" == -l* ]]; then
+            name="${tok#-l}"
+            if pkg-config --exists "$name" 2>/dev/null; then
+                # --static: also emit Libs.private, needed when the .pc
+                # resolves to a static archive (raylib here does).
+                if expanded="$(pkg-config --static --libs "$name" 2>/dev/null)" && [[ -n "$expanded" ]]; then
+                    cflags="$(pkg-config --cflags "$name" 2>/dev/null)"
+                    printf '%s\n' $cflags $expanded
+                    continue
+                fi
+            fi
+        fi
+        printf '%s\n' "$tok"
     done < "$linkfile"
 }
 
@@ -273,7 +313,14 @@ else
     # kmc's only stdout is a "wrote <file>.asm" progress line; keep stdout
     # clean (just the program's output in `run` mode, and consistent
     # whether or not the front end was served from cache).
-    "$kmc" "$src" "$target" $strict $opt 1>&2 || exit 1
+    # Under -q that progress line is dropped; analyser warnings (also on
+    # stdout) and errors (stderr) still show.
+    if [[ $quiet -eq 1 ]]; then
+        "$kmc" "$src" "$target" $strict $opt | { grep -v '^wrote ' || true; } 1>&2
+        [[ ${PIPESTATUS[0]} -eq 0 ]] || exit 1
+    else
+        "$kmc" "$src" "$target" $strict $opt 1>&2 || exit 1
+    fi
     [[ -f "$asm" ]] || { echo "$prog: kmc produced no $asm" >&2; exit 1; }
     if [[ $cache_ok -eq 1 ]]; then
         cp -p "$asm" "$fe_asm"
@@ -303,7 +350,7 @@ fi
 # The finished binary is keyed on the exact assembly kmc produced plus
 # every link input (auto + manual) and the toolchain id. A hit means
 # nasm and gcc can both be skipped.
-link_sig="$(printf '%s\n' "${auto_cc[@]:-}" "${extra_cc[@]:-}" | LC_ALL=C sort | sha256sum | cut -d' ' -f1)"
+link_sig="$(printf '%s\n' "${prefix_ldflags[@]:-}" "${auto_cc[@]:-}" "${extra_cc[@]:-}" | LC_ALL=C sort | sha256sum | cut -d' ' -f1)"
 bin_key="$(sha_str "asm=$(sha_file "$asm")|link=$link_sig|stdlib=$stdlib_sig|$tool_id")"
 bin_hit="$cache/bin/$bin_key"
 
@@ -340,8 +387,10 @@ else
     fi
 
     vlog gcc -no-pie -I"$here/stdlib" -o "$out" "$obj" "${stdlib_inputs[@]}" \
+        ${prefix_ldflags[@]+"${prefix_ldflags[@]}"} \
         ${auto_cc[@]+"${auto_cc[@]}"} ${extra_cc[@]+"${extra_cc[@]}"} -lm
     gcc -no-pie -I"$here/stdlib" -o "$out" "$obj" "${stdlib_inputs[@]}" \
+        ${prefix_ldflags[@]+"${prefix_ldflags[@]}"} \
         ${auto_cc[@]+"${auto_cc[@]}"} ${extra_cc[@]+"${extra_cc[@]}"} -lm || exit 1
     report "link" "$t"
     log "built $out"

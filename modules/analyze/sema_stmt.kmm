@@ -556,7 +556,7 @@ mut Analyzer::checkStructPattern(p: StructPattern, subjT: Type)
             err(p, "type '" + pn + "' has no field '" + fp.field + "'" + didYouMean(fp.field, fieldNamesOf(pn)))
         let ft = fieldReadType(pn, fp.field)
         let fb = stripNull(ft)
-        if fb.kind == "float" then
+        if isFloatKind(fb.kind) then
             err(p, "struct pattern cannot match on `float` field '" + fp.field + "' yet")
         if fp.lit != null then
             let lt = inferExpr(fp.lit)
@@ -741,8 +741,10 @@ mut Analyzer::isAssignable(dst: Type, src: Type): bool
 
     if isNumeric(dst) and isNumeric(src) then
         // permit widening/among-integers and int→float, matching the
-        // conversions codegen already performs
-        if dst.kind == "float" then
+        // conversions codegen already performs.  `f32` accepts any
+        // numeric source too — it is a 64-bit double inside Komodo and is
+        // only narrowed to 32 bits at a struct / C-FFI boundary.
+        if isFloatKind(dst.kind) then
             return true
         return isIntKind(src.kind) and isIntKind(dst.kind)
 

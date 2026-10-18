@@ -26,10 +26,35 @@ module km_compiler
 //  integer accumulator, float in the float accumulator.
 // ═══════════════════════════════════════════════════════════════════════
 
+// ── by-value struct C-ABI layout (for `extern` calls passing `copy(x)`) ──
+//
+//  Komodo lays every object field out in its own 8-byte slot; C packs a
+//  struct tight.  `CLayout` describes, for one Komodo struct type, how
+//  its fields map onto the C struct a native function expects, plus the
+//  System V AMD64 eightbyte classification used to place it in registers.
+//  Only structs of 16 bytes or less, with scalar fields, are supported;
+//  anything else sets `ok = false` and codegen reports it.
+
+struct CFieldMap
+    slot: int = 0          // Komodo field index (storage at handle + 8 + slot*8)
+    coff: int = 0          // byte offset inside the C struct
+    csize: int = 0         // 1 / 2 / 4 / 8
+    isFloat: bool = false  // f32 / float field → SSE class, needs cvt
+
+struct CLayout
+    fields: [CFieldMap] = []
+    size: int = 0
+    ebClasses: [string] = []   // per eightbyte: "int" (GP reg) or "sse" (XMM)
+    memory: bool = false       // > 16 bytes: passed on the stack, no registers
+    ok: bool = true
+    err: string = ""
+
 class Codegen
 public
     constructor(backend: Backend)
         m_backend = backend
+        m_fnIdx = new StrIndex()
+        m_typeIdx = new StrIndex()
 
     mut compileProgram(prog: Program): string
         m_backend.begin()
@@ -75,9 +100,9 @@ public
                 // type id, no `new`; its values are plain integers.
                 continue
             else if d is StructDecl then
-                registerTypeFull(d.name, false, d.isAbstract, d.parent, memberNames(d.members), memberTypes(d.members), memberDefaults(d.members))
+                registerTypeFull(d.name, false, d.isAbstract, d.parent, memberNames(d.members), memberTypes(d.members), memberRawTypes(d.members), memberDefaults(d.members))
             else if d is ClassDecl then
-                registerTypeFull(d.name, true, d.isAbstract, d.parent, fieldNames(d.fields), fieldTypes(d.fields), fieldDefaults(d.fields))
+                registerTypeFull(d.name, true, d.isAbstract, d.parent, fieldNames(d.fields), fieldTypes(d.fields), fieldRawTypes(d.fields), fieldDefaults(d.fields))
                 for m in d.methods do
                     let mfn = new FunctionDecl(methodSym(d.name, m))
                     let ps: [Param] = [new Param("self", d.name)]
@@ -122,11 +147,14 @@ public
         // by the semantic analyser; overloaded free functions (same name,
         // different parameter types) sit side by side here.
         for func in prog.functions do
+            m_fnIdx.add(func.name, #m_fnNames)
             m_fnNames += [func.name]
             m_fnRets += [retTypeOf(func.returnType)]
+            m_fnRetRaw += [stripOpt(func.returnType) or ""]
             m_fnKinds += [funcKind(func)]
             m_fnArity += [#func.params]
             m_fnSigs += [paramSig(func)]
+            m_fnRawParams += [rawParamList(func)]
             m_fnLink += [func.name]
 
         // Pass 1a: two free overloads with the identical normalized
@@ -243,6 +271,22 @@ public
             out += [typeOrInt(f.declaredType)]
         return out
 
+    // Un-collapsed declared field types (keeps `f32` / `i8` / … distinct
+    // from the coarse form) — the by-value C-FFI marshaller needs the
+    // real widths to lay a struct out the way C does.  `?` is dropped;
+    // `null` → "int".
+    mut memberRawTypes(ms: [StructMember]): [string]
+        let out: [string] = []
+        for m in ms do
+            out += [stripOpt(m.declaredType) or "int"]
+        return out
+
+    mut fieldRawTypes(fs: [ClassField]): [string]
+        let out: [string] = []
+        for f in fs do
+            out += [stripOpt(f.declaredType) or "int"]
+        return out
+
     mut memberDefaults(ms: [StructMember]): [Expression?]
         let out: [Expression?] = []
         for m in ms do
@@ -256,11 +300,18 @@ public
         return out
 
     // A declared-type string reduced to codegen's coarse form: `?` (which
-    // codegen never depended on) dropped, `null` → "int".
+    // codegen never depended on) dropped, `null` → "int".  `f32` / `f64`
+    // collapse to "float" — inside Komodo an `f32` value is a 64-bit
+    // double and shares every code path with `float`; its 32-bit width
+    // only matters when a struct is marshalled across the C FFI, and that
+    // path reads the un-collapsed field types straight off the AST
+    // (see `rawFieldType`).
     mut typeOrInt(t: string?): string
         let s = stripOpt(t)
         if s == null then
             return "int"
+        if s == "f32" or s == "f64" then
+            return "float"
         return s
 
     fn parentOrEmpty(p: string?): string
@@ -315,12 +366,13 @@ public
 
     // Register a type, prepending its parent's flattened fields (names,
     // types and default-value expressions) ahead of its own.
-    mut registerTypeFull(name: string, isClass: bool, isAbs: bool, parent: string?, fnames: [string], ftypes: [string], fdefs: [Expression?])
+    mut registerTypeFull(name: string, isClass: bool, isAbs: bool, parent: string?, fnames: [string], ftypes: [string], frawtypes: [string], fdefs: [Expression?])
         if (name in m_typeNames) then
             throw ("duplicate type '" + name + "'")
         let par = parentOrEmpty(parent)
         let allNames: [string] = []
         let allTypes: [string] = []
+        let allRaw: [string] = []
         let allDefs: [Expression?] = []
         if par != "" then
             let pi = typeIndex(par)
@@ -330,20 +382,25 @@ public
                 allNames += [x]
             for x in m_typeFieldTypes[pi] do
                 allTypes += [x]
+            for x in m_typeFieldRawTypes[pi] do
+                allRaw += [x]
             for x in m_typeFieldDefaults[pi] do
                 allDefs += [x]
         let k = 0
         while k < #fnames do
             allNames += [fnames[k]]
             allTypes += [ftypes[k]]
+            allRaw += [frawtypes[k]]
             allDefs += [fdefs[k]]
             k += 1
+        m_typeIdx.add(name, #m_typeNames)
         m_typeNames += [name]
         m_typeIsClass += [isClass]
         m_typeIsAbstract += [isAbs]
         m_typeParent += [par]
         m_typeFieldNames += [allNames]
         m_typeFieldTypes += [allTypes]
+        m_typeFieldRawTypes += [allRaw]
         m_typeFieldDefaults += [allDefs]
         m_typeOwnMethods += [[]]
 
@@ -670,7 +727,7 @@ public
         return 0
 
     mut hasFn(name: string): bool
-        return (name in m_fnNames)
+        return m_fnIdx.has(name)
 
     // `a` is a bare Komodo function name used as an `extern` call argument
     // — codegen passes C a pointer to that function's trampoline.
@@ -740,6 +797,7 @@ public
         for g in m_globalDecls do
             if g.init != null then
                 genExpr(g.init)
+                coerceToFloat(g.resolvedType or "int", g.init)
                 m_backend.storeGlobal(g.name, g.resolvedType or "int")
 
     mut typeIsClass(name: string): bool
@@ -749,12 +807,7 @@ public
         return m_typeIsClass[ti]
 
     mut typeIndex(name: string): int
-        let i = 0
-        while i < #m_typeNames do
-            if m_typeNames[i] == name then
-                return i
-            i += 1
-        return 0 - 1
+        return m_typeIdx.first(name)
 
     // The runtime type id stored in an object's header word — its index
     // in the registry (structs and classes share one id space).
@@ -822,20 +875,16 @@ public
         return "fn"
 
     mut fnKind(name: string): string
-        let i = 0
-        while i < #m_fnNames do
-            if m_fnNames[i] == name then
-                return m_fnKinds[i]
-            i += 1
-        return ""
+        let i = m_fnIdx.first(name)
+        if i < 0 then
+            return ""
+        return m_fnKinds[i]
 
     mut fnArity(name: string): int
-        let i = 0
-        while i < #m_fnNames do
-            if m_fnNames[i] == name then
-                return m_fnArity[i]
-            i += 1
-        return 0 - 1
+        let i = m_fnIdx.first(name)
+        if i < 0 then
+            return 0 - 1
+        return m_fnArity[i]
 
 private
     // ── the target ─────────────────────────────────────────────────
@@ -843,9 +892,15 @@ private
 
     // ── program-wide function table ───────────────────────────────
     m_fnNames: [string] = []
+    m_fnIdx: StrIndex             // hash index over m_fnNames
     m_fnRets: [string] = []
     m_fnKinds: [string] = []      // "fn" (pure) / "mut" / "void"
     m_fnArity: [int] = []
+    // un-collapsed declared return type per function ("" = none) and the
+    // un-collapsed declared parameter types — the by-value C-FFI path
+    // needs `f32` / `Vector3` / … kept distinct from the coarse form.
+    m_fnRetRaw: [string] = []
+    m_fnRawParams: [[string]] = []
     // normalized parameter-type list per function (overload resolution)
     m_fnSigs: [[string]] = []
     // symbol each function is emitted / called under — differs from its
@@ -893,12 +948,14 @@ private
 
     // ── object-type registry (structs + classes) ──────────────────
     m_typeNames: [string] = []
+    m_typeIdx: StrIndex           // hash index over m_typeNames
     m_typeIsClass: [bool] = []
     m_typeIsAbstract: [bool] = []
     // parent type name, or "" — fields below are already parent-flattened
     m_typeParent: [string] = []
     m_typeFieldNames: [[string]] = []
     m_typeFieldTypes: [[string]] = []
+    m_typeFieldRawTypes: [[string]] = []
     // default-value expression per (flattened) field, or null
     m_typeFieldDefaults: [[Expression?]] = []
     // method names declared directly on each type (not inherited)
@@ -930,7 +987,7 @@ private
 
     fn retTypeOf(declared: string?): string
         let d = stripOpt(declared)
-        if d == "float" then
+        if d == "float" or d == "f32" or d == "f64" then
             return "float"
         if d == "string" then
             return "string"
@@ -942,18 +999,147 @@ private
     // the real type on `resolvedType` for every call it saw; this is the
     // fallback for synthesised nodes.
     mut fnRet(name: string): string
+        let i = fnIndexOf(name)
+        if i < 0 then
+            return "int"
+        return m_fnRets[i]
+
+    // ── by-value struct C-FFI support ─────────────────────────────
+
+    mut rawParamList(func: FunctionDecl): [string]
+        let out: [string] = []
+        for p in func.params do
+            out += [stripOpt(p.declaredType) or "int"]
+        return out
+
+    // Registry index of a function by source name (or its mangled form).
+    mut fnIndexOf(name: string): int
+        let i = m_fnIdx.first(name)
+        if i >= 0 then
+            return i
+        return m_fnIdx.first(m_backend.mangle(name))
+
+    // Un-collapsed declared type of `name`'s parameter `idx` ("" if none).
+    mut rawParamTypeAt(name: string, idx: int): string
+        let fi = fnIndexOf(name)
+        if fi < 0 then
+            return ""
+        let ps = m_fnRawParams[fi]
+        if idx < 0 or idx >= #ps then
+            return ""
+        return ps[idx]
+
+    // Un-collapsed declared return type of `name` ("" if none / unknown).
+    mut rawRetType(name: string): string
+        let fi = fnIndexOf(name)
+        if fi < 0 then
+            return ""
+        return m_fnRetRaw[fi]
+
+    // Struct type name an `extern fn` returns by value, or "" if it does
+    // not return an aggregate.
+    mut externRetStructName(name: string): string
+        let fi = fnIndexOf(name)
+        if fi < 0 then
+            return ""
+        let r = m_fnRetRaw[fi]
+        if r == "" then
+            return ""
+        // `extern type` handles are never registered as struct types, so
+        // a positive typeIndex means a real aggregate.
+        if typeIndex(r) >= 0 then
+            return r
+        return ""
+
+    // Byte size of a scalar C type; 0 = can't live in a by-value struct.
+    fn cScalarSize(t: string): int
+        if t == "f32" then
+            return 4
+        if t == "float" or t == "f64" then
+            return 8
+        if t == "i8" or t == "u8" or t == "bool" or t == "char" then
+            return 1
+        if t == "i16" or t == "u16" then
+            return 2
+        if t == "i32" or t == "u32" then
+            return 4
+        if t == "i64" or t == "u64" or t == "int" or t == "uint" then
+            return 8
+        if t == "string" then
+            return 8
+        return 0
+
+    fn cIsFloatScalar(t: string): bool
+        return t == "f32" or t == "float" or t == "f64"
+
+    fn cIsUnsigned(t: string): bool
+        if t == "u8" or t == "u16" or t == "u32" or t == "u64" or t == "uint" then
+            return true
+        return t == "bool" or t == "char"
+
+    // Lay a Komodo struct type out the way C would, and classify its
+    // (≤ 2) eightbytes for the System V AMD64 register file.
+    mut structCLayout(typeName: string): CLayout
+        let lay = new CLayout()
+        let ti = typeIndex(typeName)
+        if ti < 0 then
+            lay.ok = false
+            lay.err = "'" + typeName + "' is not a struct"
+            return lay
+        let raws = m_typeFieldRawTypes[ti]
+        let names = m_typeFieldNames[ti]
+        let off = 0
+        let align = 1
         let i = 0
-        while i < #m_fnNames do
-            if m_fnNames[i] == name then
-                return m_fnRets[i]
+        while i < #raws do
+            let r = raws[i]
+            let sz = cScalarSize(r)
+            if sz == 0 then
+                lay.ok = false
+                lay.err = "field '" + names[i] + "' of type '" + r + "' can't be passed in a by-value struct (nested structs and arrays are not supported)"
+                return lay
+            let a = sz
+            while off % a != 0 do
+                off += 1
+            lay.fields += [new CFieldMap(i, off, sz, cIsFloatScalar(r))]
+            off += sz
+            if a > align then
+                align = a
             i += 1
-        let mangled = m_backend.mangle(name)
-        let j = 0
-        while j < #m_fnNames do
-            if m_fnNames[j] == mangled then
-                return m_fnRets[j]
-            j += 1
-        return "int"
+        while align > 0 and off % align != 0 do
+            off += 1
+        lay.size = off
+        if off == 0 then
+            lay.ok = false
+            lay.err = "struct '" + typeName + "' has no fields"
+            return lay
+        if off > 192 then
+            lay.ok = false
+            lay.err = "struct '" + typeName + "' is " + string(off) + " bytes — too large to marshal by value (max 192)"
+            return lay
+        if off > 16 then
+            // System V "MEMORY" class: the whole aggregate is passed in
+            // the stack argument area, consuming no registers.
+            lay.memory = true
+            return lay
+        lay.ebClasses += [eightbyteClass(lay.fields, 0)]
+        if off > 8 then
+            lay.ebClasses += [eightbyteClass(lay.fields, 8)]
+        return lay
+
+    // "sse" if every field byte in [base, base+8) belongs to a float
+    // field, else "int".
+    fn eightbyteClass(fields: [CFieldMap], base: int): string
+        let sawInt = false
+        for f in fields do
+            let lo = f.coff
+            let hi = f.coff + f.csize
+            if lo < base + 8 and hi > base then
+                if not f.isFloat then
+                    sawInt = true
+        if sawInt then
+            return "int"
+        return "sse"
 
     fn isCompareOp(op: string): bool
         return op == "==" or op == "!=" or op == "<" or op == ">" or op == "<=" or op == ">=" or op == "and" or op == "or"

@@ -216,6 +216,12 @@ mut Parser::parsePrimary(): Expression?
         eat()
         let typeName = peek().lexeme
         eat()
+        // `new mod::Type(...)` — namespaces are flat after the module
+        // merge, so keep only the final segment (like `ns::member`).
+        while at(TokenType::SCOPE) do
+            eat()
+            typeName = peek().lexeme
+            eat()
         eat()
         let args: [Expression] = []
         while not at(TokenType::CLOSE_PAREN) do

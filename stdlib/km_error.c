@@ -47,3 +47,11 @@ void km_throw(const char *msg)
     fprintf(stderr, "Uncaught error: %s\n", msg ? msg : "");
     exit(1);
 }
+
+/* Print `msg` on stderr and exit(1) — a tool's fatal-error path, with no
+ * "Uncaught error:" prefix (used by the compiler driver). */
+void km_fail(const char *msg)
+{
+    fprintf(stderr, "%s\n", msg ? msg : "");
+    exit(1);
+}

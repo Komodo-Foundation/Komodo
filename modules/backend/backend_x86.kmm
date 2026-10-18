@@ -18,7 +18,7 @@ module km_compiler
 class X86Backend : Backend
 private
     m_lines: [string] = []         // .text body, one entry per line
-    m_rodata: string = ""          // .rodata lines (dq / db)
+    m_rodata: [string] = []        // .rodata lines (dq / db), joined in footer
     m_globals: [string] = []       // top-level variable names → .bss cells
     m_doubleId: int = 0
     m_stringId: int = 0
@@ -29,11 +29,13 @@ private
     m_intern: bool = true
     m_poolKeys: [string] = []      // "d:<value>" / "s:<lexeme>"
     m_poolLabels: [string] = []
+    m_poolIdx: StrIndex = new StrIndex()   // hash index over m_poolKeys
     m_externs: [string] = []       // link-time symbols to `extern`
     m_usesMalloc: bool = false
     m_usesAppend: bool = false
     m_usesStr: bool = false
-    m_vtblText: string = ""         // `__vt_<id>: dq …` lines
+    m_usesFfiStruct: bool = false   // reserve km_ffi_marshal scratch in .bss
+    m_vtblText: [string] = []         // `__vt_<id>: dq …` lines
     m_vtabCount: int = 0            // number of registered type ids
     m_vtabSet: [int] = []           // ids that have a real vtable
     m_dispEnd: string = ""          // overload dispatch: shared exit label
@@ -67,15 +69,14 @@ void X86Backend::emitCall(sym: string)
 mut X86Backend::poolFind(key: string): string
     if not m_intern then
         return ""
-    let i = 0
-    while i < #m_poolKeys do
-        if m_poolKeys[i] == key then
-            return m_poolLabels[i]
-        i += 1
-    return ""
+    let i = m_poolIdx.first(key)
+    if i < 0 then
+        return ""
+    return m_poolLabels[i]
 
 mut X86Backend::poolAdd(key: string, label: string)
     if m_intern then
+        m_poolIdx.add(key, #m_poolKeys)
         m_poolKeys += [key]
         m_poolLabels += [label]
 
@@ -85,7 +86,7 @@ mut X86Backend::addDouble(value: string): string
         return hit
     m_doubleId += 1
     let name = "LC" + string(m_doubleId)
-    m_rodata = m_rodata + name + ": dq " + value + "\n"
+    m_rodata += [name + ": dq " + value + "\n"]
     poolAdd("d:" + value, name)
     return name
 
@@ -109,7 +110,7 @@ mut X86Backend::addString(lexeme: string): string
         else
             body = body + raw[i]
         i += 1
-    m_rodata = m_rodata + name + ": db `" + body + "`, 0\n"
+    m_rodata += [name + ": db `" + body + "`, 0\n"]
     return name
 
 // A call target that isn't defined in this program is resolved at link
@@ -808,7 +809,7 @@ mut X86Backend::setVtable(typeId: int, labels: [string])
             line = line + ", "
         line = line + labels[i]
         i += 1
-    m_vtblText = m_vtblText + line + "\n"
+    m_vtblText += [line + "\n"]
     m_vtabSet += [typeId]
 
 // ── C FFI (`extern fn`) — full System V AMD64 call ─────────────────
@@ -833,7 +834,13 @@ void X86Backend::cCallBegin(n: int)
     return
 
 void X86Backend::cCallArg(i: int, cls: string)
-    if cls == "float" then
+    if cls == "f32" then
+        // a 32-bit C `float` argument: narrow the double now, then spill
+        // it like any other SSE word (only the low 32 bits are read).
+        ins("cvtsd2ss xmm0, xmm0")
+        ins("sub rsp, 8")
+        ins("movsd [rsp], xmm0")
+    else if cls == "float" then
         ins("sub rsp, 8")
         ins("movsd [rsp], xmm0")
     else
@@ -860,12 +867,15 @@ mut X86Backend::cCallEnd(name: string, classes: [string])
     while i < n do
         let cls = classes[i]
         let src = "[rbx + " + string((n - 1 - i) * 8) + "]"
-        if cls == "float" then
+        if cls == "float" or cls == "f32" then
             if xmm < 8 then
                 ins("movsd " + xmmRegs[xmm] + ", " + src)
                 xmm += 1
             else
                 stackArgs += [i]
+        else if cls == "mem" then
+            // a MEMORY-class aggregate word: always in the stack area
+            stackArgs += [i]
         else
             if gp < 6 then
                 ins("mov " + gpRegs[gp] + ", " + src)
@@ -893,6 +903,119 @@ mut X86Backend::cCallEnd(name: string, classes: [string])
     // Unwind the outgoing block and the scratch in one move.
     ins("mov rsp, rbx")
     ins("add rsp, " + string(n * 8))
+
+// ── by-value struct marshalling for `extern` calls ────────────────
+//
+//  `km_ffi_marshal` is a 32-byte static scratch (two eightbytes plus
+//  slack).  `ffiStructMarshal` repacks a Komodo struct — every field in
+//  its own 8-byte slot — into the tight C layout there; `ffiStructLoadWord`
+//  then hands one eightbyte to `cCallArg` like any scalar.  Argument
+//  structs are marshalled one at a time and their eightbytes pushed onto
+//  the scratch block before the next argument, so a single buffer is
+//  enough.  `ffiStructRet` runs the reverse: it stashes the return
+//  registers, allocates a Komodo object and widens each C field back into
+//  its slot.
+
+mut X86Backend::ffiStructMarshal(totalSize: int, slots: [int], coffs: [int], sizes: [int], flts: [int])
+    m_usesFfiStruct = true
+    ins("mov r10, rax")                      // r10 = Komodo struct handle
+    ins("xor rcx, rcx")                      // clear the destination bytes
+    let z = 0
+    while z < totalSize do
+        ins("mov [km_ffi_marshal + " + string(z) + "], rcx")
+        z += 8
+    let i = 0
+    while i < #slots do
+        let src = "[r10 + " + string(8 + slots[i] * 8) + "]"
+        let dst = "km_ffi_marshal + " + string(coffs[i])
+        if flts[i] == 1 then
+            ins("movsd xmm0, " + src)
+            if sizes[i] == 4 then
+                ins("cvtsd2ss xmm0, xmm0")
+                ins("movss [" + dst + "], xmm0")
+            else
+                ins("movsd [" + dst + "], xmm0")
+        else
+            ins("mov rcx, " + src)
+            if sizes[i] == 1 then
+                ins("mov [" + dst + "], cl")
+            else if sizes[i] == 2 then
+                ins("mov [" + dst + "], cx")
+            else if sizes[i] == 4 then
+                ins("mov [" + dst + "], ecx")
+            else
+                ins("mov [" + dst + "], rcx")
+        i += 1
+
+// Widen a 32-bit C `float` result (in xmm0) to a 64-bit double.
+void X86Backend::cvtF32ToDouble()
+    ins("cvtss2sd xmm0, xmm0")
+
+void X86Backend::ffiStructLoadWord(off: int, cls: string)
+    if cls == "float" then
+        ins("movsd xmm0, [km_ffi_marshal + " + string(off) + "]")
+    else
+        ins("mov rax, [km_ffi_marshal + " + string(off) + "]")
+
+mut X86Backend::ffiStructRet(typeId: int, nFields: int, slots: [int], coffs: [int], sizes: [int], flts: [int], usig: [int], ebClasses: [string])
+    m_usesFfiStruct = true
+    // Stash the return registers before malloc clobbers them.  Eightbytes
+    // are consumed in order; INTEGER ones use rax then rdx, SSE ones
+    // xmm0 then xmm1.
+    let gpRet = 0
+    let sseRet = 0
+    let e = 0
+    while e < #ebClasses do
+        let slot = "km_ffi_marshal + " + string(e * 8)
+        if ebClasses[e] == "int" then
+            if gpRet == 0 then
+                ins("mov [" + slot + "], rax")
+            else
+                ins("mov [" + slot + "], rdx")
+            gpRet += 1
+        else
+            if sseRet == 0 then
+                ins("movsd [" + slot + "], xmm0")
+            else
+                ins("movsd [" + slot + "], xmm1")
+            sseRet += 1
+        e += 1
+
+    objNew(typeId, nFields)                  // fresh zeroed object, handle pushed
+    ins("pop rax")                           // rax = handle
+
+    let i = 0
+    while i < #slots do
+        let dst = "[rax + " + string(8 + slots[i] * 8) + "]"
+        let bsrc = "km_ffi_marshal + " + string(coffs[i])
+        if flts[i] == 1 then
+            if sizes[i] == 4 then
+                ins("movss xmm0, [" + bsrc + "]")
+                ins("cvtss2sd xmm0, xmm0")
+            else
+                ins("movsd xmm0, [" + bsrc + "]")
+            ins("movsd " + dst + ", xmm0")
+        else
+            if sizes[i] == 1 then
+                if usig[i] == 1 then
+                    ins("movzx rcx, byte [" + bsrc + "]")
+                else
+                    ins("movsx rcx, byte [" + bsrc + "]")
+            else if sizes[i] == 2 then
+                if usig[i] == 1 then
+                    ins("movzx rcx, word [" + bsrc + "]")
+                else
+                    ins("movsx rcx, word [" + bsrc + "]")
+            else if sizes[i] == 4 then
+                if usig[i] == 1 then
+                    ins("mov ecx, [" + bsrc + "]")
+                else
+                    ins("movsxd rcx, dword [" + bsrc + "]")
+            else
+                ins("mov rcx, [" + bsrc + "]")
+        if flts[i] != 1 then
+            ins("mov " + dst + ", rcx")
+        i += 1
 
 // `data(arr)` — element pointer of an array handle (skip len/cap).
 void X86Backend::arrayDataPtr()
@@ -1016,15 +1139,17 @@ mut X86Backend::header(): string
 
 fn X86Backend::footer(): string
     let r = ""
-    if #m_globals > 0 then
+    if #m_globals > 0 or m_usesFfiStruct then
         r = r + "\nsection .bss\n"
         let gi = 0
         while gi < #m_globals do
             r = r + "KG_" + m_globals[gi] + ": resq 1\n"
             gi += 1
-    r = r + "\nsection .rodata\n" + m_rodata
+        if m_usesFfiStruct then
+            r = r + "align 16\nkm_ffi_marshal: resb 256\n"
+    r = r + "\nsection .rodata\n" + join(m_rodata, "")
     if m_vtabCount > 0 then
-        r = r + m_vtblText
+        r = r + join(m_vtblText, "")
         r = r + "__km_vtab: dq "
         let i = 0
         while i < m_vtabCount do
