@@ -410,17 +410,6 @@ void StackVMBackend::loadFnPtr(sym: string)
 mut StackVMBackend::emitTrampoline(sym: string, argc: int)
     op("; trampoline " + sym + " / " + string(argc) + " args")
 
-// Conservative auto-free — no-ops for the VM (a future GC / interpreter
-// owns object lifetime); codegen stays target-agnostic.
-void StackVMBackend::zeroFreeableSlots(offsets: [int])
-    return
-
-mut StackVMBackend::emitScopeReleases(objOffsets: [int], arrOffsets: [int], preserveAcc: bool, accIsFloat: bool)
-    return
-
-mut StackVMBackend::releaseStoreLocal(off: int, isArray: bool)
-    op("STL " + string(off))
-
 // ── error handling ────────────────────────────────────────────────
 //
 //  A VM interpreter must keep a stack of landing pads.  `TRY <catch>`

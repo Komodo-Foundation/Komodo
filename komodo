@@ -397,10 +397,10 @@ else
 
     vlog gcc -no-pie -I"$here/stdlib" -o "$out" "$obj" "${stdlib_inputs[@]}" \
         ${prefix_ldflags[@]+"${prefix_ldflags[@]}"} \
-        ${auto_cc[@]+"${auto_cc[@]}"} ${extra_cc[@]+"${extra_cc[@]}"} -lm
+        ${auto_cc[@]+"${auto_cc[@]}"} ${extra_cc[@]+"${extra_cc[@]}"} -lm -l:libgc.so.1
     gcc -no-pie -I"$here/stdlib" -o "$out" "$obj" "${stdlib_inputs[@]}" \
         ${prefix_ldflags[@]+"${prefix_ldflags[@]}"} \
-        ${auto_cc[@]+"${auto_cc[@]}"} ${extra_cc[@]+"${extra_cc[@]}"} -lm || exit 1
+        ${auto_cc[@]+"${auto_cc[@]}"} ${extra_cc[@]+"${extra_cc[@]}"} -lm -l:libgc.so.1 || exit 1
     report "link" "$t"
     log "built $out"
 

@@ -922,14 +922,6 @@ private
     // value types that have a synthesised `km_deepcopy_<T>` helper
     m_deepCopierTypes: [string] = []
 
-    // ── conservative auto-free (per function) ─────────────────────
-    // Names of `let`-bound heap locals proved never to escape, and their
-    // frame offsets split by kind.  `m_escaped` is scratch for the walk.
-    m_freeNames: [string] = []
-    m_freeObjOffs: [int] = []
-    m_freeArrOffs: [int] = []
-    m_escaped: [string] = []
-
     // ── top-level macros (`let NAME be EXPR`) ─────────────────────
     m_macroNames: [string] = []
     m_macroExprs: [Expression?] = []

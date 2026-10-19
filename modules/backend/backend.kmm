@@ -39,6 +39,8 @@ module km_compiler
 //    arrays       indexAcc() arrayLenField() indexAssign()
 //                 arrayBegin(n) arrayStoreElem(i) arrayEnd()
 //                 arrayAppendTo(off) subFromLocal(off)
+//                 — `indexAcc` / `indexAssign` reject an index outside
+//                 0 .. len-1 by throwing (never touch memory out of range).
 //    objects      objNew(typeId, nFields) objSetField(i) objInitArg0(total)
 //                 objFinishNew() loadField(i) storeField(i) objTypeId()
 //                 — a struct/class handle points at [ type_id | field0 |

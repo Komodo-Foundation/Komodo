@@ -31,7 +31,9 @@ private
     m_poolLabels: [string] = []
     m_poolIdx: StrIndex = new StrIndex()   // hash index over m_poolKeys
     m_externs: [string] = []       // link-time symbols to `extern`
-    m_usesMalloc: bool = false
+    m_usesAlloc: bool = false
+    m_usesIndexCheck: bool = false
+    m_idxFail: string = ""          // this function's out-of-range stub label ("" = none yet)
     m_usesAppend: bool = false
     m_usesStr: bool = false
     m_usesFfiStruct: bool = false   // reserve km_ffi_marshal scratch in .bss
@@ -130,6 +132,7 @@ void X86Backend::begin()
 // frame offset.  `main` is entered by the C runtime with the C ABI;
 // every other function receives  rsi = &(tag,value)[argc].
 void X86Backend::beginFunction(name: string, frame: int, paramOffsets: [int], isMain: bool)
+    m_idxFail = ""
     if isMain then
         label("km_program_main")
     else
@@ -150,6 +153,14 @@ void X86Backend::beginFunction(name: string, frame: int, paramOffsets: [int], is
 void X86Backend::endFunction()
     ins("xor eax, eax")
     epilogue()
+    // cold path shared by every `arr[i]` in this function: index in rcx,
+    // handle in rax → km_index_error(index, handle), which throws
+    if m_idxFail != "" then
+        label(m_idxFail)
+        ins("mov rdi, rcx")
+        ins("mov rsi, rax")
+        ins("and rsp, -16")
+        ins("call km_index_error")
     emit("")
 
 void X86Backend::epilogue()
@@ -417,10 +428,20 @@ mut X86Backend::sliceArray()
 
 // ── arrays ─────────────────────────────────────────────────────────
 
+// Out-of-range indexes go to the function's shared cold stub (emitted
+// by endFunction).  One unsigned compare also catches a negative index.
+void X86Backend::indexCheck()
+    if m_idxFail == "" then
+        m_idxFail = newLabel()
+    m_usesIndexCheck = true
+    ins("cmp rcx, [rax]")
+    ins("jae " + m_idxFail)
+
 // object spilled by pushAcc(), index in rax.
 void X86Backend::indexAcc()
     ins("mov rcx, rax")
     ins("pop rax")
+    indexCheck()
     ins("mov rax, [rax + rcx*8 + 16]")
 
 // `#arr` — the length field lives at offset 0 of the handle.
@@ -428,9 +449,9 @@ void X86Backend::arrayLenField()
     ins("mov rax, [rax]")
 
 mut X86Backend::arrayBegin(n: int)
-    m_usesMalloc = true
+    m_usesAlloc = true
     ins("mov rdi, " + string(16 + 8 * n))
-    emitCall("malloc")
+    emitCall("km_alloc")
     ins("mov qword [rax], " + string(n))
     ins("mov qword [rax + 8], " + string(n))
     ins("push rax")
@@ -444,79 +465,20 @@ void X86Backend::arrayEnd()
 
 // ── objects (structs + classes) ───────────────────────────────────
 //
-//  An object handle is a bare pointer to `fieldCount` contiguous 8-byte
-//  slots — no header.  `new` mallocs and zeroes it and leaves the handle
-//  pushed (like arrayBegin); `objFinishNew` pops it back as the result.
+//  `new` takes a zeroed block from the collected heap (km_alloc, so every
+//  field starts 0 / null) and leaves the handle pushed (like arrayBegin);
+//  `objFinishNew` pops it back as the result.  Nothing frees it: the
+//  collector reclaims it once unreachable.
 
 // An object handle points at  [ type_id | field0 | field1 | … ]  — one
 // leading 8-byte word holding the integer type id (structs and classes
 // both), so every field offset is shifted by 8.
 mut X86Backend::objNew(typeId: int, nFields: int)
-    m_usesMalloc = true
-    // one extra word for the refcount, which sits just *before* the
-    // handle — so the type-id word and every field offset are unchanged.
-    let bytes = (nFields + 2) * 8
-    ins("mov rdi, " + string(bytes))
-    emitCall("malloc")
-    ins("mov qword [rax], 1")               // refcount = 1
-    ins("add rax, 8")                       // handle = block + 8
+    m_usesAlloc = true
+    ins("mov rdi, " + string((nFields + 1) * 8))
+    emitCall("km_alloc")
     ins("mov qword [rax], " + string(typeId))
-    let k = 0
-    while k < nFields do
-        ins("mov qword [rax + " + string(8 + k * 8) + "], 0")
-        k += 1
     ins("push rax")
-
-// ── object / array lifetime (conservative auto-free) ──────────────
-//
-//  The compiler's escape analysis (codegen_stmt.kmm) hands each function
-//  the frame offsets of its `let`-bound heap locals that provably never
-//  escape — those are freed here, and only here.
-
-void X86Backend::zeroFreeableSlots(offsets: [int])
-    for off in offsets do
-        ins("mov qword [rbp - " + string(off) + "], 0")
-
-// Release every freeable local.  `preserveAcc` keeps the return value
-// alive across the C calls (each `km_release` clobbers rax and every xmm);
-// `accIsFloat` says whether it rides in xmm0 rather than rax.
-mut X86Backend::emitScopeReleases(objOffsets: [int], arrOffsets: [int], preserveAcc: bool, accIsFloat: bool)
-    if #objOffsets == 0 and #arrOffsets == 0 then
-        return
-    if preserveAcc then
-        if accIsFloat then
-            ins("sub rsp, 16")
-            ins("movsd [rsp], xmm0")
-        else
-            ins("push rax")
-    for off in objOffsets do
-        ins("mov rdi, [rbp - " + string(off) + "]")
-        recordExtern("km_release")
-        emitCall("km_release")
-    for off in arrOffsets do
-        ins("mov rdi, [rbp - " + string(off) + "]")
-        recordExtern("km_drop_array")
-        emitCall("km_drop_array")
-    if preserveAcc then
-        if accIsFloat then
-            ins("movsd xmm0, [rsp]")
-            ins("add rsp, 16")
-        else
-            ins("pop rax")
-
-// `v = <fresh>` for a freeable local: drop the value it held first.  The
-// new value is already in rax.
-mut X86Backend::releaseStoreLocal(off: int, isArray: bool)
-    ins("push rax")
-    ins("mov rdi, [rbp - " + string(off) + "]")
-    if isArray then
-        recordExtern("km_drop_array")
-        emitCall("km_drop_array")
-    else
-        recordExtern("km_release")
-        emitCall("km_release")
-    ins("pop rax")
-    ins("mov [rbp - " + string(off) + "], rax")
 
 // value in rax, handle at [rsp] (positional field init for `new`)
 void X86Backend::objSetField(idx: int)
@@ -568,10 +530,11 @@ void X86Backend::storeField(idx: int)
 
 // `arr[i] = v` — value in rax, index spilled, handle spilled below it
 void X86Backend::indexAssign()
-    ins("mov rcx, rax")
+    ins("mov rdx, rax")
+    ins("pop rcx")
     ins("pop rax")
-    ins("pop rdx")
-    ins("mov [rdx + rax*8 + 16], rcx")
+    indexCheck()
+    ins("mov [rax + rcx*8 + 16], rdx")
 
 // `dst += src` — value in rax, dst at [rbp - off].
 mut X86Backend::arrayAppendTo(off: int)
@@ -959,7 +922,7 @@ void X86Backend::ffiStructLoadWord(off: int, cls: string)
 
 mut X86Backend::ffiStructRet(typeId: int, nFields: int, slots: [int], coffs: [int], sizes: [int], flts: [int], usig: [int], ebClasses: [string])
     m_usesFfiStruct = true
-    // Stash the return registers before malloc clobbers them.  Eightbytes
+    // Stash the return registers before km_alloc clobbers them.  Eightbytes
     // are consumed in order; INTEGER ones use rax then rdx, SSE ones
     // xmm0 then xmm1.
     let gpRet = 0
@@ -1118,9 +1081,13 @@ mut X86Backend::header(): string
     h = h + "default rel\n\n"
     // The C runtime provides `main` (it marshals argv into a Komodo
     // string array); the program's own entry point is `km_program_main`.
-    h = h + "global km_program_main\n\n"
-    if m_usesMalloc then
-        h = h + "extern malloc\n"
+    h = h + "global km_program_main\n"
+    // marks code that allocates on the collected heap (runtime.c)
+    h = h + "global km_abi_gc\n\n"
+    if m_usesAlloc then
+        h = h + "extern km_alloc\n"
+    if m_usesIndexCheck then
+        h = h + "extern km_index_error\n"
     if m_usesAppend then
         h = h + "extern km_array_append\n"
         h = h + "extern km_array_grow\n"
@@ -1147,7 +1114,7 @@ fn X86Backend::footer(): string
             gi += 1
         if m_usesFfiStruct then
             r = r + "align 16\nkm_ffi_marshal: resb 256\n"
-    r = r + "\nsection .rodata\n" + join(m_rodata, "")
+    r = r + "\nsection .rodata\nkm_abi_gc: dq 1\n" + join(m_rodata, "")
     if m_vtabCount > 0 then
         r = r + join(m_vtblText, "")
         r = r + "__km_vtab: dq "

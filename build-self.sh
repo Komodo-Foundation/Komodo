@@ -58,7 +58,7 @@ fi
 [[ -f "$asm" ]] || { echo "bootstrap produced no $asm" >&2; exit 1; }
 
 nasm -f elf64 "$asm" -o "$here/build.kmc.o"
-gcc -no-pie -I"$here/stdlib" -o "$here/kmc" "$here/build.kmc.o" "$here"/stdlib/*.c -lm
+gcc -no-pie -I"$here/stdlib" -o "$here/kmc" "$here/build.kmc.o" "$here"/stdlib/*.c -lm -l:libgc.so.1
 rm -f "$here/build.kmc.o"
 echo "built $here/kmc"
 

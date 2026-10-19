@@ -10,19 +10,18 @@
 #include <dirent.h>
 #include "km_runtime.h"
 
-/* The whole stream, NUL-terminated; *len = bytes read.  Reads until EOF
- * instead of trusting the size the file reports, so /proc files, pipes
- * and files that grow while being read come back complete.  NULL when
- * memory runs out. */
+/* The whole stream, NUL-terminated, on the collected heap; *len =
+ * bytes read.  Reads until EOF instead of trusting the size the file
+ * reports, so /proc files, pipes and files that grow while being read
+ * come back complete. */
 static char *slurp(FILE *f, size_t *len)
 {
     size_t cap = 4096, n = 0;
-    char *buf = malloc(cap);
-    if (!buf) return NULL;
+    char *buf = km_alloc_atomic(cap);
     for (;;) {
         if (n + 1 >= cap) {
-            char *nb = realloc(buf, cap * 2);
-            if (!nb) { free(buf); return NULL; }
+            char *nb = km_alloc_atomic(cap * 2);
+            memcpy(nb, buf, n);
             buf = nb;
             cap *= 2;
         }
@@ -63,7 +62,7 @@ const char *read_all(long argc, KmArg *items)
     size_t got = 0;
     char *buf = slurp(f, &got);
     fclose(f);
-    return buf ? buf : "";
+    return buf;
 }
 
 /* file.write_all(path, data) */
@@ -102,7 +101,6 @@ KmArray *read_lines(long argc, KmArg *items)
     size_t got = 0;
     char *buf = slurp(f, &got);
     fclose(f);
-    if (!buf) return km_array_new(0);
 
     long lines = 1;
     for (size_t i = 0; i < got; i++)
@@ -116,15 +114,11 @@ KmArray *read_lines(long argc, KmArg *items)
             size_t end = i;
             if (end > start && buf[end - 1] == '\r') end--;
             if (i == got && start == got) break;   /* trailing newline */
-            char *line = malloc(end - start + 1);
-            memcpy(line, buf + start, end - start);
-            line[end - start] = '\0';
-            out->data[li++] = (long)line;
+            out->data[li++] = (long)km_strndup(buf + start, end - start);
             start = i + 1;
         }
     }
     out->len = li;
-    free(buf);
     return out;
 }
 
@@ -146,7 +140,7 @@ KmArray *list_dir(long argc, KmArg *items)
     long i = 0;
     while (i < n && (ent = readdir(d)))
         if (strcmp(ent->d_name, ".") && strcmp(ent->d_name, ".."))
-            out->data[i++] = (long)strdup(ent->d_name);
+            out->data[i++] = (long)km_strndup(ent->d_name, strlen(ent->d_name));
     out->len = i;
     closedir(d);
     return out;
@@ -154,20 +148,20 @@ KmArray *list_dir(long argc, KmArg *items)
 
 /* Recursively search the directory tree containing `from_path` for
  * `{name}.kmm` (then `{name}.km`); return its path, or 0. */
-static char *find_rec(const char *dir, const char *name)
+static const char *find_rec(const char *dir, const char *name)
 {
     DIR *d = opendir(dir);
     if (!d) return NULL;
     struct dirent *ent;
     char path[4096];
-    char *found = NULL;
+    const char *found = NULL;
     /* first: a direct hit in this directory */
     const char *exts[2] = { ".kmm", ".km" };
     for (int e = 0; e < 2 && !found; e++) {
         snprintf(path, sizeof path, "%s/%s%s", dir, name, exts[e]);
         struct stat st;
         if (stat(path, &st) == 0 && S_ISREG(st.st_mode))
-            found = strdup(path);
+            found = km_strndup(path, strlen(path));
     }
     /* then: recurse into subdirectories */
     rewinddir(d);

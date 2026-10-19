@@ -6,9 +6,8 @@
  * (KM_TAG_STR) or a small int; results are a fresh `char *`, a `long`
  * (0/1 for predicates, or an index), or a `KmArray *` of `char *`.
  *
- * Allocation policy matches the rest of the C stdlib (file.c's read_all,
- * list_dir): results are malloc'd and never freed — a program-lifetime
- * leak the conservative escape analysis is not asked to reason about.
+ * Results live on the collected heap (km_alloc_atomic / km_strndup, see
+ * km_runtime.h) like every other Komodo value.
  *
  * The bare `string(x)` value conversion is a separate compiler built-in
  * and has nothing to do with this module.
@@ -22,10 +21,7 @@
 
 static char *dup_n(const char *s, size_t n)
 {
-    char *out = malloc(n + 1);
-    memcpy(out, s, n);
-    out[n] = '\0';
-    return out;
+    return km_strndup(s, n);
 }
 
 /* string.length(s) : int  — byte length (mirrors #s). */
@@ -86,7 +82,7 @@ const char *string_join(long argc, KmArg *items)
         total += p ? strlen(p) : 0;
         if (i + 1 < parts->len) total += seplen;
     }
-    char *out = malloc(total + 1);
+    char *out = km_alloc_atomic(total + 1);
     char *w = out;
     for (long i = 0; i < parts->len; i++) {
         const char *p = (const char *)parts->data[i];
@@ -133,7 +129,7 @@ const char *string_replace(long argc, KmArg *items)
     if (hits == 0) return dup_n(s, strlen(s));
 
     size_t outlen = strlen(s) + (size_t)hits * (tlen - flen);
-    char *out = malloc(outlen + 1);
+    char *out = km_alloc_atomic(outlen + 1);
     char *w = out;
     const char *start = s, *hit;
     while ((hit = strstr(start, from))) {
@@ -186,7 +182,7 @@ static const char *map_case(const char *s, int up)
 {
     if (!s) return "";
     size_t n = strlen(s);
-    char *out = malloc(n + 1);
+    char *out = km_alloc_atomic(n + 1);
     for (size_t i = 0; i < n; i++)
         out[i] = up ? (char)toupper((unsigned char)s[i])
                     : (char)tolower((unsigned char)s[i]);
@@ -205,7 +201,7 @@ const char *string_repeat(long argc, KmArg *items)
     long n = items[1].value;
     if (!s || n <= 0) return "";
     size_t sn = strlen(s);
-    char *out = malloc(sn * (size_t)n + 1);
+    char *out = km_alloc_atomic(sn * (size_t)n + 1);
     char *w = out;
     for (long i = 0; i < n; i++) { memcpy(w, s, sn); w += sn; }
     *w = '\0';
@@ -219,7 +215,7 @@ const char *string_reverse(long argc, KmArg *items)
     const char *s = STR(items, 0);
     if (!s) return "";
     size_t n = strlen(s);
-    char *out = malloc(n + 1);
+    char *out = km_alloc_atomic(n + 1);
     for (size_t i = 0; i < n; i++)
         out[i] = s[n - 1 - i];
     out[n] = '\0';
@@ -251,14 +247,12 @@ static const char *pad_impl(const char *s, long width, const char *pad, int star
     if (sn >= width) return dup_n(s, (size_t)sn);
     long need = width - sn;
     long pn = (long)strlen(pad);
-    char *fill = malloc((size_t)need + 1);
+    char *out = km_alloc_atomic((size_t)width + 1);
+    char *fill = start ? out : out + sn;
     for (long i = 0; i < need; i++)
         fill[i] = pad[i % pn];
-    fill[need] = '\0';
-    char *out = malloc((size_t)width + 1);
-    if (start) { strcpy(out, fill); strcat(out, s); }
-    else       { strcpy(out, s); strcat(out, fill); }
-    free(fill);
+    memcpy(start ? out + need : out, s, (size_t)sn);
+    out[width] = '\0';
     return out;
 }
 
