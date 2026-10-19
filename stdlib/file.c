@@ -10,6 +10,31 @@
 #include <dirent.h>
 #include "km_runtime.h"
 
+/* The whole stream, NUL-terminated; *len = bytes read.  Reads until EOF
+ * instead of trusting the size the file reports, so /proc files, pipes
+ * and files that grow while being read come back complete.  NULL when
+ * memory runs out. */
+static char *slurp(FILE *f, size_t *len)
+{
+    size_t cap = 4096, n = 0;
+    char *buf = malloc(cap);
+    if (!buf) return NULL;
+    for (;;) {
+        if (n + 1 >= cap) {
+            char *nb = realloc(buf, cap * 2);
+            if (!nb) { free(buf); return NULL; }
+            buf = nb;
+            cap *= 2;
+        }
+        size_t got = fread(buf + n, 1, cap - 1 - n, f);
+        n += got;
+        if (got == 0) break;
+    }
+    buf[n] = '\0';
+    *len = n;
+    return buf;
+}
+
 /* file.exists(path) : bool  — a regular file exists at `path` */
 long exists(long argc, KmArg *items)
 {
@@ -35,14 +60,10 @@ const char *read_all(long argc, KmArg *items)
     const char *path = (const char *)items[0].value;
     FILE *f = fopen(path, "rb");
     if (!f) return "";
-    fseek(f, 0, SEEK_END);
-    long n = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    char *buf = malloc((size_t)n + 1);
-    size_t got = fread(buf, 1, (size_t)n, f);
-    buf[got] = '\0';
+    size_t got = 0;
+    char *buf = slurp(f, &got);
     fclose(f);
-    return buf;
+    return buf ? buf : "";
 }
 
 /* file.write_all(path, data) */
@@ -78,13 +99,10 @@ KmArray *read_lines(long argc, KmArg *items)
     const char *path = (const char *)items[0].value;
     FILE *f = fopen(path, "rb");
     if (!f) return km_array_new(0);
-    fseek(f, 0, SEEK_END);
-    long n = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    char *buf = malloc((size_t)n + 1);
-    size_t got = fread(buf, 1, (size_t)n, f);
-    buf[got] = '\0';
+    size_t got = 0;
+    char *buf = slurp(f, &got);
     fclose(f);
+    if (!buf) return km_array_new(0);
 
     long lines = 1;
     for (size_t i = 0; i < got; i++)

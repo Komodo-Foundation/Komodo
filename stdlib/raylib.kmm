@@ -112,10 +112,13 @@ extern fn   GetFrameTime(): f32
 extern fn   GetTime(): float          // raylib: `double GetTime(void)`
 extern void SetConfigFlags(flags: int)
 extern void SetExitKey(key: int)
+extern void SetWindowMinSize(width: int, height: int)
+extern void SetWindowSize(width: int, height: int)
 extern fn   GetScreenWidth(): int
 extern fn   GetScreenHeight(): int
 extern void DisableCursor()
 extern void EnableCursor()
+extern void SetMousePosition(x: int, y: int)
 extern void TakeScreenshot(fileName: string)
 
 // ── frame ───────────────────────────────────────────────────────────
@@ -146,6 +149,9 @@ extern void DrawGrid(slices: int, spacing: f32)
 // far cheaper than a DrawTriangle3D call per face (no struct marshalling
 // at all), which is what keeps a subdivided model interactive.
 extern void rlDisableBackfaceCulling()
+extern void rlDisableDepthTest()
+extern void rlSetClipPlanes(nearPlane: float, farPlane: float)
+extern void rlEnableDepthTest()
 extern void rlEnableBackfaceCulling()
 extern void rlDrawRenderBatchActive()
 extern void rlSetLineWidth(width: f32)
@@ -263,6 +269,9 @@ let KEY_UP be 265
 let KEY_LEFT_SHIFT be 340
 let KEY_LEFT_CONTROL be 341
 let KEY_LEFT_ALT be 342
+let KEY_RIGHT_ALT be 346
+let KEY_RIGHT_CONTROL be 345
+let KEY_RIGHT_SHIFT be 344
 let KEY_F1 be 290
 let KEY_F2 be 291
 let KEY_F3 be 292
@@ -424,3 +433,390 @@ void rl_round_line(x: int, y: int, w: int, h: int, radius: int, r: int, g: int, 
     if rn > 1.0 then
         rn = 1.0
     DrawRectangleRoundedLines(copy(rl_rect(x * 1.0, y * 1.0, w * 1.0, h * 1.0)), rn, 6, copy(rl_rgba(r, g, b, a)))
+
+// ── bool-returning input calls, made safe ───────────────────────────
+// These raylib functions return a C `bool`: only the low byte of rax is
+// defined, so the raw result must not be compared as a whole int.
+mut fn rl_key_down(k: int): int
+    return IsKeyDown(k) & 255
+
+mut fn rl_key_pressed(k: int): int
+    return IsKeyPressed(k) & 255
+
+mut fn rl_mouse_down(b: int): int
+    return IsMouseButtonDown(b) & 255
+
+mut fn rl_mouse_pressed(b: int): int
+    return IsMouseButtonPressed(b) & 255
+
+mut fn rl_mouse_released(b: int): int
+    return IsMouseButtonReleased(b) & 255
+
+mut fn rl_should_close(): int
+    return WindowShouldClose() & 255
+
+// ── custom GPU shaders via rlgl (all scalar / pointer calls) ─────────
+extern fn   rlLoadShaderProgram(vsCode: string, fsCode: string): int
+extern void rlUnloadShaderProgram(id: int)
+extern fn   rlGetLocationUniform(shaderId: int, uniformName: string): int
+extern fn   rlGetLocationAttrib(shaderId: int, attribName: string): int
+extern void rlSetShader(id: int, locs: int)
+extern void rlEnableShader(id: int)
+extern void rlDisableShader()
+extern fn   rlGetShaderIdDefault(): int
+extern fn   rlGetShaderLocsDefault(): int
+extern void rlSetUniform(locIndex: int, value: int, uniformType: int, count: int)
+extern void rlSetUniformSampler(locIndex: int, textureId: int)
+extern void rlTextureParameters(id: int, param: int, value: int)
+extern void rlGenTextureMipmaps(id: int, width: int, height: int, format: int, mipmaps: int)
+extern fn   GetApplicationDirectory(): string
+
+struct Image
+    data: int = 0
+    width: i32 = 0
+    height: i32 = 0
+    mipmaps: i32 = 0
+    format: i32 = 0
+
+// Image LoadImage(const char*) returns a 24-byte struct → hidden pointer.
+extern fn   LoadImage(sret: int, fileName: string): int
+extern void UnloadImage(image: Image)
+
+let RL_SHADER_UNIFORM_FLOAT be 0
+let RL_SHADER_UNIFORM_VEC2 be 1
+let RL_SHADER_UNIFORM_VEC3 be 2
+let RL_SHADER_UNIFORM_VEC4 be 3
+let RL_SHADER_UNIFORM_INT be 4
+
+// unsigned 32-bit return → clean int
+fn rl_u32(v: int): int
+    return v & 4294967295
+
+// signed 32-bit return (e.g. -1 for "not found") → clean int
+fn rl_i32(v: int): int
+    let x = v & 4294967295
+    if x >= 2147483648 then
+        return x - 4294967296
+    return x
+
+// IEEE-754 single-precision bit pattern of a Komodo float (a double).
+mut fn rl_f32bits(x: float): int
+    if x == 0.0 then
+        return 0
+    let sign = 0
+    let a = x
+    if a < 0.0 then
+        sign = 1
+        a = 0.0 - a
+    let e = 0
+    while a >= 2.0 do
+        a = a / 2.0
+        e += 1
+    while a < 1.0 do
+        a = a * 2.0
+        e -= 1
+    if e > 127 then
+        return (sign << 31) | (255 << 23)
+    if e < 0 - 126 then
+        return sign << 31
+    let mant = int((a - 1.0) * 8388608.0 + 0.5)
+    if mant >= 8388608 then
+        mant = 0
+        e += 1
+    return (sign << 31) | ((e + 127) << 23) | mant
+
+// Compile a shader and build its raylib location table (32 int32s
+// packed two per word).  Returns [id, ...16 words of locs].
+mut fn rl_shader_load(vs: string, fs: string): [int]
+    let id = rl_u32(rlLoadShaderProgram(vs, fs))
+    let locs: [int] = []
+    let i = 0
+    while i < 32 do
+        locs += [0 - 1]
+        i += 1
+    if id != 0 then
+        locs[0] = rl_i32(rlGetLocationAttrib(id, "vertexPosition"))
+        locs[1] = rl_i32(rlGetLocationAttrib(id, "vertexTexCoord"))
+        locs[3] = rl_i32(rlGetLocationAttrib(id, "vertexNormal"))
+        locs[5] = rl_i32(rlGetLocationAttrib(id, "vertexColor"))
+        locs[6] = rl_i32(rlGetLocationUniform(id, "mvp"))
+        locs[15] = rl_i32(rlGetLocationUniform(id, "texture0"))
+    let out: [int] = [id]
+    let w = 0
+    while w < 16 do
+        out += [(locs[w * 2] & 4294967295) | ((locs[w * 2 + 1] & 4294967295) << 32)]
+        w += 1
+    return out
+
+// Make `sh` (from rl_shader_load) the shader for the 3D batch.
+void rl_shader_begin(sh: [int])
+    rlDrawRenderBatchActive()
+    rlSetShader(sh[0], data(sh) + 8)
+    rlEnableShader(sh[0])
+
+void rl_shader_end()
+    rlDrawRenderBatchActive()
+    rlSetShader(rl_u32(rlGetShaderIdDefault()), rlGetShaderLocsDefault())
+
+mut fn rl_uloc(sh: [int], name: string): int
+    return rl_i32(rlGetLocationUniform(sh[0], name))
+
+void rl_uniform_f(loc: int, x: float)
+    if loc < 0 then
+        return
+    let b: [int] = [rl_f32bits(x)]
+    rlSetUniform(loc, data(b), RL_SHADER_UNIFORM_FLOAT, 1)
+
+void rl_uniform_v3(loc: int, x: float, y: float, z: float)
+    if loc < 0 then
+        return
+    let b: [int] = [rl_f32bits(x) | (rl_f32bits(y) << 32), rl_f32bits(z)]
+    rlSetUniform(loc, data(b), RL_SHADER_UNIFORM_VEC3, 1)
+
+void rl_uniform_v4(loc: int, x: float, y: float, z: float, w: float)
+    if loc < 0 then
+        return
+    let b: [int] = [rl_f32bits(x) | (rl_f32bits(y) << 32), rl_f32bits(z) | (rl_f32bits(w) << 32)]
+    rlSetUniform(loc, data(b), RL_SHADER_UNIFORM_VEC4, 1)
+
+void rl_uniform_i(loc: int, v: int)
+    if loc < 0 then
+        return
+    let b: [int] = [v & 4294967295]
+    rlSetUniform(loc, data(b), RL_SHADER_UNIFORM_INT, 1)
+
+// Load an image file (png/jpg) into a repeating, mipmapped, anisotropic
+// GPU texture.  Returns [id, width, height] (id 0 on failure).
+mut fn rl_load_texture_file(path: string): [int]
+    if (FileExists(path) & 255) == 0 then
+        return [0, 0, 0]
+    let buf: [int] = [0, 0, 0]
+    LoadImage(data(buf), path)
+    let w = buf[1] & 4294967295
+    let h = (buf[1] >> 32) & 4294967295
+    let mips = buf[2] & 4294967295
+    let fmt = (buf[2] >> 32) & 4294967295
+    if buf[0] == 0 or w == 0 then
+        return [0, 0, 0]
+    let id = rl_u32(rlLoadTexture(buf[0], w, h, fmt, mips))
+    let mb: [int] = [1]
+    rlGenTextureMipmaps(id, w, h, fmt, data(mb))
+    rlTextureParameters(id, 10242, 10497)
+    rlTextureParameters(id, 10243, 10497)
+    rlTextureParameters(id, 10240, 9729)
+    rlTextureParameters(id, 10241, 9987)
+    rlTextureParameters(id, 12288, 8)
+    UnloadImage(copy(new Image(buf[0], w, h, mips, fmt)))
+    return [id, w, h]
+
+extern void DrawTexturePro(texture: Texture2D, source: Rectangle, dest: Rectangle, origin: Vector2, rotation: f32, tint: Color)
+
+// Draw GPU texture `id` (w x h texels) into a screen rectangle.
+void rl_draw_tex(id: int, tw: int, th: int, x: int, y: int, w: int, h: int)
+    if id == 0 then
+        return
+    DrawTexturePro(copy(new Texture2D(id, tw, th, 1, 7)), copy(rl_rect(0.0, 0.0, tw * 1.0, th * 1.0)), copy(rl_rect(x * 1.0, y * 1.0, w * 1.0, h * 1.0)), copy(rl_vec2(0.0, 0.0)), 0.0, copy(rl_rgb(255, 255, 255)))
+
+// ── offscreen rendering (render textures) ───────────────────────────
+// RenderTexture2D is 44 bytes: id + colour Texture + depth Texture.
+struct RenderTexture2D
+    id: u32 = 0
+    texId: u32 = 0
+    texWidth: i32 = 0
+    texHeight: i32 = 0
+    texMipmaps: i32 = 0
+    texFormat: i32 = 0
+    depthId: u32 = 0
+    depthWidth: i32 = 0
+    depthHeight: i32 = 0
+    depthMipmaps: i32 = 0
+    depthFormat: i32 = 0
+
+extern fn   LoadRenderTexture(sret: int, width: int, height: int): int
+extern void BeginTextureMode(target: RenderTexture2D)
+extern void EndTextureMode()
+
+// Create a w x h render target; returns it as a struct (texId 0 = failed).
+mut fn rl_render_target(w: int, h: int): RenderTexture2D
+    let b: [int] = [0, 0, 0, 0, 0, 0]
+    LoadRenderTexture(data(b), w, h)
+    let r = new RenderTexture2D()
+    r.id = b[0] & 4294967295
+    r.texId = (b[0] >> 32) & 4294967295
+    r.texWidth = b[1] & 4294967295
+    r.texHeight = (b[1] >> 32) & 4294967295
+    r.texMipmaps = b[2] & 4294967295
+    r.texFormat = (b[2] >> 32) & 4294967295
+    r.depthId = b[3] & 4294967295
+    r.depthWidth = (b[3] >> 32) & 4294967295
+    r.depthHeight = b[4] & 4294967295
+    r.depthMipmaps = (b[4] >> 32) & 4294967295
+    r.depthFormat = b[5] & 4294967295
+    return r
+
+// Draw a render target's colour texture (stored upside-down) on screen.
+void rl_draw_target(r: RenderTexture2D, x: int, y: int, w: int, h: int)
+    DrawTexturePro(copy(new Texture2D(r.texId, r.texWidth, r.texHeight, 1, r.texFormat)), copy(rl_rect(0.0, 0.0, r.texWidth * 1.0, 0.0 - r.texHeight * 1.0)), copy(rl_rect(x * 1.0, y * 1.0, w * 1.0, h * 1.0)), copy(rl_vec2(0.0, 0.0)), 0.0, copy(rl_rgb(255, 255, 255)))
+
+// Render targets kept as 6 raw words (so other modules never need the
+// struct type in their annotations).
+extern fn   rlLoadFramebuffer(): int
+extern void rlFramebufferAttach(id: int, texId: int, attachType: int, texType: int, mipLevel: int)
+extern fn   rlFramebufferComplete(id: int): int
+extern void rlEnableFramebuffer(id: int)
+extern void rlDisableFramebuffer()
+
+// Raw OpenGL (libGL is already linked): this raylib build fails to
+// allocate empty render-target textures through rlLoadTexture, so render
+// targets are built directly — RGBA8 colour + 24-bit depth renderbuffer.
+extern void glGenTextures(n: int, out: int)
+extern void glBindTexture(target: int, tex: int)
+extern void glTexImage2D(target: int, level: int, ifmt: int, w: int, h: int, border: int, fmt: int, typ: int, data: int)
+extern void glTexParameteri(target: int, pname: int, param: int)
+extern void glGenRenderbuffers(n: int, out: int)
+extern void glBindRenderbuffer(target: int, rb: int)
+extern void glRenderbufferStorage(target: int, ifmt: int, w: int, h: int)
+extern void glBindFramebuffer(target: int, fb: int)
+extern void glFramebufferTexture2D(target: int, attach: int, textarget: int, tex: int, level: int)
+extern void glFramebufferRenderbuffer(target: int, attach: int, rbtarget: int, rb: int)
+extern fn   glCheckFramebufferStatus(target: int): int
+
+// Returns the 6-word RenderTexture2D layout (all zero on failure).
+mut fn rl_target_words(w: int, h: int): [int]
+    let fbo = rl_u32(rlLoadFramebuffer())
+    let ids: [int] = [0]
+    glGenTextures(1, data(ids))
+    let tex = ids[0] & 4294967295
+    glBindTexture(3553, tex)
+    glTexImage2D(3553, 0, 32856, w, h, 0, 6408, 5121, 0)
+    glTexParameteri(3553, 10241, 9729)
+    glTexParameteri(3553, 10240, 9729)
+    glTexParameteri(3553, 10242, 33071)
+    glTexParameteri(3553, 10243, 33071)
+    glBindTexture(3553, 0)
+    let rb: [int] = [0]
+    glGenRenderbuffers(1, data(rb))
+    let depth = rb[0] & 4294967295
+    glBindRenderbuffer(36161, depth)
+    glRenderbufferStorage(36161, 33190, w, h)
+    glBindRenderbuffer(36161, 0)
+    glBindFramebuffer(36160, fbo)
+    glFramebufferTexture2D(36160, 36064, 3553, tex, 0)
+    glFramebufferRenderbuffer(36160, 36096, 36161, depth)
+    let ok = glCheckFramebufferStatus(36160) & 65535
+    glBindFramebuffer(36160, 0)
+    if ok != 36053 then
+        return [0, 0, 0, 0, 0, 0]
+    return [fbo | (tex << 32), w | (h << 32), 1 | (7 << 32), depth | (w << 32), h | (1 << 32), 19]
+
+void rl_begin_target_words(b: [int])
+    let r = new RenderTexture2D()
+    r.id = b[0] & 4294967295
+    r.texId = (b[0] >> 32) & 4294967295
+    r.texWidth = b[1] & 4294967295
+    r.texHeight = (b[1] >> 32) & 4294967295
+    r.texMipmaps = b[2] & 4294967295
+    r.texFormat = (b[2] >> 32) & 4294967295
+    r.depthId = b[3] & 4294967295
+    r.depthWidth = (b[3] >> 32) & 4294967295
+    r.depthHeight = b[4] & 4294967295
+    r.depthMipmaps = (b[4] >> 32) & 4294967295
+    r.depthFormat = b[5] & 4294967295
+    BeginTextureMode(copy(r))
+
+void rl_draw_target_words(b: [int], x: int, y: int, w: int, h: int)
+    let tw = b[1] & 4294967295
+    let th = (b[1] >> 32) & 4294967295
+    let tid = (b[0] >> 32) & 4294967295
+    DrawTexturePro(copy(new Texture2D(tid, tw, th, 1, (b[2] >> 32) & 4294967295)), copy(rl_rect(0.0, 0.0, tw * 1.0, 0.0 - th * 1.0)), copy(rl_rect(x * 1.0, y * 1.0, w * 1.0, h * 1.0)), copy(rl_vec2(0.0, 0.0)), 0.0, copy(rl_rgb(255, 255, 255)))
+
+// ── paint workspace bindings ──
+// Raw OpenGL 3.3 entry points (all scalar / pointer arguments) used by the
+// texture-painting workspace for vertex buffers, multiple render targets,
+// blending, read-back and blits.  `f32` parameters bind C `float`.
+extern void glGenVertexArrays(n: int, out: int)
+extern void glBindVertexArray(id: int)
+extern void glDeleteVertexArrays(n: int, ids: int)
+extern void glGenBuffers(n: int, out: int)
+extern void glBindBuffer(target: int, id: int)
+extern void glBufferData(target: int, size: int, ptr: int, usage: int)
+extern void glDeleteBuffers(n: int, ids: int)
+extern void glVertexAttribPointer(index: int, size: int, typ: int, normalized: int, stride: int, offset: int)
+extern void glEnableVertexAttribArray(index: int)
+extern void glDisableVertexAttribArray(index: int)
+extern void glDrawArrays(mode: int, first: int, count: int)
+extern void glUseProgram(id: int)
+extern void glActiveTexture(unit: int)
+extern void glUniform1i(loc: int, v: int)
+extern void glUniform1f(loc: int, v: f32)
+extern void glUniform2f(loc: int, x: f32, y: f32)
+extern void glUniform3f(loc: int, x: f32, y: f32, z: f32)
+extern void glUniform4f(loc: int, x: f32, y: f32, z: f32, w: f32)
+extern void glUniform4fv(loc: int, count: int, ptr: int)
+extern void glUniformMatrix4fv(loc: int, count: int, transpose: int, ptr: int)
+extern void glDrawBuffers(n: int, bufs: int)
+extern void glReadBuffer(mode: int)
+extern void glViewport(x: int, y: int, w: int, h: int)
+extern void glEnable(cap: int)
+extern void glDisable(cap: int)
+extern void glBlendFunc(sfactor: int, dfactor: int)
+extern void glBlendFuncSeparate(srgb: int, drgb: int, sa: int, da: int)
+extern void glBlendEquation(mode: int)
+extern void glClearColor(r: f32, g: f32, b: f32, a: f32)
+extern void glClear(mask: int)
+extern void glDepthMask(flag: int)
+extern void glDepthFunc(func: int)
+extern void glColorMask(r: int, g: int, b: int, a: int)
+extern void glGenerateMipmap(target: int)
+extern void glTexParameterf(target: int, pname: int, v: f32)
+extern void glTexSubImage2D(target: int, level: int, x: int, y: int, w: int, h: int, fmt: int, typ: int, ptr: int)
+extern void glPixelStorei(pname: int, v: int)
+extern void glReadPixels(x: int, y: int, w: int, h: int, fmt: int, typ: int, out: int)
+extern void glGetIntegerv(pname: int, out: int)
+extern void glBlitFramebuffer(sx0: int, sy0: int, sx1: int, sy1: int, dx0: int, dy0: int, dx1: int, dy1: int, mask: int, filter: int)
+extern void glGenFramebuffers(n: int, out: int)
+extern void glDeleteFramebuffers(n: int, ids: int)
+extern void glDeleteTextures(n: int, ids: int)
+extern void glDeleteRenderbuffers(n: int, ids: int)
+extern void glFinish()
+extern fn   glGetError(): int
+// Matrix (64 B) is returned through a hidden result pointer: pass data(buf)
+// of an 8-word [int]; the 16 floats are row-major (raylib's m0, m4, ...).
+extern fn   rlGetMatrixModelview(sret: int): int
+extern fn   rlGetMatrixProjection(sret: int): int
+// C bool return: mask with & 255.
+extern fn   ExportImage(image: Image, fileName: string): int
+extern void DrawRectangleGradientH(posX: int, posY: int, width: int, height: int, left: Color, right: Color)
+extern void DrawRectangleGradientEx(rec: Rectangle, col1: Color, col2: Color, col3: Color, col4: Color)
+extern fn   GetRenderWidth(): int
+extern fn   GetRenderHeight(): int
+
+// Write w x h RGBA8 pixels at `ptr` (e.g. data(arr) of a packed [int]) as
+// a PNG.  Returns 1 on success.
+mut fn rl_export_rgba(ptr: int, w: int, h: int, path: string): int
+    return ExportImage(copy(new Image(ptr, w, h, 1, 7)), path) & 255
+
+// Decode an image file to CPU pixels: [ptr, width, height, format]
+// (ptr 0 on failure).  Free with rl_unload_image_words.
+mut fn rl_load_image_words(path: string): [int]
+    if (FileExists(path) & 255) == 0 then
+        return [0, 0, 0, 0]
+    let buf: [int] = [0, 0, 0]
+    LoadImage(data(buf), path)
+    let w = buf[1] & 4294967295
+    let h = (buf[1] >> 32) & 4294967295
+    let fmt = (buf[2] >> 32) & 4294967295
+    return [buf[0], w, h, fmt]
+
+void rl_unload_image_words(im: [int])
+    if im[0] != 0 then
+        UnloadImage(copy(new Image(im[0], im[1], im[2], 1, im[3])))
+// int return: 0 on success (creates parent directories too).
+extern fn   MakeDirectory(dirPath: string): int
+
+// Draw GPU texture `id` centred at (cx, cy), `size` px wide, rotated by
+// `angle` degrees, tinted white with alpha `a` (0..255).
+void rl_draw_tex_rot(id: int, tw: int, th: int, cx: float, cy: float, size: float, angle: float, a: int)
+    if id == 0 then
+        return
+    DrawTexturePro(copy(new Texture2D(id, tw, th, 1, 7)), copy(rl_rect(0.0, 0.0, tw * 1.0, th * 1.0)), copy(rl_rect(cx, cy, size, size)), copy(rl_vec2(size * 0.5, size * 0.5)), angle, copy(rl_rgba(255, 255, 255, a)))
