@@ -614,29 +614,71 @@ natively).  A folded boolean is emitted as the int `1` / `0`, so
 
 ## Memory
 
-A struct / class instance carries an 8-byte **reference count** in the
-word *before* the handle, so the type-id word and every field / vtable
-offset are unchanged; `new` sets it to 1. The runtime exposes
-`km_retain` / `km_release` (`stdlib/runtime.c`) — `km_release` frees the
-whole block, header included, at count zero, without recursing into
-fields.
+Komodo is **garbage-collected**. Every heap value — struct / class
+instance, array, string — lives on a conservative collected heap (the
+Boehm–Demers–Weiser collector, `libgc.so.1`, linked into every program)
+and is reclaimed once nothing reaches it. There is no `free`, and nothing
+can be freed too early: a value stays valid for as long as anything
+refers to it. Cycles are collected like everything else.
 
-Codegen then runs a **conservative escape analysis** (`Codegen::computeFreeable`
-in `modules/codegen_stmt.kmm`) per function. A `let`-bound local of heap
-type (struct / class handle, or array) is *freeable* when:
+- **Roots** are the stack, the registers and the program's data / bss
+  (top-level `let`s). Objects and arrays are scanned for pointers;
+  string bytes are allocated *atomic* (never scanned).
+- **Layout.** An object handle points at `[ type_id | field0 | … ]`; an
+  array handle at `[ len | cap | elements… ]`. `new` and array literals
+  call `km_alloc` (zeroed), C stdlib code builds strings with
+  `km_alloc_atomic` / `km_strndup` (`stdlib/km_runtime.h`).
+- **Growth.** `arr += …` grows in place with doubling; when the buffer
+  moves, the old one is left to the collector, so another alias of the
+  array stays valid (it no longer sees the appends).
+- **C interop.** `data(arr)` is an interior pointer, which the collector
+  honours, so the array stays alive while that pointer is on the stack or
+  in the program's / a library's static data. Memory owned by C (libc
+  `malloc`, a library's buffers) is *not* scanned: if C keeps a pointer
+  into Komodo data beyond the call, keep a Komodo reference to it too.
 
-- every initialiser and `=` value for it is a **fresh** producer — `new`,
-  an array literal, or `copy(...)`; and
-- it never **escapes**: not returned, not stored into a field / element /
-  global, not passed to a call, not aliased to another binding, not used
-  as a method receiver, not handed to `data()`. Only pass-through reads
-  (`v.f`, `v[i]`, `#v`, `v == null`) keep it freeable.
+**Heap ceiling.** A program may use at most 70 % of the memory available
+to it — physical RAM, or the cgroup / container limit when that is lower
+(e.g. `systemd-run -p MemoryMax=4G`). Set `KOMODO_MAX_HEAP` to change it
+(bytes, or with a `K`/`M`/`G`/`T` suffix, powers of 1024: `2G`, `512M`;
+`0` = no ceiling). When the live data no longer fits — or the system
+refuses memory — the program stops with one line on stderr and exit
+status **3**; generated code is never handed a null allocation:
 
-Such a value has refcount 1 for its whole life, so the compiler emits an
-unconditional free — `km_release` for objects, `km_drop_array` for arrays
-(arrays carry no count word) — at every `return`, at fall-through
-function exit, and before each fresh reassignment (the slot is
-zero-initialised so the first release is a harmless no-op). Everything
-the analysis is unsure about, and the fields / elements *inside* a freed
-object, are left to leak; cyclic structures always leak. The `stackvm`
-backend treats the hooks as no-ops.
+```
+Komodo: out of memory - heap limit 10.4 GB reached in Mesh::rebuild (raise it with KOMODO_MAX_HEAP)
+```
+
+**Runtime errors.** `arr[i]` / `arr[i] = v` check `0 <= i < #arr` inline
+(one compare); out of range throws an ordinary Komodo error, so `f(...)?`
+can catch it, and uncaught it reads
+`Uncaught error: array index 5 out of range (length 3) in parse`
+(status 1). String indexing `s[i]` is not checked (`s[#s]` is `""`).
+
+**Crashes.** A hardware fault never ends in a silent core dump. The
+runtime handles SIGSEGV, SIGBUS, SIGFPE, SIGILL and SIGABRT on its own
+signal stack (so a stack overflow is caught too), prints what happened,
+where, and the Komodo call stack — direct recursion folded into one line
+— then exits with 128 + the signal number (139 for SIGSEGV), the status a
+shell shows for that signal:
+
+```
+Komodo: crash - stack overflow (recursion too deep) in depth
+Komodo call stack (innermost first):
+    depth
+    depth   (x 130979, recursive)
+    main
+```
+
+Other headlines: `invalid memory access (a null value was used)`,
+`invalid memory access at address 0x…`, `integer division by zero`,
+`bus error`, `illegal instruction`, `aborted`. Function names come from
+the executable's own symbol table (so don't strip it); C frames are
+unwound through their unwind tables, generated code through its rbp
+frame chain.
+
+Code built by a compiler from before the collector (it allocates with raw
+`malloc` and lacks the `km_abi_gc` marker) still links and runs, with
+collection switched off — that keeps bootstrapping from an older `kmc`
+working (`build-self.sh` twice: the first run reports a fixpoint mismatch
+because the code generator changed, the second reaches the fixpoint).

@@ -39,6 +39,14 @@ extern void   GC_set_oom_fn(void *(*)(size_t));
 extern void   GC_set_warn_proc(void (*)(char *, unsigned long));
 extern void   GC_ignore_warn_proc(char *, unsigned long);
 extern size_t GC_get_heap_size(void);
+extern void   GC_set_min_bytes_allocd(size_t);
+
+/* The least a program allocates between two collections.  libgc
+ * otherwise collects after ~2/3 of the live data's size: a program that
+ * churns through short-lived values around a small live set (Meld's
+ * self-test allocates 17 GB over ~15 MB live) then collects every few MB
+ * and spends half its time marking. */
+#define KM_MIN_ALLOC_BETWEEN_GCS ((size_t)64 << 20)
 
 /* Blocks this large are only ever referenced from their first page
  * (a Komodo handle points at the header), which lets the collector skip
@@ -213,8 +221,14 @@ static void km_heap_init(void)
     GC_set_warn_proc(GC_ignore_warn_proc);
     GC_set_oom_fn(km_oom_fn);
     km_heap_limit = km_pick_heap_limit();
-    if (km_heap_limit)
+    size_t gap = KM_MIN_ALLOC_BETWEEN_GCS;
+    if (km_heap_limit) {
         GC_set_max_heap_size(km_heap_limit);
+        if (gap > km_heap_limit / 8)
+            gap = km_heap_limit / 8;
+    }
+    if (gap)
+        GC_set_min_bytes_allocd(gap);
     if (&km_abi_gc == NULL)
         GC_disable();
 }

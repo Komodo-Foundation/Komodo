@@ -35,16 +35,27 @@
 #include <sys/stat.h>
 #include "km_runtime.h"
 
-#define KM_MAX_PADS 256
-
-static struct __jmp_buf_tag *km_pads[KM_MAX_PADS];  /* each a jmp_buf */
-static int         km_pad_n = 0;
+/* The registered landing pads, innermost last.  Each points at a
+ * jmp_buf on its caller's stack (no heap data, so plain libc memory
+ * holds them); the array grows with the nesting depth of `f(...)?`
+ * calls, so a deep recursion through them never loses a pad. */
+static struct __jmp_buf_tag **km_pads;
+static long        km_pad_n = 0, km_pad_cap = 0;
 static const char *km_err_msg = NULL;
 
 void km_try_push(struct __jmp_buf_tag *b)
 {
-    if (km_pad_n < KM_MAX_PADS)
-        km_pads[km_pad_n++] = b;
+    if (km_pad_n == km_pad_cap) {
+        long cap = km_pad_cap ? km_pad_cap * 2 : 64;
+        struct __jmp_buf_tag **p = realloc(km_pads, (size_t)cap * sizeof *p);
+        if (!p) {
+            fputs("Komodo: out of memory - protected calls nested too deeply\n", stderr);
+            _exit(3);
+        }
+        km_pads = p;
+        km_pad_cap = cap;
+    }
+    km_pads[km_pad_n++] = b;
 }
 
 void km_try_pop(void)
@@ -63,6 +74,7 @@ void km_throw(const char *msg)
     km_err_msg = msg;
     if (km_pad_n > 0)
         _longjmp(km_pads[--km_pad_n], 1);
+    fflush(stdout);                  /* the program's output first, then the error */
     fprintf(stderr, "Uncaught error: %s\n", msg ? msg : "");
     exit(1);
 }

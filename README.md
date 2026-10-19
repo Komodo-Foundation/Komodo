@@ -66,6 +66,8 @@ it as a symlink on your `PATH` still finds this checkout's `kmc` / `stdlib/`.
 ## Requirements
 
 - `nasm` and `gcc` (for the x86 target — always needed)
+- the Boehm garbage collector runtime, `libgc.so.1` (Debian / Ubuntu package
+  `libgc1`) — every program links it; see *Memory* in `design.md`
 - Python 3 and the Komodo interpreter (`KomodoPy/main.py`) — only needed
   once, to bootstrap `kmc` (`install.sh` / `build-self.sh`), or if you're
   editing the compiler's own sources and want the interpreter's better error
