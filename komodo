@@ -350,7 +350,16 @@ fi
 # The finished binary is keyed on the exact assembly kmc produced plus
 # every link input (auto + manual) and the toolchain id. A hit means
 # nasm and gcc can both be skipped.
-link_sig="$(printf '%s\n' "${prefix_ldflags[@]:-}" "${auto_cc[@]:-}" "${extra_cc[@]:-}" | LC_ALL=C sort | sha256sum | cut -d' ' -f1)"
+# Link inputs that are files (a module's companion `link "shim.c"`, extra
+# .c / .o / .a after `--`) count by content, not just by name, so editing
+# one rebuilds the program.
+link_files_sig() {
+    local tok
+    for tok in "${auto_cc[@]:-}" "${extra_cc[@]:-}"; do
+        [[ -n "$tok" && "$tok" != -* && -f "$tok" ]] && printf '%s %s\n' "$tok" "$(sha_file "$tok")"
+    done
+}
+link_sig="$( { printf '%s\n' "${prefix_ldflags[@]:-}" "${auto_cc[@]:-}" "${extra_cc[@]:-}"; link_files_sig; } | LC_ALL=C sort | sha256sum | cut -d' ' -f1)"
 bin_key="$(sha_str "asm=$(sha_file "$asm")|link=$link_sig|stdlib=$stdlib_sig|$tool_id")"
 bin_hit="$cache/bin/$bin_key"
 
