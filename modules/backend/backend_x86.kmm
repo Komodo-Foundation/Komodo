@@ -45,6 +45,7 @@ private
     m_tryCatch: [string] = []       // protected-call: catch labels (nesting stack)
     m_tryDone: [string] = []        // protected-call: done labels (nesting stack)
     m_pSpan: int = 0                // peephole: source lines covered by the last rewrite
+    m_keepJumps: [string] = []      // targets of `and`/`or` branches whose rax is read at the join
 
 // ── line buffer ────────────────────────────────────────────────────
 
@@ -587,6 +588,29 @@ mut X86Backend::arrayRepeat()
     recordExtern("km_array_repeat")
     emitCall("km_array_repeat")
 
+// `dst += [v]` — value in rax, dst at [rbp - off].  km_array_push appends
+// it in place (the handle may move, and is stored back).
+mut X86Backend::arrayPushTo(off: int)
+    m_usesAppend = true
+    ins("mov rsi, rax")
+    ins("mov rdi, [rbp - " + string(off) + "]")
+    emitCall("km_array_push")
+    ins("mov [rbp - " + string(off) + "], rax")
+
+// `obj.field += [v]` — value in rax, receiver spilled by pushAcc().
+mut X86Backend::arrayPushToField(idx: int)
+    m_usesAppend = true
+    ins("mov rsi, rax")
+    ins("pop rax")
+    ins("mov rdi, [rax + " + string(8 + idx * 8) + "]")
+    ins("push rax")
+    emitCall("km_array_push")
+    ins("pop rcx")
+    ins("mov [rcx + " + string(8 + idx * 8) + "], rax")
+
+mut X86Backend::inPlaceAppend(): bool
+    return true
+
 // `self.field += src` (array append) — src in rax, receiver spilled by
 // pushAcc().  self.field = km_array_append(self.field, src).
 mut X86Backend::arrayAppendToField(idx: int)
@@ -622,9 +646,11 @@ void X86Backend::branchIfNonzero(name: string)
 // `and` / `or` short-circuit: `test` already leaves the value in rax, so
 // the "keep" forms are identical to the plain ones on x86.
 void X86Backend::branchIfZeroKeep(name: string)
+    m_keepJumps += [name]
     branchIfZero(name)
 
 void X86Backend::branchIfNonzeroKeep(name: string)
+    m_keepJumps += [name]
     branchIfNonzero(name)
 
 // loop-variable in rax spilled by pushAcc(), bound in rax; exit when the
@@ -1137,6 +1163,54 @@ fn spanEnd(src: [string], start: int, stop: string): int
         j += 1
     return -1
 
+// The jump taken when the `setcc al` line `line` sets rax to 1.
+fn jccOf(line: string): string
+    if line == "    sete al" then
+        return "je"
+    if line == "    setne al" then
+        return "jne"
+    if line == "    setl al" then
+        return "jl"
+    if line == "    setg al" then
+        return "jg"
+    if line == "    setle al" then
+        return "jle"
+    if line == "    setge al" then
+        return "jge"
+    if line == "    seta al" then
+        return "ja"
+    if line == "    setae al" then
+        return "jae"
+    if line == "    setb al" then
+        return "jb"
+    if line == "    setbe al" then
+        return "jbe"
+    return ""
+
+// The jump taken on the opposite condition.
+fn jccInverse(j: string): string
+    if j == "je" then
+        return "jne"
+    if j == "jne" then
+        return "je"
+    if j == "jl" then
+        return "jge"
+    if j == "jge" then
+        return "jl"
+    if j == "jg" then
+        return "jle"
+    if j == "jle" then
+        return "jg"
+    if j == "ja" then
+        return "jbe"
+    if j == "jbe" then
+        return "ja"
+    if j == "jae" then
+        return "jb"
+    if j == "jb" then
+        return "jae"
+    return ""
+
 // The first of `cands` that no line in src[lo to hi) mentions, or "".
 fn freeReg(src: [string], lo: int, hi: int, cands: [string]): string
     let c = 0
@@ -1182,6 +1256,26 @@ mut X86Backend::peepholeAt(src: [string], i: int): [string]
             return ["    mov rcx, " + b[13 to b.length]]
 
     // integer left operand, longer right operand: keep left in a scratch
+    // comparison straight into a branch: cmp / setcc / movzx / test / je
+    //   → cmp / jncc.  Skipped when the branch joins a value still in rax.
+    if (asmStarts(a, "    cmp ") or asmStarts(a, "    ucomisd ")) and i + 4 < n then
+        let br = src[i + 4]
+        let isJe = asmStarts(br, "    je near ")
+        let isJne = asmStarts(br, "    jne near ")
+        if isJe or isJne then
+            // the label follows "    je near " (12 bytes) or "    jne near " (13)
+            let off = 13
+            if isJe then
+                off = 12
+            let target = br[off to br.length]
+            let cc = jccOf(src[i + 1])
+            if cc != "" and src[i + 2] == "    movzx eax, al" and src[i + 3] == "    test rax, rax" and not (target in m_keepJumps) then
+                let jump = cc
+                if isJe then
+                    jump = jccInverse(cc)
+                m_pSpan = 5
+                return [a, "    " + jump + " near " + target]
+
     if a == "    push rax" then
         let j = spanEnd(src, i + 1, "    pop rax")
         if j >= i + 3 and src[j - 1] == "    mov rcx, rax" then
@@ -1266,6 +1360,7 @@ mut X86Backend::header(): string
     if m_usesAppend then
         h = h + "extern km_array_append\n"
         h = h + "extern km_array_grow\n"
+        h = h + "extern km_array_push\n"
     if m_usesStr then
         h = h + "extern km_str_concat\n"
         h = h + "extern km_str_repeat\n"

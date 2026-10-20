@@ -78,6 +78,20 @@ module km_compiler
 
 abstract class Backend
 public
+    // ── in-place append ────────────────────────────────────────────
+    // `dst += [v]` with one element: a backend that can append the value
+    // straight into the array (no one-element temporary) answers
+    // inPlaceAppend() = true and implements the two arrayPushTo* ops.
+    // The codegen takes the generic path everywhere else.
+    mut inPlaceAppend(): bool
+        return false
+    // value in the accumulator → appended to the array in local `off`
+    mut arrayPushTo(off: int)
+        throw ("internal: this backend cannot append in place")
+    // value in the accumulator, receiver spilled by pushAcc() → appended
+    // to its array field `idx`
+    mut arrayPushToField(idx: int)
+        throw ("internal: this backend cannot append in place")
     // ── labels ─────────────────────────────────────────────────────
     mut newLabel(): string
         m_labelId += 1

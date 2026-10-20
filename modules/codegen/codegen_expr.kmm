@@ -326,6 +326,24 @@ void Codegen::genArray(e: ArrayExpr)
         i += 1
     m_backend.arrayEnd()
 
+// `[v]` → v, the sole element of a one-element array literal; null for
+// anything else.  Used by `dst += [v]`, which appends v in place.
+fn Codegen::soleElement(e: Expression?): Expression?
+    if e is ArrayExpr then
+        if #e.elements == 1 then
+            return e.elements[0]
+    return null
+
+// The sole element `elem` of the literal `lit`, into the accumulator
+// stored exactly as genArray stores a literal element.
+void Codegen::genSoleElement(lit: Expression?, elem: Expression?)
+    let floatElems = elemTypeOf(exprType(lit)) == "float"
+    genExpr(elem)
+    if floatElems and exprType(elem) != "float" then
+        m_backend.cvtIntToFloat()
+    if floatElems or exprType(elem) == "float" then
+        m_backend.floatToBits()
+
 // Runtime type tag for a call argument (see km_runtime.h):
 //   0 int / pointer   1 float   2 string   3 bool   4+ array (packed,
 //   see arrayTag) — lets `print`/`string(x)` pretty-print array values.

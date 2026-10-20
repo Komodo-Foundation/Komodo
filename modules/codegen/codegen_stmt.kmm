@@ -214,6 +214,11 @@ void Codegen::genAssign(s: AssignStmt)
         if s.op == "+=" and fieldIsArray then
             m_backend.loadLocal(slotOf("self"), "int")
             m_backend.pushAcc()
+            let sole = soleElement(s.value)
+            if sole != null and m_backend.inPlaceAppend() then
+                genSoleElement(s.value, sole)
+                m_backend.arrayPushToField(idx)
+                return
             genExpr(s.value)
             m_backend.arrayAppendToField(idx)
             return
@@ -250,9 +255,14 @@ void Codegen::genAssign(s: AssignStmt)
     if immutOf(s.name) then
         throw ("cannot reassign immutable variable '" + s.name + "' (declared with `be`)")
     if s.op == "+=" and isArrayType(typeOf(s.name)) then
-        // array concat / append:  dst += src
-        genExpr(s.value)
-        m_backend.arrayAppendTo(slotOf(s.name))
+        // array concat / append:  dst += src  (`dst += [v]` appends v in place)
+        let sole = soleElement(s.value)
+        if sole != null and m_backend.inPlaceAppend() then
+            genSoleElement(s.value, sole)
+            m_backend.arrayPushTo(slotOf(s.name))
+        else
+            genExpr(s.value)
+            m_backend.arrayAppendTo(slotOf(s.name))
     else if isCompoundAssign(s.op) and typeOf(s.name) == "float" then
         // float `x <op>= v`  →  x = x <op> v  in the SSE unit
         m_backend.loadLocal(slotOf(s.name), "float")
@@ -350,6 +360,11 @@ void Codegen::genFieldAssign(s: FieldAssignStmt)
     if s.op == "+=" and isArrayType(fld) then
         genExpr(s.object)
         m_backend.pushAcc()
+        let sole = soleElement(s.value)
+        if sole != null and m_backend.inPlaceAppend() then
+            genSoleElement(s.value, sole)
+            m_backend.arrayPushToField(idx)
+            return
         genExpr(s.value)
         m_backend.arrayAppendToField(idx)
         return

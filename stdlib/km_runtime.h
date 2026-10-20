@@ -109,6 +109,7 @@ void km_index_error(long index, KmArray *a);
 KmArray *km_array_new(long len);
 KmArray *km_array_append(KmArray *dst, KmArray *src);
 KmArray *km_array_grow(KmArray *dst, KmArray *src);
+KmArray *km_array_push(KmArray *dst, long v);
 KmArray *km_array_repeat(KmArray *a, long n);
 const char *km_str_join(KmArray *parts, const char *sep);
 KmArray *km_array_slice(KmArray *a, long start, long end);

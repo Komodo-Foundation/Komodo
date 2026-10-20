@@ -328,6 +328,23 @@ KmArray *km_array_grow(KmArray *dst, KmArray *src)
     return dst;
 }
 
+/* `dst += [v]` — append one element in place, growing like km_array_grow
+ * but with no one-element temporary array.  Returns the (maybe moved)
+ * handle, which the caller stores back. */
+KmArray *km_array_push(KmArray *dst, long v)
+{
+    if (dst->len >= dst->cap) {
+        long ncap = dst->cap ? dst->cap * 2 : 4;
+        KmArray *grown = km_alloc(sizeof(KmArray) + (size_t)ncap * sizeof(long));
+        memcpy(grown, dst, sizeof(KmArray) + (size_t)dst->len * sizeof(long));
+        dst = grown;
+        dst->cap = ncap;
+    }
+    dst->data[dst->len] = v;
+    dst->len += 1;
+    return dst;
+}
+
 /* `join(parts, sep)` — concatenate an array of strings with `sep`
  * between them, in one pass / one allocation.  Lets a caller build a
  * large text (e.g. the assembler output) without the O(n^2) churn of
