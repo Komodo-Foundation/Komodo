@@ -115,13 +115,24 @@ mut X86Backend::addString(lexeme: string): string
     m_rodata += [name + ": db `" + body + "`, 0\n"]
     return name
 
+// How a program symbol is spelled in NASM text.  The `$` prefix makes
+// NASM read the name as an identifier even when it is also one of its
+// reserved words (`at`, `abs`, `rel`, `seg`, `byte`, `mov`, `ax`, …); the
+// object file still carries the bare name.  Every symbol that comes from
+// a Komodo name (function labels, call targets, externs) goes through it.
+fn X86Backend::asmSym(name: string): string
+    return "$" + name
+
 // A call target that isn't defined in this program is resolved at link
 // time — record it so the header can `extern` it.
 void X86Backend::recordExtern(sym: string)
     if isLocalFn(sym) then
         return
-    if not (sym in m_externs) then
-        m_externs += [sym]
+    addExtern(asmSym(sym))
+
+void X86Backend::addExtern(asmName: string)
+    if not (asmName in m_externs) then
+        m_externs += [asmName]
 
 // ── lifecycle ──────────────────────────────────────────────────────
 
@@ -136,7 +147,7 @@ void X86Backend::beginFunction(name: string, frame: int, paramOffsets: [int], is
     if isMain then
         label("km_program_main")
     else
-        label(name)
+        label(asmSym(name))
     ins("push rbp")
     ins("mov rbp, rsp")
     ins("push rbx")
@@ -435,7 +446,7 @@ void X86Backend::indexCheck()
         m_idxFail = newLabel()
     m_usesIndexCheck = true
     ins("cmp rcx, [rax]")
-    ins("jae " + m_idxFail)
+    ins("jae near " + m_idxFail)
 
 // object spilled by pushAcc(), index in rax.
 void X86Backend::indexAcc()
@@ -495,7 +506,7 @@ mut X86Backend::isTypeCheck(ids: [int])
     let falseL = newLabel()
     let endL = newLabel()
     ins("test rax, rax")
-    ins("jz " + falseL)
+    ins("jz near " + falseL)
     ins("mov rax, [rax]")
     ins("xor ecx, ecx")
     for id in ids do
@@ -504,7 +515,7 @@ mut X86Backend::isTypeCheck(ids: [int])
         ins("sete dl")
         ins("or rcx, rdx")
     ins("mov rax, rcx")
-    ins("jmp " + endL)
+    ins("jmp near " + endL)
     label(falseL)
     ins("xor eax, eax")
     label(endL)
@@ -597,15 +608,15 @@ void X86Backend::subFromLocal(off: int)
 // ── control flow ───────────────────────────────────────────────────
 
 void X86Backend::jump(name: string)
-    ins("jmp " + name)
+    ins("jmp near " + name)
 
 void X86Backend::branchIfZero(name: string)
     ins("test rax, rax")
-    ins("je " + name)
+    ins("je near " + name)
 
 void X86Backend::branchIfNonzero(name: string)
     ins("test rax, rax")
-    ins("jne " + name)
+    ins("jne near " + name)
 
 // `and` / `or` short-circuit: `test` already leaves the value in rax, so
 // the "keep" forms are identical to the plain ones on x86.
@@ -623,14 +634,14 @@ void X86Backend::forCompareExit(endL: string, descending: bool, inclusive: bool)
     ins("cmp rax, rcx")
     if descending then
         if inclusive then
-            ins("jl " + endL)
+            ins("jl near " + endL)
         else
-            ins("jle " + endL)
+            ins("jle near " + endL)
     else
         if inclusive then
-            ins("jg " + endL)
+            ins("jg near " + endL)
         else
-            ins("jge " + endL)
+            ins("jge near " + endL)
 
 void X86Backend::stepLocal(off: int, desc: bool)
     ins("mov rax, [rbp - " + string(off) + "]")
@@ -650,7 +661,7 @@ void X86Backend::forInHead(viOff: int, vaOff: int, endL: string)
     ins("mov rax, [rbp - " + string(viOff) + "]")
     ins("mov rdx, [rbp - " + string(vaOff) + "]")
     ins("cmp rax, [rdx]")
-    ins("jge " + endL)
+    ins("jge near " + endL)
 
 // rax = cursor, rdx = handle (left by forInHead).
 void X86Backend::forInElem(xOff: int)
@@ -674,7 +685,7 @@ mut X86Backend::call0(name: string)
     recordExtern(sym)
     ins("xor edi, edi")
     ins("xor esi, esi")
-    emitCall(sym)
+    emitCall(asmSym(sym))
 
 void X86Backend::callFrameBegin(n: int)
     ins("sub rsp, " + string(n * 16))
@@ -690,7 +701,7 @@ mut X86Backend::callFrameEnd(name: string, n: int)
     recordExtern(sym)
     ins("mov rdi, " + string(n))
     ins("mov rsi, rsp")
-    emitCall(sym)
+    emitCall(asmSym(sym))
     ins("add rsp, " + string(n * 16))
 
 // ── overload dispatch ─────────────────────────────────────────────
@@ -710,20 +721,20 @@ mut X86Backend::dispatchCaseBegin()
 // arg `j`'s tag word must equal `tag`.
 void X86Backend::dispatchTestTag(j: int, tag: int)
     ins("cmp qword [rsp + " + string(j * 16) + "], " + string(tag))
-    ins("jne " + m_dispNext)
+    ins("jne near " + m_dispNext)
 
 // arg `j` must be a non-null object handle whose header type id is one
 // of `ids`.
 mut X86Backend::dispatchTestType(j: int, ids: [int])
     ins("mov rax, [rsp + " + string(j * 16 + 8) + "]")
     ins("test rax, rax")
-    ins("jz " + m_dispNext)
+    ins("jz near " + m_dispNext)
     ins("mov rax, [rax]")
     let okL = newLabel()
     for id in ids do
         ins("cmp rax, " + string(id))
-        ins("je " + okL)
-    ins("jmp " + m_dispNext)
+        ins("je near " + okL)
+    ins("jmp near " + m_dispNext)
     label(okL)
 
 mut X86Backend::dispatchCall(sym: string, n: int)
@@ -731,8 +742,8 @@ mut X86Backend::dispatchCall(sym: string, n: int)
     recordExtern(s)
     ins("mov rdi, " + string(n))
     ins("mov rsi, rsp")
-    emitCall(s)
-    ins("jmp " + m_dispEnd)
+    emitCall(asmSym(s))
+    ins("jmp near " + m_dispEnd)
 
 void X86Backend::dispatchCaseEnd()
     label(m_dispNext)
@@ -811,10 +822,8 @@ void X86Backend::cCallArg(i: int, cls: string)
 
 mut X86Backend::cCallEnd(name: string, classes: [string])
     let n = #classes
-    // `$`-prefix so NASM always reads it as an identifier, never as one
-    // of its own reserved words (`abs`, `rel`, `seg`, …).
-    let sym = "$" + name
-    recordExtern(sym)
+    let sym = asmSym(name)
+    addExtern(sym)
 
     let gpRegs = ["rdi", "rsi", "rdx", "rcx", "r8", "r9"]
     let xmmRegs = ["xmm0", "xmm1", "xmm2", "xmm3", "xmm4", "xmm5", "xmm6", "xmm7"]
@@ -1016,7 +1025,7 @@ mut X86Backend::emitTrampoline(sym: string, argc: int)
         i += 1
     ins("mov rdi, " + string(n))
     ins("mov rsi, rsp")
-    ins("call " + sym)
+    ins("call " + asmSym(sym))
     ins("mov rsp, rbp")
     ins("pop rbp")
     ins("ret")
@@ -1051,7 +1060,7 @@ mut X86Backend::tryBegin()
     recordExtern("_setjmp")
     emitCall("_setjmp")
     ins("test eax, eax")
-    ins("jnz " + catchL)
+    ins("jnz near " + catchL)
 
 mut X86Backend::tryEnd()
     let catchL = m_tryCatch[#m_tryCatch - 1]
@@ -1064,7 +1073,7 @@ mut X86Backend::tryEnd()
     recordExtern("km_try_pop")
     emitCall("km_try_pop")
     ins("pop rax")
-    ins("jmp " + doneL)
+    ins("jmp near " + doneL)
     // caught path: km_throw already popped the pad; yield null
     label(catchL)
     ins("xor eax, eax")
