@@ -19,7 +19,7 @@ void main(args)
     let fileName: string = path or throw "File name not provided"
 
     if not file::exists(fileName) then
-        throw "File not found"
+        km_fail("error: file not found: " + fileName)
 
     // Trailing arguments, in any order:
     //   x86 | stackvm            code-generation target      (default x86)
@@ -49,10 +49,39 @@ void main(args)
     let gathered = gather(fileName, stdlibProbe)
     file::write_all(fileName + ".deps", join(gathered.deps, "\n"))
     file::write_all(fileName + ".links", join(gathered.links, "\n"))
-    let asm = km_compiler::compileOpt(gathered.source, target, strict, opt)
+    let compiled = km_compiler::compileMapped(gathered.source, target, strict, opt, gathered.deps, gathered.starts)?
+    if compiled == null then
+        // report as `file:line:col: error: …`, against the file the
+        // problem is actually in rather than the merged unit
+        let raw = km_error_message() or "compilation failed"
+        km_fail(km_compiler::locate(errorLine(raw), gathered.deps, gathered.starts))
+    let asm = compiled or ""          // km_fail above does not return
 
     let outputPath = fileName + ".asm"
     km_compiler::save(asm, outputPath)
+
+extern void km_fail(msg: string)
+
+// "3:7: msg" → "3:7: error: msg" (the position is mapped to its file
+// afterwards); a message with no leading position becomes "error: msg".
+fn errorLine(msg: string) : string
+    let n = msg.length
+    // a node synthesised by the compiler has no real position
+    if n > 5 and msg[0 to 5] == "0:0: " then
+        return "error: " + msg[5 to n]
+    let i = 0
+    let fields = 0
+    while fields < 2 do
+        let d = i
+        while i < n and msg[i] >= "0" and msg[i] <= "9" do
+            i += 1
+        if i == d or i >= n or msg[i] != ":" then
+            return "error: " + msg
+        i += 1
+        fields += 1
+    if i < n and msg[i] == " " then
+        return msg[0 to i] + " error: " + msg[(i + 1) to n]
+    return "error: " + msg
 
 // `gather`'s result: the merged source, the exact file list it was built
 // from, and every `link` target declared across those files, already
@@ -61,12 +90,7 @@ struct GatherResult
     source: string
     deps: [string]
     links: [string]
-
-fn listHas(xs: [string], v: string) : bool
-    for x in xs do
-        if x == v then
-            return true
-    return false
+    starts: [int]       // merged-source line at which each of `deps` begins
 
 // Everything in `path` before the last "/".  "." when there is none.
 fn dirOf(path: string) : string
@@ -94,8 +118,9 @@ fn isSource(name: string) : bool
 fn moduleOf(src: string) : string
     let i = 0
     let lineStart = 0
-    while i <= src.length do
-        if i == src.length or src[i] == "\n" then
+    let n = src.length              // a strlen — measure once, not per char
+    while i <= n do
+        if i == n or src[i] == "\n" then
             let m = moduleOnLine(src[lineStart to i])
             if m != "" then
                 return m
@@ -132,31 +157,39 @@ fn moduleOnLine(line: string) : string
 fn gather(rootPath: string, stdlibProbe: string) : GatherResult
     let seen: [string] = []
     let queue: [string] = [rootPath]
-    let out = ""
+    let parts: [string] = []        // joined once at the end (no O(n²) +)
+    let starts: [int] = []
+    let nextLine = 1
     let links: [string] = []
+    // `module` name per file already scanned, so a sibling search does
+    // not re-read and re-scan every file of the tree once per module file
+    let modPaths: [string] = []
+    let modNames: [string] = []
 
     while #queue > 0 do
         let p = queue[0]
         queue = queue[1 to #queue]
-        if listHas(seen, p) then
+        if (p in seen) then
             continue
         seen += [p]
 
         let src = file::read_all(p)
-        out = out + src + "\n"
+        starts += [nextLine]
+        nextLine += newlines(src) + 1   // + the "\n" that joins the parts
+        parts += [src]
 
         // 1. follow `import` lines to other modules
         for name in importNames(src) do
             let resolved = file::find(name, rootPath)
             if resolved == null then
                 resolved = file::find(name, stdlibProbe)
-            if resolved != null and not listHas(seen, resolved) then
+            if resolved != null and not (resolved in seen) then
                 queue += [resolved]
 
         // 1b. a block `extern "lib"` links its library automatically, in
         //     any file (unlike the `link` keyword it needs no `module`).
         for t in externLinkTargets(src) do
-            if not listHas(links, t) then
+            if not (t in links) then
                 links += [t]
 
         // 2. a module file: merge its siblings, and collect its `link`s
@@ -165,19 +198,67 @@ fn gather(rootPath: string, stdlibProbe: string) : GatherResult
         //    own, file-precise way to find the same declarations without
         //    threading the AST back out of the compile).
         let mod = moduleOf(src)
+        modPaths += [p]
+        modNames += [mod]
         if mod != "" then
+            let base = dirOf(p)
             for t in linkTargets(src) do
-                if not listHas(links, t) then
-                    links += [t]
+                // `link name` is already a ready `-lname` token; a quoted
+                // `link "path"` (anything not starting `-`) names a
+                // companion source file and is resolved against the
+                // directory of the module that declared it, unless it is
+                // already absolute — so a library can ship its C shim
+                // next to its .kmm and still be `import`ed from anywhere.
+                let tok = t
+                if tok.length > 0 and tok[0 to 1] != "-" and tok[0 to 1] != "/" then
+                    tok = base + "/" + tok
+                if not (tok in links) then
+                    links += [tok]
 
-            let dir = dirOf(p)
-            for entry in file::list_dir(dir) do
-                if isSource(entry) then
-                    let sib = dir + "/" + entry
-                    if not listHas(seen, sib) and moduleOf(file::read_all(sib)) == mod then
+            // Sibling files declaring the same module — searched through
+            // the whole subtree of this file's directory, so the compiler
+            // sources may be grouped into folders (frontend/, codegen/, …).
+            for sib in sourceTree(dirOf(p)) do
+                if not (sib in seen) and not (sib in queue) then
+                    let k = 0
+                    let sm = ""
+                    let known = false
+                    while k < #modPaths do
+                        if modPaths[k] == sib then
+                            sm = modNames[k]
+                            known = true
+                            break
+                        k += 1
+                    if not known then
+                        sm = moduleOf(file::read_all(sib))
+                        modPaths += [sib]
+                        modNames += [sm]
+                    if sm == mod then
                         queue += [sib]
 
-    return new GatherResult(out, seen, links)
+    return new GatherResult(join(parts, "\n") + "\n", seen, links, starts)
+
+fn newlines(src: string) : int
+    let c = 0
+    let i = 0
+    let n = src.length
+    while i < n do
+        if src[i] == "\n" then
+            c += 1
+        i += 1
+    return c
+
+// Every `.km` / `.kmm` under `dir`, recursively.
+fn sourceTree(dir: string) : [string]
+    let out: [string] = []
+    for entry in file::list_dir(dir) do
+        let full = dir + "/" + entry
+        if file::is_dir(full) != 0 then
+            for nested in sourceTree(full) do
+                out += [nested]
+        else if isSource(entry) then
+            out += [full]
+    return out
 
 // `link <name>` (a bare identifier → the linker flag `-lname`) or
 // `link "path/to/file.c"` (a quoted path, kept as-is — relative to
@@ -188,8 +269,9 @@ fn linkTargets(src: string) : [string]
     let out: [string] = []
     let i = 0
     let lineStart = 0
-    while i <= src.length do
-        if i == src.length or src[i] == "\n" then
+    let n = src.length              // a strlen — measure once, not per char
+    while i <= n do
+        if i == n or src[i] == "\n" then
             let t = linkOnLine(src[lineStart to i])
             if t != "" then
                 out += [t]
@@ -229,8 +311,9 @@ fn externLinkTargets(src: string) : [string]
     let out: [string] = []
     let i = 0
     let lineStart = 0
-    while i <= src.length do
-        if i == src.length or src[i] == "\n" then
+    let n = src.length              // a strlen — measure once, not per char
+    while i <= n do
+        if i == n or src[i] == "\n" then
             let t = externOnLine(src[lineStart to i])
             if t != "" then
                 out += [t]
@@ -272,8 +355,9 @@ fn importNames(src: string) : [string]
     let names: [string] = []
     let i = 0
     let lineStart = 0
-    while i <= src.length do
-        if i == src.length or src[i] == "\n" then
+    let n = src.length              // a strlen — measure once, not per char
+    while i <= n do
+        if i == n or src[i] == "\n" then
             let name = importOnLine(src[lineStart to i])
             if name != "" then
                 names += [name]

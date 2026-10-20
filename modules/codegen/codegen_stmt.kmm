@@ -5,214 +5,6 @@ module km_compiler
 //  concrete instruction is emitted through `m_backend` (see backend.kmm).
 // ═══════════════════════════════════════════════════════════════════════
 
-// ═══ conservative auto-free: escape analysis ═════════════════════════
-//
-//  A `let`-bound local of heap type (struct / class handle, or array) is
-//  *freeable* — released at every function exit, and on each fresh
-//  reassignment — when it provably never escapes: it is only ever read
-//  (`v.f`, `v[i]`, `#v`, `v == null`), never returned, stored into a
-//  field / element / global, passed to a call, aliased to another
-//  binding, or used as a method receiver, and its every initialiser /
-//  `=` value is a *fresh* producer (`new`, an array literal, or `copy`).
-//  Such a value has refcount 1 for its whole life, so the free is sound;
-//  anything the analysis is unsure about is left to leak.
-
-mut Codegen::computeFreeable(func: FunctionDecl)
-    m_freeNames = []
-    m_freeObjOffs = []
-    m_freeArrOffs = []
-    m_escaped = []
-    for p in func.params do
-        m_escaped += [p.name]           // the caller owns a parameter
-    escBlock(func.body)
-    collectFreeable(func.body)
-
-fn Codegen::isFreshExpr(e: Expression?): bool
-    if e is NewExpr then
-        return true
-    if e is ArrayExpr then
-        return true
-    if e is CallExpr then
-        return e.name == "copy"
-    return false
-
-// `e` denotes a value that is being *captured* somewhere that outlives
-//  the statement (bound to a name, stored in a field / array, returned,
-//  passed to a call).  Escape every binding whose value is captured;
-//  a base that is merely *read* through (`x.f`, `x[i]`, `#x`,
-//  arithmetic, a comparison) is not.
-mut Codegen::markEscaped(e: Expression?)
-    if e == null then
-        return
-    if e is Identifier then
-        m_escaped += [e.name]
-    else if e is MemberExpr then
-        escExpr(e.object)
-    else if e is IndexExpr then
-        escExpr(e.object)
-        escExpr(e.index)
-    else if e is SliceExpr then
-        escExpr(e.object)
-        escExpr(e.start)
-        escExpr(e.end)
-    else if e is BinaryOp then
-        if e.op == "and" or e.op == "or" then
-            // value-select: either operand can become the result
-            markEscaped(e.left)
-            markEscaped(e.right)
-        else
-            escExpr(e.left)
-            escExpr(e.right)
-    else if e is UnaryOp then
-        if e.op == "#" then
-            escExpr(e.operand)
-        else
-            escExpr(e.operand)
-    else if e is NewExpr then
-        for a in e.args do
-            markEscaped(a)
-    else if e is ArrayExpr then
-        for el in e.elements do
-            markEscaped(el)
-    else if e is RangeExpr then
-        escExpr(e.start)
-        escExpr(e.end)
-    else if e is ThrowExpr then
-        markEscaped(e.message)
-    else if e is CallExpr then
-        let d = dotIndex(e.name)
-        if d > 0 then
-            m_escaped += [e.name[0 to d]]
-        for a in e.args do
-            markEscaped(a)
-
-// Walk `e` in a position that is a *read*: only `x.f`, `x[i]`, `#x` and
-// equality keep the base unescaped; anything else falls to `markEscaped`.
-mut Codegen::escExpr(e: Expression?)
-    if e == null then
-        return
-    if e is Identifier then
-        return
-    if e is MemberExpr then
-        escExpr(e.object)
-    else if e is IndexExpr then
-        escExpr(e.object)
-        markEscaped(e.index)
-    else if e is SliceExpr then
-        escExpr(e.object)
-        markEscaped(e.start)
-        markEscaped(e.end)
-    else if e is UnaryOp then
-        if e.op == "#" then
-            escExpr(e.operand)
-        else
-            markEscaped(e.operand)
-    else if e is BinaryOp then
-        if e.op == "==" or e.op == "!=" then
-            escExpr(e.left)
-            escExpr(e.right)
-        else
-            markEscaped(e.left)
-            markEscaped(e.right)
-    else
-        markEscaped(e)
-
-mut Codegen::escBlock(stmts: [Statement])
-    for s in stmts do
-        escStmt(s)
-
-mut Codegen::escStmt(s: Statement?)
-    if s is VarDecl then
-        if not s.immutable then
-            if isFreshExpr(s.init) then
-                escFreshChildren(s.init)
-            else
-                m_escaped += [s.name]
-                markEscaped(s.init)
-    else if s is AssignStmt then
-        if s.op == "=" then
-            if isFreshExpr(s.value) then
-                escFreshChildren(s.value)
-            else
-                m_escaped += [s.name]
-                markEscaped(s.value)
-        else
-            markEscaped(s.value)
-    else if s is FieldAssignStmt then
-        escExpr(s.object)
-        markEscaped(s.value)
-    else if s is IndexAssignStmt then
-        escExpr(s.object)
-        markEscaped(s.index)
-        markEscaped(s.value)
-    else if s is ExprStmt then
-        escExpr(s.expr)
-    else if s is ReturnStmt then
-        markEscaped(s.value)
-    else if s is IfStmt then
-        escExpr(s.cond)
-        escBlock(s.thenBody)
-        escBlock(s.elseBody)
-    else if s is WhileStmt then
-        escExpr(s.cond)
-        escBlock(s.body)
-    else if s is ForStmt then
-        escExpr(s.start)
-        escExpr(s.end)
-        escBlock(s.body)
-    else if s is ForInStmt then
-        markEscaped(s.iterable)
-        escBlock(s.body)
-    else if s is MatchStmt then
-        escExpr(s.subject)
-        for c in s.cases do
-            markEscaped(c.pattern)
-            escBlock(c.body)
-    else if s is ThrowStmt then
-        markEscaped(s.message)
-
-// A fresh producer still escapes whatever it is *given* (constructor
-// args, array elements, the `copy` source).
-mut Codegen::escFreshChildren(e: Expression?)
-    if e is NewExpr then
-        for a in e.args do
-            markEscaped(a)
-    else if e is ArrayExpr then
-        for el in e.elements do
-            markEscaped(el)
-    else if e is CallExpr then
-        for a in e.args do
-            markEscaped(a)
-
-mut Codegen::collectFreeable(stmts: [Statement])
-    for s in stmts do
-        if s is VarDecl and not s.immutable then
-            if isFreshExpr(s.init) and not listHas(m_escaped, s.name) and not listHas(m_freeNames, s.name) then
-                let ty = typeOf(s.name)
-                if isArrayType(ty) then
-                    m_freeNames += [s.name]
-                    m_freeArrOffs += [slotOf(s.name)]
-                else if isObjType(ty) then
-                    m_freeNames += [s.name]
-                    m_freeObjOffs += [slotOf(s.name)]
-        else if s is IfStmt then
-            collectFreeable(s.thenBody)
-            collectFreeable(s.elseBody)
-        else if s is WhileStmt then
-            collectFreeable(s.body)
-        else if s is ForStmt then
-            collectFreeable(s.body)
-        else if s is ForInStmt then
-            collectFreeable(s.body)
-        else if s is MatchStmt then
-            for c in s.cases do
-                collectFreeable(c.body)
-
-mut Codegen::isFreeable(name: string): bool
-    return listHas(m_freeNames, name)
-
-// ════════════════════════════════════════════════════════════════════
-
 void Codegen::genFunction(func: FunctionDecl)
     m_names = []
     m_offsets = []
@@ -241,10 +33,6 @@ void Codegen::genFunction(func: FunctionDecl)
     while m_frame % 16 != 0 do
         m_frame += 8
 
-    // which heap locals are safe to free at scope exit (needs the slot
-    // offsets, so after collectLocals)
-    computeFreeable(func)
-
     let paramOffsets: [int] = []
     for p in func.params do
         paramOffsets += [slotOf(p.name)]
@@ -255,7 +43,6 @@ void Codegen::genFunction(func: FunctionDecl)
     if func.linkName != null then
         emitName = func.linkName
     m_backend.beginFunction(emitName, m_frame, paramOffsets, func.name == "main")
-    m_backend.zeroFreeableSlots(m_freeObjOffs + m_freeArrOffs)
 
     // top-level `let` initialisers run once, at the very start of `main`
     if func.name == "main" and (func.ownerClass or "") == "" then
@@ -265,9 +52,6 @@ void Codegen::genFunction(func: FunctionDecl)
     for s in func.body do
         genStmt(s)
     macroScopeRestore(macroMark)
-
-    // fall-through exit: release every freeable local
-    m_backend.emitScopeReleases(m_freeObjOffs, m_freeArrOffs, false, false)
     m_backend.endFunction()
 
 void Codegen::genStmt(s: Statement?)
@@ -278,12 +62,8 @@ void Codegen::genStmt(s: Statement?)
             pushMacro(s.name, s.init)
         else if s.init != null then
             genExpr(s.init)
-            if isFreeable(s.name) then
-                // release whatever the slot held (0 on first execution —
-                // the prologue zeroed it; non-zero on a later loop turn)
-                m_backend.releaseStoreLocal(slotOf(s.name), isArrayType(typeOf(s.name)))
-            else
-                storeVar(s.name)
+            coerceToFloat(typeOf(s.name), s.init)
+            storeVar(s.name)
     else if s is AssignStmt then
         genAssign(s)
     else if s is FieldAssignStmt then
@@ -434,6 +214,11 @@ void Codegen::genAssign(s: AssignStmt)
         if s.op == "+=" and fieldIsArray then
             m_backend.loadLocal(slotOf("self"), "int")
             m_backend.pushAcc()
+            let sole = soleElement(s.value)
+            if sole != null and m_backend.inPlaceAppend() then
+                genSoleElement(s.value, sole)
+                m_backend.arrayPushToField(idx)
+                return
             genExpr(s.value)
             m_backend.arrayAppendToField(idx)
             return
@@ -470,9 +255,14 @@ void Codegen::genAssign(s: AssignStmt)
     if immutOf(s.name) then
         throw ("cannot reassign immutable variable '" + s.name + "' (declared with `be`)")
     if s.op == "+=" and isArrayType(typeOf(s.name)) then
-        // array concat / append:  dst += src
-        genExpr(s.value)
-        m_backend.arrayAppendTo(slotOf(s.name))
+        // array concat / append:  dst += src  (`dst += [v]` appends v in place)
+        let sole = soleElement(s.value)
+        if sole != null and m_backend.inPlaceAppend() then
+            genSoleElement(s.value, sole)
+            m_backend.arrayPushTo(slotOf(s.name))
+        else
+            genExpr(s.value)
+            m_backend.arrayAppendTo(slotOf(s.name))
     else if isCompoundAssign(s.op) and typeOf(s.name) == "float" then
         // float `x <op>= v`  →  x = x <op> v  in the SSE unit
         m_backend.loadLocal(slotOf(s.name), "float")
@@ -498,10 +288,15 @@ void Codegen::genAssign(s: AssignStmt)
         storeVar(s.name)
     else
         genExpr(s.value)
-        if isFreeable(s.name) then
-            m_backend.releaseStoreLocal(slotOf(s.name), isArrayType(typeOf(s.name)))
-        else
-            storeVar(s.name)
+        coerceToFloat(typeOf(s.name), s.value)
+        storeVar(s.name)
+
+// An integer-class value headed for a `float` slot (`let x: float = 2`,
+// `x = n`) is widened in the SSE unit first — otherwise its raw bits
+// would be stored and read back as a denormal.
+void Codegen::coerceToFloat(dstType: string, value: Expression?)
+    if dstType == "float" and value != null and exprType(value) == "int" then
+        m_backend.cvtIntToFloat()
 
 // `g = v` / `g += v` / `g -= v` for a top-level variable `g`.  The
 // compound forms lower to `g = g <op> v`, mirroring the local path.
@@ -510,6 +305,7 @@ void Codegen::genGlobalAssign(s: AssignStmt)
     let ty = globalTypeOf(name)
     if s.op == "=" then
         genExpr(s.value)
+        coerceToFloat(ty, s.value)
         m_backend.storeGlobal(name, ty)
         return
     // `g += elem` where `g` is an array — append one element (grow),
@@ -564,6 +360,11 @@ void Codegen::genFieldAssign(s: FieldAssignStmt)
     if s.op == "+=" and isArrayType(fld) then
         genExpr(s.object)
         m_backend.pushAcc()
+        let sole = soleElement(s.value)
+        if sole != null and m_backend.inPlaceAppend() then
+            genSoleElement(s.value, sole)
+            m_backend.arrayPushToField(idx)
+            return
         genExpr(s.value)
         m_backend.arrayAppendToField(idx)
         return
@@ -658,9 +459,6 @@ void Codegen::genReturn(s: ReturnStmt)
             m_backend.cvtIntToFloat()
         else if m_curRet == "int" and vt == "float" then
             m_backend.cvtFloatToInt()
-    // free every escape-proof heap local before leaving, keeping the
-    // return value intact across the C calls
-    m_backend.emitScopeReleases(m_freeObjOffs, m_freeArrOffs, s.value != null, m_curRet == "float")
     m_backend.epilogue()
 
 void Codegen::genIf(s: IfStmt)

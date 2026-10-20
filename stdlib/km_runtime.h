@@ -72,28 +72,44 @@ static inline long km_from_float(double d)
 }
 
 /*
- * Object lifetime.  A struct / class instance carries a reference count in
- * the 8-byte word *just before* the handle ( (long *)handle - 1 ); the
- * type-id word the rest of the runtime reads still sits at handle[0], so
- * every existing field / vtable offset is unchanged.  `objNew` initialises
- * the count to 1.
+ * Memory (runtime.c).  Every heap value — object, array, string — lives
+ * on the collected heap and is reclaimed once nothing reaches it; nothing
+ * is freed by hand.  A C stdlib function builds its results with these
+ * (never libc malloc, whose blocks the collector cannot see into):
  *
- *   km_retain   — ++count            (reserved for a future full RC pass)
- *   km_release  — --count; free the block (header included) at zero.  It
- *                 does NOT recurse into fields: the compiler only emits it
- *                 for objects a conservative escape analysis proved are
- *                 unshared, so the count is always exactly 1 here.
- *   km_drop_array — free a heap array the same analysis proved unshared
- *                 (arrays carry no refcount word).
+ *   km_alloc        — zeroed memory that may hold pointers (arrays, objects)
+ *   km_alloc_atomic — pointer-free bytes (string text); not zeroed
+ *   km_strndup      — a collected NUL-terminated copy of n bytes
+ *
+ * None of them returns NULL: running out of memory (or into the heap
+ * ceiling, KOMODO_MAX_HEAP) ends the program with a message, status 3.
  */
+#include <stddef.h>
+void *km_alloc(size_t n);
+void *km_alloc_atomic(size_t n);
+char *km_strndup(const char *s, size_t n);
+void  km_fmt_bytes(char *buf, size_t cap, size_t n);
+
+/* Kept only for code built by a pre-collector compiler: no-ops. */
 void km_retain(void *handle);
 void km_release(void *handle);
 void km_drop_array(void *handle);
+
+/* Crash safety (km_error.c).  `km_crash_init` installs the handlers that
+ * turn SIGSEGV / SIGBUS / SIGFPE / SIGILL / SIGABRT — and a stack
+ * overflow — into a readable message plus a Komodo stack trace.
+ * `km_komodo_caller` names the innermost Komodo function on the current
+ * call stack ("" when there is none).  `km_index_error` is where an
+ * out-of-range `arr[i]` lands: it throws a Komodo error. */
+void km_crash_init(void);
+void km_komodo_caller(char *buf, size_t cap);
+void km_index_error(long index, KmArray *a);
 
 /* ── compiler-internal runtime (operator lowerings, not Komodo calls) ── */
 KmArray *km_array_new(long len);
 KmArray *km_array_append(KmArray *dst, KmArray *src);
 KmArray *km_array_grow(KmArray *dst, KmArray *src);
+KmArray *km_array_push(KmArray *dst, long v);
 KmArray *km_array_repeat(KmArray *a, long n);
 const char *km_str_join(KmArray *parts, const char *sep);
 KmArray *km_array_slice(KmArray *a, long start, long end);
@@ -118,6 +134,9 @@ long        km_str_eq(const char *a, const char *b);
 const char *km_str_slice(const char *s, long start, long end);
 const char *km_str_char(const char *s, long i);
 long        km_str_cmp(const char *a, const char *b);
+long        km_str_hash(const char *s);
+long        km_str_find(const char *s, const char *sub);
+const char *km_str_sub(const char *s, long n, long start, long end);
 /* `x in coll` membership — 1 / 0 */
 long        km_in_str(const char *haystack, const char *needle);
 long        km_in_array(KmArray *a, long v, long leaf);
@@ -177,6 +196,7 @@ double math_pi(long argc, KmArg *items);
 double math_e(long argc, KmArg *items);
 
 /* ── module: file (extra) ── */
+long      is_dir(long argc, KmArg *items);
 void      append_all(long argc, KmArg *items);
 KmArray  *read_lines(long argc, KmArg *items);
 

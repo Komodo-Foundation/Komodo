@@ -89,23 +89,36 @@ struct Token
     line: int
     column: int
 
+// Bounded substring: `s[start to end]` given `n == #s` (stdlib/runtime.c).
+extern fn km_str_sub(s: string, n: int, start: int, end: int): string
+
 // The lexer's state lives on the class; every operation on it is
 // declared within the class body with public/private sections.
 class Lexer
 public
     constructor(src: string)
         m_src = src
+        // `.length` of a string is a strlen — O(n).  Every peek() checks
+        // the bound, so re-measuring the whole source each time made
+        // lexing quadratic; the source never changes, so measure once.
+        m_len = src.length
 
     mut tokenize(): [Token]
-        while m_pos < m_src.length do
+        while m_pos < m_len do
             skipWhitespace()
 
-            if m_pos >= m_src.length then
+            if m_pos >= m_len then
                 break
 
             let c = peek()
 
             handleLineStart(c)
+
+            // where this token starts — tokens are built after their text
+            // is consumed, so stamp the start position on afterwards
+            let firstTok = #m_tokens
+            let startLine = m_line
+            let startCol = m_col
 
             if c == "\n" then
                 m_tokens += [new Token(TokenType::NEWLINE, "\n", m_line, m_col)]
@@ -117,10 +130,25 @@ public
                 m_tokens += [readIdentifier()]
             else if c == "\"" then
                 m_tokens += [readString()]
+            else if c == "`" then
+                // interpolated string: `text {expr} more` desugars, right
+                // here, to  ( "text " + string(expr) + " more" )  — a
+                // token stream the ordinary parser already understands.
+                for t in readInterpString() do
+                    m_tokens += [t]
             else if c == "'" then
                 m_tokens += [readChar()]
             else
                 readOperator(c)
+
+            if c != "\n" then
+                let ti = firstTok
+                while ti < #m_tokens do
+                    let tok = m_tokens[ti]
+                    if tok.type != TokenType::INDENT and tok.type != TokenType::DEDENT then
+                        tok.line = startLine
+                        tok.column = startCol
+                    ti += 1
 
         while #m_indents > 1 do
             m_indents = m_indents[0 to (#m_indents - 1)]
@@ -131,6 +159,8 @@ public
 
 private
     m_src: string
+    m_len: int = 0
+    m_keywords: StrIndex? = null   // built on first use (see isKeyword)
     m_pos: int = 0
     m_line: int = 1
     m_col: int = 1
@@ -151,13 +181,18 @@ private
     mut isAlphaNum(c: char?): bool
         return isAlpha(c) or isDigit(c)
 
+    mut isHexDigit(c: char?): bool
+        if c == null then
+            return false
+        return (c >= "0" and c <= "9") or (c >= "a" and c <= "f") or (c >= "A" and c <= "F")
+
     mut peek(): char?
-        if m_pos >= m_src.length then
+        if m_pos >= m_len then
             return null
         return m_src[m_pos]
 
     mut peekNext(): char?
-        if m_pos + 1 >= m_src.length then
+        if m_pos + 1 >= m_len then
             return null
         return m_src[m_pos + 1]
 
@@ -178,6 +213,20 @@ private
 
     mut readNumber(): Token
         let start = m_pos
+
+        // Check for hex literal (0x or 0X followed by hex digits)
+        if peek() == "0" and (peekNext() == "x" or peekNext() == "X") then
+            eat()  // consume '0'
+            eat()  // consume 'x' or 'X'
+
+            // Read hex digits
+            while isHexDigit(peek()) do
+                eat()
+
+            let text = km_str_sub(m_src, m_len, start, m_pos)
+            return new Token(TokenType::INT, text, m_line, m_col)
+
+        // Decimal number parsing
         while isDigit(peek()) do
             eat()
 
@@ -188,7 +237,7 @@ private
             while isDigit(peek()) do
                 eat()
 
-        let text = m_src[start to m_pos]
+        let text = km_str_sub(m_src, m_len, start, m_pos)
 
         // Optional `f` suffix (`2.0f`, `2f`) marks a float literal.
         if peek() == "f" then
@@ -204,10 +253,14 @@ private
         let start = m_pos
         while isAlphaNum(peek()) do
             eat()
-        let text = m_src[start to m_pos]
+        let text = km_str_sub(m_src, m_len, start, m_pos)
 
         let type = TokenType::IDENT
         let lexeme = text
+        // most identifiers are not keywords — one hash probe skips the
+        // whole chain of string compares below for them
+        if not isKeyword(text) then
+            return new Token(type, lexeme, m_line, m_col)
         match text
             case "true"
                 type = TokenType::TRUE
@@ -288,6 +341,17 @@ private
 
         return new Token(type, lexeme, m_line, m_col)
 
+    mut isKeyword(text: string): bool
+        if m_keywords == null then
+            let ix = new StrIndex()
+            for k in ["true", "false", "null", "if", "else", "while", "for", "to", "until", "do", "then", "fn", "void", "return", "throw", "break", "continue", "struct", "class", "enum", "match", "case", "new", "let", "and", "or", "not", "import", "link", "mut", "extern", "module", "constructor", "be", "down", "in", "is", "xor"] do
+                ix.add(k, 0)
+            m_keywords = ix
+        let kw = m_keywords
+        if kw == null then
+            return true
+        return kw.has(text)
+
     mut readString(): Token
         let start = m_pos
         eat()
@@ -298,7 +362,106 @@ private
             else
                 eat()
         eat()
-        return new Token(TokenType::STRING, m_src[start to m_pos], m_line, m_col)
+        return new Token(TokenType::STRING, km_str_sub(m_src, m_len, start, m_pos), m_line, m_col)
+
+    // `` `lit0 {e0} lit1 {e1} lit2` `` → the token stream for
+    //   ( "lit0" + string( e0 ) + "lit1" + string( e1 ) + "lit2" )
+    // Each `{ … }` body is a full Komodo expression, lexed by a nested
+    // Lexer and spliced in. Backslash escapes inside the literal text:
+    // \n \t \\ \` \{ \}  (and \" is kept as-is for the emitted literal).
+    mut readInterpString(): [Token]
+        let ln = m_line
+        let cl = m_col
+        eat()                          // opening backtick
+        let out: [Token] = []
+        out += [new Token(TokenType::OPEN_PAREN, "(", ln, cl)]
+        let chunk = ""                 // literal text so far, "-escaped
+        let havePiece = false          // has anything been emitted after `(` ?
+
+        while peek() != "`" and peek() != null do
+            let c = peek()
+            if c == null then
+                break
+            if c == "\\" then
+                eat()
+                let e = eat()
+                if e == "n" then
+                    chunk = chunk + "\\n"
+                else if e == "t" then
+                    chunk = chunk + "\\t"
+                else if e == "\\" then
+                    chunk = chunk + "\\\\"
+                else if e == "`" then
+                    chunk = chunk + "`"
+                else if e == "{" then
+                    chunk = chunk + "{"
+                else if e == "}" then
+                    chunk = chunk + "}"
+                else if e == "\"" then
+                    chunk = chunk + "\\\""
+                else if e != null then
+                    chunk = chunk + "\\" + e
+            else if c == "\"" then
+                eat()
+                chunk = chunk + "\\\""     // keep the emitted literal well-formed
+            else if c == "{" then
+                eat()
+                // flush the literal chunk gathered so far
+                if havePiece then
+                    out += [new Token(TokenType::PLUS, "+", m_line, m_col)]
+                out += [new Token(TokenType::STRING, "\"" + chunk + "\"", m_line, m_col)]
+                havePiece = true
+                chunk = ""
+                // + string( <embedded expression tokens> )
+                out += [new Token(TokenType::PLUS, "+", m_line, m_col)]
+                out += [new Token(TokenType::IDENT, "string", m_line, m_col)]
+                out += [new Token(TokenType::OPEN_PAREN, "(", m_line, m_col)]
+                let sub = new Lexer(readInterpExpr())
+                let subToks = sub.tokenize()
+                for t in subToks do
+                    if t.type != TokenType::EOF and t.type != TokenType::NEWLINE and t.type != TokenType::INDENT and t.type != TokenType::DEDENT then
+                        out += [t]
+                out += [new Token(TokenType::CLOSE_PAREN, ")", m_line, m_col)]
+            else
+                eat()
+                chunk = chunk + c
+        eat()                          // closing backtick (or EOF)
+
+        if havePiece then
+            out += [new Token(TokenType::PLUS, "+", m_line, m_col)]
+        out += [new Token(TokenType::STRING, "\"" + chunk + "\"", m_line, m_col)]
+        out += [new Token(TokenType::CLOSE_PAREN, ")", m_line, m_col)]
+        return out
+
+    // From just past a `{`, return the raw source of the embedded
+    // expression and consume through its matching `}`. Tracks brace
+    // nesting and skips over `"…"` string literals so a brace inside a
+    // string doesn't end the interpolation.
+    mut readInterpExpr(): string
+        let start = m_pos
+        let depth = 1
+        while peek() != null and depth > 0 do
+            let c = peek()
+            if c == "\"" then
+                eat()
+                while peek() != "\"" and peek() != null do
+                    if peek() == "\\" then
+                        eat()
+                    eat()
+                eat()
+            else if c == "{" then
+                depth += 1
+                eat()
+            else if c == "}" then
+                depth -= 1
+                if depth == 0 then
+                    break
+                eat()
+            else
+                eat()
+        let src = km_str_sub(m_src, m_len, start, m_pos)
+        eat()                          // the closing `}`
+        return src
 
     mut readChar(): Token
         let start = m_pos
@@ -310,7 +473,7 @@ private
             else
                 eat()
         eat()
-        return new Token(TokenType::CHAR, m_src[start to m_pos], m_line, m_col)
+        return new Token(TokenType::CHAR, km_str_sub(m_src, m_len, start, m_pos), m_line, m_col)
 
     void handleLineStart(c: char?)
         if not m_line_start or c == "\n" or c == null then

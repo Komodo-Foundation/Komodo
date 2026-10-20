@@ -1,0 +1,822 @@
+module raylib
+
+// raylib bindings — **shim-free**.  `import raylib` plus the one `link`
+// line below is all it takes; `komodo` runs `pkg-config raylib` for the
+// include/lib paths and transitive `-l` flags automatically.
+//
+// This binding calls raylib's real entry points directly.  It relies on
+// two Komodo features that remove the C shim the old binding needed:
+//
+//   • `f32` — a 32-bit float type.  raylib's `Vector*` / `Rectangle`
+//     fields are C `float`, so the mirror structs below declare `f32`.
+//     Inside Komodo an `f32` is still a 64-bit double; it is only
+//     narrowed at the FFI boundary.
+//
+//   • `copy(x)` in an `extern` argument position — passes the struct
+//     *by value*, marshalling Komodo's one-slot-per-field layout into
+//     the tight C layout and placing it per the System V AMD64 ABI
+//     (Vector2 → one XMM, Vector3 → two XMM, Color → one GP reg,
+//     Camera3D → the stack).  A struct returned by an `extern fn`
+//     (Vector2, Vector3, Color, …) is unpacked back into a fresh object.
+//
+// So a call reads almost exactly like the C one:
+//
+//     import raylib
+//     raylib::InitWindow(1280, 720, "hi")
+//     raylib::DrawSphere(copy(raylib::rl_vec3(0.0, 1.0, 0.0)), 0.5, copy(raylib::rl_rgb(230, 120, 90)))
+//
+// The `rl_vec* / rl_rgb* / rl_camera3d` helpers build the mirror structs;
+// `copy(new raylib::Vector3(...))` works too.  Only aggregates of 192
+// bytes or less, built from scalar fields, cross by value — that covers
+// the whole draw / input surface here.  `Matrix` and mesh/model handles
+// still need their own helpers and are left out.
+
+link raylib
+
+// ── mirror structs (field-for-field with <raylib.h>) ─────────────────
+struct Vector2
+    x: f32 = 0.0
+    y: f32 = 0.0
+
+struct Vector3
+    x: f32 = 0.0
+    y: f32 = 0.0
+    z: f32 = 0.0
+
+struct Vector4
+    x: f32 = 0.0
+    y: f32 = 0.0
+    z: f32 = 0.0
+    w: f32 = 0.0
+
+struct Color
+    r: u8 = 0
+    g: u8 = 0
+    b: u8 = 0
+    a: u8 = 255
+
+struct Rectangle
+    x: f32 = 0.0
+    y: f32 = 0.0
+    width: f32 = 0.0
+    height: f32 = 0.0
+
+// raylib's `Camera3D` is `{ Vector3 position; Vector3 target; Vector3 up;
+// float fovy; int projection; }` — 44 bytes, no padding (all 4-byte
+// fields).  Flattened here because a by-value struct can't nest another
+// struct handle.  Field order and widths match exactly, so the 44 bytes
+// marshal 1:1.
+struct Camera3D
+    px: f32 = 0.0
+    py: f32 = 0.0
+    pz: f32 = 0.0
+    tx: f32 = 0.0
+    ty: f32 = 0.0
+    tz: f32 = 0.0
+    ux: f32 = 0.0
+    uy: f32 = 1.0
+    uz: f32 = 0.0
+    fovy: f32 = 60.0
+    projection: i32 = 0        // 0 = CAMERA_PERSPECTIVE, 1 = ORTHOGRAPHIC
+
+// ── constructors / helpers ──────────────────────────────────────────
+fn rl_vec2(x: f32, y: f32): Vector2
+    return new Vector2(x, y)
+
+fn rl_vec3(x: f32, y: f32, z: f32): Vector3
+    return new Vector3(x, y, z)
+
+fn rl_rgb(r: int, g: int, b: int): Color
+    return new Color(r, g, b, 255)
+
+fn rl_rgba(r: int, g: int, b: int, a: int): Color
+    return new Color(r, g, b, a)
+
+mut rl_camera3d(px: f32, py: f32, pz: f32, tx: f32, ty: f32, tz: f32, fovy: f32): Camera3D
+    let c = new Camera3D()
+    c.px = px
+    c.py = py
+    c.pz = pz
+    c.tx = tx
+    c.ty = ty
+    c.tz = tz
+    c.fovy = fovy
+    return c
+
+// ── window / lifecycle ──────────────────────────────────────────────
+extern void InitWindow(width: int, height: int, title: string)
+extern void CloseWindow()
+extern fn   WindowShouldClose(): int
+extern void SetTargetFPS(fps: int)
+extern fn   GetFrameTime(): f32
+extern fn   GetTime(): float          // raylib: `double GetTime(void)`
+extern void SetConfigFlags(flags: int)
+extern void SetExitKey(key: int)
+extern void SetWindowMinSize(width: int, height: int)
+extern void SetWindowSize(width: int, height: int)
+extern fn   GetScreenWidth(): int
+extern fn   GetScreenHeight(): int
+extern void DisableCursor()
+extern void EnableCursor()
+extern void SetMousePosition(x: int, y: int)
+extern void TakeScreenshot(fileName: string)
+
+// ── frame ───────────────────────────────────────────────────────────
+extern void BeginDrawing()
+extern void EndDrawing()
+extern void ClearBackground(color: Color)
+extern void BeginMode3D(camera: Camera3D)
+extern void EndMode3D()
+
+// ── 3D drawing ──────────────────────────────────────────────────────
+// Every `f32` below is a C `float` — declaring it `float` (a 64-bit
+// double) would put the wrong bit pattern in the register.
+extern void DrawCube(position: Vector3, width: f32, height: f32, length: f32, color: Color)
+extern void DrawCubeWires(position: Vector3, width: f32, height: f32, length: f32, color: Color)
+extern void DrawSphere(centerPos: Vector3, radius: f32, color: Color)
+extern void DrawSphereEx(centerPos: Vector3, radius: f32, rings: int, slices: int, color: Color)
+extern void DrawPlane(centerPos: Vector3, size: Vector2, color: Color)
+extern void DrawLine3D(startPos: Vector3, endPos: Vector3, color: Color)
+extern void DrawTriangle3D(v1: Vector3, v2: Vector3, v3: Vector3, color: Color)
+extern void DrawSphereWires(centerPos: Vector3, radius: f32, rings: int, slices: int, color: Color)
+extern void DrawPoint3D(position: Vector3, color: Color)
+extern void DrawCylinderEx(startPos: Vector3, endPos: Vector3, startRadius: f32, endRadius: f32, sides: int, color: Color)
+extern void DrawCircle3D(center: Vector3, radius: f32, rotationAxis: Vector3, rotationAngle: f32, color: Color)
+extern void DrawGrid(slices: int, spacing: f32)
+
+// rlgl (linked in with raylib) — render-state + the immediate-mode
+// batch.  Building a mesh with rlVertex3f between one rlBegin/rlEnd is
+// far cheaper than a DrawTriangle3D call per face (no struct marshalling
+// at all), which is what keeps a subdivided model interactive.
+extern void rlDisableBackfaceCulling()
+extern void rlDisableDepthTest()
+extern void rlSetClipPlanes(nearPlane: float, farPlane: float)
+extern void rlEnableDepthTest()
+extern void rlEnableBackfaceCulling()
+extern void rlDrawRenderBatchActive()
+extern void rlSetLineWidth(width: f32)
+extern void rlBegin(mode: int)
+extern void rlEnd()
+extern void rlVertex3f(x: f32, y: f32, z: f32)
+extern void rlNormal3f(x: f32, y: f32, z: f32)
+extern void rlColor4ub(r: int, g: int, b: int, a: int)
+extern fn   rlCheckRenderBatchLimit(vCount: int): int
+
+// Textures straight through rlgl (Texture2D/Image are by-value structs
+// larger than 16 bytes; these take/return plain ids and pointers).
+// `data` is `data(arr)` of a Komodo [int] holding packed RGBA8 pixels.
+extern fn   rlLoadTexture(data: int, width: int, height: int, format: int, mipmapCount: int): int
+extern void rlUnloadTexture(id: int)
+extern void rlSetTexture(id: int)
+extern void rlTexCoord2f(x: f32, y: f32)
+
+let PIXELFORMAT_UNCOMPRESSED_R8G8B8A8 be 7
+
+let RL_LINES be 1
+let RL_TRIANGLES be 4
+let RL_QUADS be 7
+
+// ── 2D / HUD ────────────────────────────────────────────────────────
+extern void DrawText(text: string, posX: int, posY: int, fontSize: int, color: Color)
+extern fn   MeasureText(text: string, fontSize: int): int
+extern void DrawRectangle(posX: int, posY: int, width: int, height: int, color: Color)
+extern void DrawRectangleLines(posX: int, posY: int, width: int, height: int, color: Color)
+extern void DrawCircle(centerX: int, centerY: int, radius: f32, color: Color)
+extern void DrawLine(startPosX: int, startPosY: int, endPosX: int, endPosY: int, color: Color)
+extern void DrawFPS(posX: int, posY: int)
+extern void BeginScissorMode(x: int, y: int, width: int, height: int)
+extern void EndScissorMode()
+extern fn   Fade(color: Color, alpha: f32): Color
+
+// ── input ───────────────────────────────────────────────────────────
+extern fn IsKeyDown(key: int): int
+extern fn IsKeyPressed(key: int): int
+extern fn IsMouseButtonDown(button: int): int
+extern fn IsMouseButtonPressed(button: int): int
+extern fn IsMouseButtonReleased(button: int): int
+extern fn GetMouseX(): int
+extern fn GetMouseY(): int
+extern fn GetMousePosition(): Vector2
+extern fn GetMouseDelta(): Vector2
+extern fn GetMouseWheelMove(): f32
+extern fn GetCharPressed(): int
+extern fn GetKeyPressed(): int
+
+// Project a world point to a screen pixel (Vector2 return = one SSE reg).
+extern fn GetWorldToScreen(position: Vector3, camera: Camera3D): Vector2
+
+// ── misc ────────────────────────────────────────────────────────────
+extern fn GetRandomValue(min: int, max: int): int
+extern void SetRandomSeed(seed: int)
+
+// ── key / mouse codes ───────────────────────────────────────────────
+let KEY_APOSTROPHE be 39
+let KEY_COMMA be 44
+let KEY_MINUS be 45
+let KEY_PERIOD be 46
+let KEY_SLASH be 47
+let KEY_ZERO be 48
+let KEY_ONE be 49
+let KEY_TWO be 50
+let KEY_THREE be 51
+let KEY_FOUR be 52
+let KEY_FIVE be 53
+let KEY_SIX be 54
+let KEY_SEVEN be 55
+let KEY_EIGHT be 56
+let KEY_NINE be 57
+let KEY_A be 65
+let KEY_B be 66
+let KEY_C be 67
+let KEY_D be 68
+let KEY_E be 69
+let KEY_F be 70
+let KEY_G be 71
+let KEY_H be 72
+let KEY_I be 73
+let KEY_J be 74
+let KEY_K be 75
+let KEY_L be 76
+let KEY_M be 77
+let KEY_N be 78
+let KEY_O be 79
+let KEY_P be 80
+let KEY_Q be 81
+let KEY_R be 82
+let KEY_S be 83
+let KEY_T be 84
+let KEY_U be 85
+let KEY_V be 86
+let KEY_W be 87
+let KEY_X be 88
+let KEY_Y be 89
+let KEY_Z be 90
+let KEY_SPACE be 32
+let KEY_ESCAPE be 256
+let KEY_ENTER be 257
+let KEY_TAB be 258
+let KEY_BACKSPACE be 259
+let KEY_INSERT be 260
+let KEY_DELETE be 261
+let KEY_PAGE_UP be 266
+let KEY_PAGE_DOWN be 267
+let KEY_HOME be 268
+let KEY_END be 269
+let KEY_RIGHT be 262
+let KEY_LEFT be 263
+let KEY_DOWN be 264
+let KEY_UP be 265
+let KEY_LEFT_SHIFT be 340
+let KEY_LEFT_CONTROL be 341
+let KEY_LEFT_ALT be 342
+let KEY_RIGHT_ALT be 346
+let KEY_RIGHT_CONTROL be 345
+let KEY_RIGHT_SHIFT be 344
+let KEY_F1 be 290
+let KEY_F2 be 291
+let KEY_F3 be 292
+let KEY_F4 be 293
+let KEY_F5 be 294
+let KEY_F6 be 295
+let KEY_F7 be 296
+let KEY_F8 be 297
+let KEY_F9 be 298
+let KEY_F10 be 299
+let KEY_F11 be 300
+let KEY_F12 be 301
+let KEY_KP_0 be 320
+let KEY_KP_1 be 321
+let KEY_KP_2 be 322
+let KEY_KP_3 be 323
+let KEY_KP_4 be 324
+let KEY_KP_5 be 325
+let KEY_KP_6 be 326
+let KEY_KP_7 be 327
+let KEY_KP_8 be 328
+let KEY_KP_9 be 329
+let KEY_KP_DECIMAL be 330
+let KEY_KP_ENTER be 335
+let KEY_KP_ADD be 334
+let KEY_KP_SUBTRACT be 333
+
+let MOUSE_LEFT be 0
+let MOUSE_RIGHT be 1
+let MOUSE_MIDDLE be 2
+
+let FLAG_MSAA_4X_HINT be 32
+let FLAG_WINDOW_RESIZABLE be 4
+
+// ── TrueType fonts ───────────────────────────────────────────────────
+// Font (48 B) and Texture2D (20 B) are MEMORY-class structs.  Passing them
+// *by value* works with the normal FFI; *returning* one uses SysV's hidden
+// result pointer in rdi, so LoadFontEx is declared with that pointer as an
+// explicit first argument and rl_load_font rebuilds the struct from it.
+struct Texture2D
+    id: u32 = 0
+    width: i32 = 0
+    height: i32 = 0
+    mipmaps: i32 = 0
+    format: i32 = 0
+
+struct Font
+    baseSize: i32 = 0
+    glyphCount: i32 = 0
+    glyphPadding: i32 = 0
+    texId: u32 = 0
+    texWidth: i32 = 0
+    texHeight: i32 = 0
+    texMipmaps: i32 = 0
+    texFormat: i32 = 0
+    recs: int = 0
+    glyphs: int = 0
+
+extern fn   LoadFontEx(sret: int, fileName: string, fontSize: int, codepoints: int, codepointCount: int): int
+extern void DrawTextEx(font: Font, text: string, position: Vector2, fontSize: f32, spacing: f32, tint: Color)
+extern fn   MeasureTextEx(font: Font, text: string, fontSize: f32, spacing: f32): Vector2
+extern void SetTextureFilter(texture: Texture2D, filter: int)
+extern fn   FileExists(fileName: string): int
+extern void DrawRectangleRounded(rec: Rectangle, roundness: f32, segments: int, color: Color)
+extern void DrawRectangleRoundedLines(rec: Rectangle, roundness: f32, segments: int, color: Color)
+extern void DrawRectangleGradientV(posX: int, posY: int, width: int, height: int, top: Color, bottom: Color)
+extern void DrawCircleV(center: Vector2, radius: f32, color: Color)
+extern void DrawLineEx(startPos: Vector2, endPos: Vector2, thick: f32, color: Color)
+extern void DrawCircleLinesV(center: Vector2, radius: f32, color: Color)
+extern void DrawRing(center: Vector2, innerRadius: f32, outerRadius: f32, startAngle: f32, endAngle: f32, segments: int, color: Color)
+extern void DrawTriangle(v1: Vector2, v2: Vector2, v3: Vector2, color: Color)
+extern void DrawRectangleLinesEx(rec: Rectangle, lineThick: f32, color: Color)
+extern void DrawEllipseLines(centerX: int, centerY: int, radiusH: f32, radiusV: f32, color: Color)
+
+let TEXTURE_FILTER_BILINEAR be 1
+
+// Load a TTF at `size` px with bilinear filtering.  baseSize == 0 means
+// the file could not be loaded.
+mut fn rl_load_font(path: string, size: int): Font
+    let buf: [int] = [0, 0, 0, 0, 0, 0]
+    LoadFontEx(data(buf), path, size, 0, 0)
+    let f = new Font()
+    f.baseSize = buf[0] & 4294967295
+    f.glyphCount = (buf[0] >> 32) & 4294967295
+    f.glyphPadding = buf[1] & 4294967295
+    f.texId = (buf[1] >> 32) & 4294967295
+    f.texWidth = buf[2] & 4294967295
+    f.texHeight = (buf[2] >> 32) & 4294967295
+    f.texMipmaps = buf[3] & 4294967295
+    f.texFormat = (buf[3] >> 32) & 4294967295
+    f.recs = buf[4]
+    f.glyphs = buf[5]
+    if f.texId != 0 then
+        SetTextureFilter(copy(new Texture2D(f.texId, f.texWidth, f.texHeight, f.texMipmaps, f.texFormat)), TEXTURE_FILTER_BILINEAR)
+    return f
+
+fn rl_rect(x: f32, y: f32, w: f32, h: f32): Rectangle
+    return new Rectangle(x, y, w, h)
+
+// ── UI text helpers (fonts live here so other modules never have to
+// name the Font type).  Weight 0 = regular, 1 = bold.  Falls back to
+// the built-in bitmap font if the TTFs are missing.
+let rl_font_reg = new Font()
+let rl_font_bold = new Font()
+let rl_font_big = new Font()
+let rl_font_ok = 0
+
+void rl_ui_fonts(regular: string, bold: string)
+    if (FileExists(regular) & 255) != 0 then
+        rl_font_reg = rl_load_font(regular, 22)
+        rl_font_big = rl_load_font(regular, 44)
+        rl_font_bold = rl_font_reg
+        rl_font_ok = 1
+    if (FileExists(bold) & 255) != 0 and rl_font_ok == 1 then
+        rl_font_bold = rl_load_font(bold, 22)
+
+void rl_text(t: string, x: int, y: int, size: int, weight: int, r: int, g: int, b: int, a: int)
+    if rl_font_ok == 0 then
+        DrawText(t, x, y, size - 3, copy(rl_rgba(r, g, b, a)))
+        return
+    if size > 20 then
+        DrawTextEx(copy(rl_font_big), t, copy(rl_vec2(x * 1.0, y * 1.0)), size * 1.0, 0.0, copy(rl_rgba(r, g, b, a)))
+    else if weight == 1 then
+        DrawTextEx(copy(rl_font_bold), t, copy(rl_vec2(x * 1.0, y * 1.0)), size * 1.0, 0.0, copy(rl_rgba(r, g, b, a)))
+    else
+        DrawTextEx(copy(rl_font_reg), t, copy(rl_vec2(x * 1.0, y * 1.0)), size * 1.0, 0.0, copy(rl_rgba(r, g, b, a)))
+
+mut fn rl_measure(t: string, size: int, weight: int): int
+    if rl_font_ok == 0 then
+        return MeasureText(t, size - 3)
+    if size > 20 then
+        let m = MeasureTextEx(copy(rl_font_big), t, size * 1.0, 0.0)
+        return int(m.x)
+    if weight == 1 then
+        let m2 = MeasureTextEx(copy(rl_font_bold), t, size * 1.0, 0.0)
+        return int(m2.x)
+    let m3 = MeasureTextEx(copy(rl_font_reg), t, size * 1.0, 0.0)
+    return int(m3.x)
+
+// Rounded rectangle in pixels with a pixel corner radius.
+void rl_round(x: int, y: int, w: int, h: int, radius: int, r: int, g: int, b: int, a: int)
+    let m = w
+    if h < m then
+        m = h
+    if m <= 0 then
+        return
+    let rn = (radius * 2.0) / (m * 1.0)
+    if rn > 1.0 then
+        rn = 1.0
+    DrawRectangleRounded(copy(rl_rect(x * 1.0, y * 1.0, w * 1.0, h * 1.0)), rn, 6, copy(rl_rgba(r, g, b, a)))
+
+void rl_round_line(x: int, y: int, w: int, h: int, radius: int, r: int, g: int, b: int, a: int)
+    let m = w
+    if h < m then
+        m = h
+    if m <= 0 then
+        return
+    let rn = (radius * 2.0) / (m * 1.0)
+    if rn > 1.0 then
+        rn = 1.0
+    DrawRectangleRoundedLines(copy(rl_rect(x * 1.0, y * 1.0, w * 1.0, h * 1.0)), rn, 6, copy(rl_rgba(r, g, b, a)))
+
+// ── bool-returning input calls, made safe ───────────────────────────
+// These raylib functions return a C `bool`: only the low byte of rax is
+// defined, so the raw result must not be compared as a whole int.
+mut fn rl_key_down(k: int): int
+    return IsKeyDown(k) & 255
+
+mut fn rl_key_pressed(k: int): int
+    return IsKeyPressed(k) & 255
+
+mut fn rl_mouse_down(b: int): int
+    return IsMouseButtonDown(b) & 255
+
+mut fn rl_mouse_pressed(b: int): int
+    return IsMouseButtonPressed(b) & 255
+
+mut fn rl_mouse_released(b: int): int
+    return IsMouseButtonReleased(b) & 255
+
+mut fn rl_should_close(): int
+    return WindowShouldClose() & 255
+
+// ── custom GPU shaders via rlgl (all scalar / pointer calls) ─────────
+extern fn   rlLoadShaderProgram(vsCode: string, fsCode: string): int
+extern void rlUnloadShaderProgram(id: int)
+extern fn   rlGetLocationUniform(shaderId: int, uniformName: string): int
+extern fn   rlGetLocationAttrib(shaderId: int, attribName: string): int
+extern void rlSetShader(id: int, locs: int)
+extern void rlEnableShader(id: int)
+extern void rlDisableShader()
+extern fn   rlGetShaderIdDefault(): int
+extern fn   rlGetShaderLocsDefault(): int
+extern void rlSetUniform(locIndex: int, value: int, uniformType: int, count: int)
+extern void rlSetUniformSampler(locIndex: int, textureId: int)
+extern void rlTextureParameters(id: int, param: int, value: int)
+extern void rlGenTextureMipmaps(id: int, width: int, height: int, format: int, mipmaps: int)
+extern fn   GetApplicationDirectory(): string
+
+struct Image
+    data: int = 0
+    width: i32 = 0
+    height: i32 = 0
+    mipmaps: i32 = 0
+    format: i32 = 0
+
+// Image LoadImage(const char*) returns a 24-byte struct → hidden pointer.
+extern fn   LoadImage(sret: int, fileName: string): int
+extern void UnloadImage(image: Image)
+
+let RL_SHADER_UNIFORM_FLOAT be 0
+let RL_SHADER_UNIFORM_VEC2 be 1
+let RL_SHADER_UNIFORM_VEC3 be 2
+let RL_SHADER_UNIFORM_VEC4 be 3
+let RL_SHADER_UNIFORM_INT be 4
+
+// unsigned 32-bit return → clean int
+fn rl_u32(v: int): int
+    return v & 4294967295
+
+// signed 32-bit return (e.g. -1 for "not found") → clean int
+fn rl_i32(v: int): int
+    let x = v & 4294967295
+    if x >= 2147483648 then
+        return x - 4294967296
+    return x
+
+// IEEE-754 single-precision bit pattern of a Komodo float (a double).
+mut fn rl_f32bits(x: float): int
+    if x == 0.0 then
+        return 0
+    let sign = 0
+    let a = x
+    if a < 0.0 then
+        sign = 1
+        a = 0.0 - a
+    let e = 0
+    while a >= 2.0 do
+        a = a / 2.0
+        e += 1
+    while a < 1.0 do
+        a = a * 2.0
+        e -= 1
+    if e > 127 then
+        return (sign << 31) | (255 << 23)
+    if e < 0 - 126 then
+        return sign << 31
+    let mant = int((a - 1.0) * 8388608.0 + 0.5)
+    if mant >= 8388608 then
+        mant = 0
+        e += 1
+    return (sign << 31) | ((e + 127) << 23) | mant
+
+// Compile a shader and build its raylib location table (32 int32s
+// packed two per word).  Returns [id, ...16 words of locs].
+mut fn rl_shader_load(vs: string, fs: string): [int]
+    let id = rl_u32(rlLoadShaderProgram(vs, fs))
+    let locs: [int] = []
+    let i = 0
+    while i < 32 do
+        locs += [0 - 1]
+        i += 1
+    if id != 0 then
+        locs[0] = rl_i32(rlGetLocationAttrib(id, "vertexPosition"))
+        locs[1] = rl_i32(rlGetLocationAttrib(id, "vertexTexCoord"))
+        locs[3] = rl_i32(rlGetLocationAttrib(id, "vertexNormal"))
+        locs[5] = rl_i32(rlGetLocationAttrib(id, "vertexColor"))
+        locs[6] = rl_i32(rlGetLocationUniform(id, "mvp"))
+        locs[15] = rl_i32(rlGetLocationUniform(id, "texture0"))
+    let out: [int] = [id]
+    let w = 0
+    while w < 16 do
+        out += [(locs[w * 2] & 4294967295) | ((locs[w * 2 + 1] & 4294967295) << 32)]
+        w += 1
+    return out
+
+// Make `sh` (from rl_shader_load) the shader for the 3D batch.
+void rl_shader_begin(sh: [int])
+    rlDrawRenderBatchActive()
+    rlSetShader(sh[0], data(sh) + 8)
+    rlEnableShader(sh[0])
+
+void rl_shader_end()
+    rlDrawRenderBatchActive()
+    rlSetShader(rl_u32(rlGetShaderIdDefault()), rlGetShaderLocsDefault())
+
+mut fn rl_uloc(sh: [int], name: string): int
+    return rl_i32(rlGetLocationUniform(sh[0], name))
+
+void rl_uniform_f(loc: int, x: float)
+    if loc < 0 then
+        return
+    let b: [int] = [rl_f32bits(x)]
+    rlSetUniform(loc, data(b), RL_SHADER_UNIFORM_FLOAT, 1)
+
+void rl_uniform_v3(loc: int, x: float, y: float, z: float)
+    if loc < 0 then
+        return
+    let b: [int] = [rl_f32bits(x) | (rl_f32bits(y) << 32), rl_f32bits(z)]
+    rlSetUniform(loc, data(b), RL_SHADER_UNIFORM_VEC3, 1)
+
+void rl_uniform_v4(loc: int, x: float, y: float, z: float, w: float)
+    if loc < 0 then
+        return
+    let b: [int] = [rl_f32bits(x) | (rl_f32bits(y) << 32), rl_f32bits(z) | (rl_f32bits(w) << 32)]
+    rlSetUniform(loc, data(b), RL_SHADER_UNIFORM_VEC4, 1)
+
+void rl_uniform_i(loc: int, v: int)
+    if loc < 0 then
+        return
+    let b: [int] = [v & 4294967295]
+    rlSetUniform(loc, data(b), RL_SHADER_UNIFORM_INT, 1)
+
+// Load an image file (png/jpg) into a repeating, mipmapped, anisotropic
+// GPU texture.  Returns [id, width, height] (id 0 on failure).
+mut fn rl_load_texture_file(path: string): [int]
+    if (FileExists(path) & 255) == 0 then
+        return [0, 0, 0]
+    let buf: [int] = [0, 0, 0]
+    LoadImage(data(buf), path)
+    let w = buf[1] & 4294967295
+    let h = (buf[1] >> 32) & 4294967295
+    let mips = buf[2] & 4294967295
+    let fmt = (buf[2] >> 32) & 4294967295
+    if buf[0] == 0 or w == 0 then
+        return [0, 0, 0]
+    let id = rl_u32(rlLoadTexture(buf[0], w, h, fmt, mips))
+    let mb: [int] = [1]
+    rlGenTextureMipmaps(id, w, h, fmt, data(mb))
+    rlTextureParameters(id, 10242, 10497)
+    rlTextureParameters(id, 10243, 10497)
+    rlTextureParameters(id, 10240, 9729)
+    rlTextureParameters(id, 10241, 9987)
+    rlTextureParameters(id, 12288, 8)
+    UnloadImage(copy(new Image(buf[0], w, h, mips, fmt)))
+    return [id, w, h]
+
+extern void DrawTexturePro(texture: Texture2D, source: Rectangle, dest: Rectangle, origin: Vector2, rotation: f32, tint: Color)
+
+// Draw GPU texture `id` (w x h texels) into a screen rectangle.
+void rl_draw_tex(id: int, tw: int, th: int, x: int, y: int, w: int, h: int)
+    if id == 0 then
+        return
+    DrawTexturePro(copy(new Texture2D(id, tw, th, 1, 7)), copy(rl_rect(0.0, 0.0, tw * 1.0, th * 1.0)), copy(rl_rect(x * 1.0, y * 1.0, w * 1.0, h * 1.0)), copy(rl_vec2(0.0, 0.0)), 0.0, copy(rl_rgb(255, 255, 255)))
+
+// ── offscreen rendering (render textures) ───────────────────────────
+// RenderTexture2D is 44 bytes: id + colour Texture + depth Texture.
+struct RenderTexture2D
+    id: u32 = 0
+    texId: u32 = 0
+    texWidth: i32 = 0
+    texHeight: i32 = 0
+    texMipmaps: i32 = 0
+    texFormat: i32 = 0
+    depthId: u32 = 0
+    depthWidth: i32 = 0
+    depthHeight: i32 = 0
+    depthMipmaps: i32 = 0
+    depthFormat: i32 = 0
+
+extern fn   LoadRenderTexture(sret: int, width: int, height: int): int
+extern void BeginTextureMode(target: RenderTexture2D)
+extern void EndTextureMode()
+
+// Create a w x h render target; returns it as a struct (texId 0 = failed).
+mut fn rl_render_target(w: int, h: int): RenderTexture2D
+    let b: [int] = [0, 0, 0, 0, 0, 0]
+    LoadRenderTexture(data(b), w, h)
+    let r = new RenderTexture2D()
+    r.id = b[0] & 4294967295
+    r.texId = (b[0] >> 32) & 4294967295
+    r.texWidth = b[1] & 4294967295
+    r.texHeight = (b[1] >> 32) & 4294967295
+    r.texMipmaps = b[2] & 4294967295
+    r.texFormat = (b[2] >> 32) & 4294967295
+    r.depthId = b[3] & 4294967295
+    r.depthWidth = (b[3] >> 32) & 4294967295
+    r.depthHeight = b[4] & 4294967295
+    r.depthMipmaps = (b[4] >> 32) & 4294967295
+    r.depthFormat = b[5] & 4294967295
+    return r
+
+// Draw a render target's colour texture (stored upside-down) on screen.
+void rl_draw_target(r: RenderTexture2D, x: int, y: int, w: int, h: int)
+    DrawTexturePro(copy(new Texture2D(r.texId, r.texWidth, r.texHeight, 1, r.texFormat)), copy(rl_rect(0.0, 0.0, r.texWidth * 1.0, 0.0 - r.texHeight * 1.0)), copy(rl_rect(x * 1.0, y * 1.0, w * 1.0, h * 1.0)), copy(rl_vec2(0.0, 0.0)), 0.0, copy(rl_rgb(255, 255, 255)))
+
+// Render targets kept as 6 raw words (so other modules never need the
+// struct type in their annotations).
+extern fn   rlLoadFramebuffer(): int
+extern void rlFramebufferAttach(id: int, texId: int, attachType: int, texType: int, mipLevel: int)
+extern fn   rlFramebufferComplete(id: int): int
+extern void rlEnableFramebuffer(id: int)
+extern void rlDisableFramebuffer()
+
+// Raw OpenGL (libGL is already linked): this raylib build fails to
+// allocate empty render-target textures through rlLoadTexture, so render
+// targets are built directly — RGBA8 colour + 24-bit depth renderbuffer.
+extern void glGenTextures(n: int, out: int)
+extern void glBindTexture(target: int, tex: int)
+extern void glTexImage2D(target: int, level: int, ifmt: int, w: int, h: int, border: int, fmt: int, typ: int, data: int)
+extern void glTexParameteri(target: int, pname: int, param: int)
+extern void glGenRenderbuffers(n: int, out: int)
+extern void glBindRenderbuffer(target: int, rb: int)
+extern void glRenderbufferStorage(target: int, ifmt: int, w: int, h: int)
+extern void glBindFramebuffer(target: int, fb: int)
+extern void glFramebufferTexture2D(target: int, attach: int, textarget: int, tex: int, level: int)
+extern void glFramebufferRenderbuffer(target: int, attach: int, rbtarget: int, rb: int)
+extern fn   glCheckFramebufferStatus(target: int): int
+
+// Returns the 6-word RenderTexture2D layout (all zero on failure).
+mut fn rl_target_words(w: int, h: int): [int]
+    let fbo = rl_u32(rlLoadFramebuffer())
+    let ids: [int] = [0]
+    glGenTextures(1, data(ids))
+    let tex = ids[0] & 4294967295
+    glBindTexture(3553, tex)
+    glTexImage2D(3553, 0, 32856, w, h, 0, 6408, 5121, 0)
+    glTexParameteri(3553, 10241, 9729)
+    glTexParameteri(3553, 10240, 9729)
+    glTexParameteri(3553, 10242, 33071)
+    glTexParameteri(3553, 10243, 33071)
+    glBindTexture(3553, 0)
+    let rb: [int] = [0]
+    glGenRenderbuffers(1, data(rb))
+    let depth = rb[0] & 4294967295
+    glBindRenderbuffer(36161, depth)
+    glRenderbufferStorage(36161, 33190, w, h)
+    glBindRenderbuffer(36161, 0)
+    glBindFramebuffer(36160, fbo)
+    glFramebufferTexture2D(36160, 36064, 3553, tex, 0)
+    glFramebufferRenderbuffer(36160, 36096, 36161, depth)
+    let ok = glCheckFramebufferStatus(36160) & 65535
+    glBindFramebuffer(36160, 0)
+    if ok != 36053 then
+        return [0, 0, 0, 0, 0, 0]
+    return [fbo | (tex << 32), w | (h << 32), 1 | (7 << 32), depth | (w << 32), h | (1 << 32), 19]
+
+void rl_begin_target_words(b: [int])
+    let r = new RenderTexture2D()
+    r.id = b[0] & 4294967295
+    r.texId = (b[0] >> 32) & 4294967295
+    r.texWidth = b[1] & 4294967295
+    r.texHeight = (b[1] >> 32) & 4294967295
+    r.texMipmaps = b[2] & 4294967295
+    r.texFormat = (b[2] >> 32) & 4294967295
+    r.depthId = b[3] & 4294967295
+    r.depthWidth = (b[3] >> 32) & 4294967295
+    r.depthHeight = b[4] & 4294967295
+    r.depthMipmaps = (b[4] >> 32) & 4294967295
+    r.depthFormat = b[5] & 4294967295
+    BeginTextureMode(copy(r))
+
+void rl_draw_target_words(b: [int], x: int, y: int, w: int, h: int)
+    let tw = b[1] & 4294967295
+    let th = (b[1] >> 32) & 4294967295
+    let tid = (b[0] >> 32) & 4294967295
+    DrawTexturePro(copy(new Texture2D(tid, tw, th, 1, (b[2] >> 32) & 4294967295)), copy(rl_rect(0.0, 0.0, tw * 1.0, 0.0 - th * 1.0)), copy(rl_rect(x * 1.0, y * 1.0, w * 1.0, h * 1.0)), copy(rl_vec2(0.0, 0.0)), 0.0, copy(rl_rgb(255, 255, 255)))
+
+// ── paint workspace bindings ──
+// Raw OpenGL 3.3 entry points (all scalar / pointer arguments) used by the
+// texture-painting workspace for vertex buffers, multiple render targets,
+// blending, read-back and blits.  `f32` parameters bind C `float`.
+extern void glGenVertexArrays(n: int, out: int)
+extern void glBindVertexArray(id: int)
+extern void glDeleteVertexArrays(n: int, ids: int)
+extern void glGenBuffers(n: int, out: int)
+extern void glBindBuffer(target: int, id: int)
+extern void glBufferData(target: int, size: int, ptr: int, usage: int)
+extern void glDeleteBuffers(n: int, ids: int)
+extern void glVertexAttribPointer(index: int, size: int, typ: int, normalized: int, stride: int, offset: int)
+extern void glEnableVertexAttribArray(index: int)
+extern void glDisableVertexAttribArray(index: int)
+extern void glDrawArrays(mode: int, first: int, count: int)
+extern void glUseProgram(id: int)
+extern void glActiveTexture(unit: int)
+extern void glUniform1i(loc: int, v: int)
+extern void glUniform1f(loc: int, v: f32)
+extern void glUniform2f(loc: int, x: f32, y: f32)
+extern void glUniform3f(loc: int, x: f32, y: f32, z: f32)
+extern void glUniform4f(loc: int, x: f32, y: f32, z: f32, w: f32)
+extern void glUniform4fv(loc: int, count: int, ptr: int)
+extern void glUniformMatrix4fv(loc: int, count: int, transpose: int, ptr: int)
+extern void glDrawBuffers(n: int, bufs: int)
+extern void glReadBuffer(mode: int)
+extern void glViewport(x: int, y: int, w: int, h: int)
+extern void glEnable(cap: int)
+extern void glDisable(cap: int)
+extern void glBlendFunc(sfactor: int, dfactor: int)
+extern void glBlendFuncSeparate(srgb: int, drgb: int, sa: int, da: int)
+extern void glBlendEquation(mode: int)
+extern void glClearColor(r: f32, g: f32, b: f32, a: f32)
+extern void glClear(mask: int)
+extern void glDepthMask(flag: int)
+extern void glDepthFunc(func: int)
+extern void glColorMask(r: int, g: int, b: int, a: int)
+extern void glGenerateMipmap(target: int)
+extern void glTexParameterf(target: int, pname: int, v: f32)
+extern void glTexSubImage2D(target: int, level: int, x: int, y: int, w: int, h: int, fmt: int, typ: int, ptr: int)
+extern void glPixelStorei(pname: int, v: int)
+extern void glReadPixels(x: int, y: int, w: int, h: int, fmt: int, typ: int, out: int)
+extern void glGetIntegerv(pname: int, out: int)
+extern void glBlitFramebuffer(sx0: int, sy0: int, sx1: int, sy1: int, dx0: int, dy0: int, dx1: int, dy1: int, mask: int, filter: int)
+extern void glGenFramebuffers(n: int, out: int)
+extern void glDeleteFramebuffers(n: int, ids: int)
+extern void glDeleteTextures(n: int, ids: int)
+extern void glDeleteRenderbuffers(n: int, ids: int)
+extern void glFinish()
+extern fn   glGetError(): int
+// Matrix (64 B) is returned through a hidden result pointer: pass data(buf)
+// of an 8-word [int]; the 16 floats are row-major (raylib's m0, m4, ...).
+extern fn   rlGetMatrixModelview(sret: int): int
+extern fn   rlGetMatrixProjection(sret: int): int
+// C bool return: mask with & 255.
+extern fn   ExportImage(image: Image, fileName: string): int
+extern void DrawRectangleGradientH(posX: int, posY: int, width: int, height: int, left: Color, right: Color)
+extern void DrawRectangleGradientEx(rec: Rectangle, col1: Color, col2: Color, col3: Color, col4: Color)
+extern fn   GetRenderWidth(): int
+extern fn   GetRenderHeight(): int
+
+// Write w x h RGBA8 pixels at `ptr` (e.g. data(arr) of a packed [int]) as
+// a PNG.  Returns 1 on success.
+mut fn rl_export_rgba(ptr: int, w: int, h: int, path: string): int
+    return ExportImage(copy(new Image(ptr, w, h, 1, 7)), path) & 255
+
+// Decode an image file to CPU pixels: [ptr, width, height, format]
+// (ptr 0 on failure).  Free with rl_unload_image_words.
+mut fn rl_load_image_words(path: string): [int]
+    if (FileExists(path) & 255) == 0 then
+        return [0, 0, 0, 0]
+    let buf: [int] = [0, 0, 0]
+    LoadImage(data(buf), path)
+    let w = buf[1] & 4294967295
+    let h = (buf[1] >> 32) & 4294967295
+    let fmt = (buf[2] >> 32) & 4294967295
+    return [buf[0], w, h, fmt]
+
+void rl_unload_image_words(im: [int])
+    if im[0] != 0 then
+        UnloadImage(copy(new Image(im[0], im[1], im[2], 1, im[3])))
+// int return: 0 on success (creates parent directories too).
+extern fn   MakeDirectory(dirPath: string): int
+
+// Draw GPU texture `id` centred at (cx, cy), `size` px wide, rotated by
+// `angle` degrees, tinted white with alpha `a` (0..255).
+void rl_draw_tex_rot(id: int, tw: int, th: int, cx: float, cy: float, size: float, angle: float, a: int)
+    if id == 0 then
+        return
+    DrawTexturePro(copy(new Texture2D(id, tw, th, 1, 7)), copy(rl_rect(0.0, 0.0, tw * 1.0, th * 1.0)), copy(rl_rect(cx, cy, size, size)), copy(rl_vec2(size * 0.5, size * 0.5)), angle, copy(rl_rgba(255, 255, 255, a)))

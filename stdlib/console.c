@@ -7,7 +7,6 @@
  * do all the formatting and arity handling.
  */
 #include <stdio.h>
-#include <stdlib.h>
 #include "km_runtime.h"
 
 static void write_arg(FILE *out, KmArg a)
@@ -21,9 +20,7 @@ static void write_arg(FILE *out, KmArg a)
     case KM_TAG_STR:   fputs((const char *)a.value, out);            break;
     case KM_TAG_BOOL:  fputs(a.value ? "true" : "false", out);       break;
     case KM_TAG_ARRAY: {
-        const char *s = km_array_to_string((KmArray *)a.value, (a.tag >> 8) & 0xFF, (a.tag >> 16) & 0xFF);
-        fputs(s, out);
-        free((void *)s);
+        fputs(km_array_to_string((KmArray *)a.value, (a.tag >> 8) & 0xFF, (a.tag >> 16) & 0xFF), out);
         break;
     }
     default:           fputs("<?>", out);                            break;

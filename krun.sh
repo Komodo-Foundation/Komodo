@@ -45,7 +45,7 @@ nasm -f elf64 "$asm" -o "$obj"
 
 # 3. link: the Komodo object + the C runtime + any user-supplied inputs
 gcc -no-pie -I"$here/stdlib" -o "$out" "$obj" "$here"/stdlib/*.c \
-    ${extra_cc[@]+"${extra_cc[@]}"} -lm
+    ${extra_cc[@]+"${extra_cc[@]}"} -lm -l:libgc.so.1
 echo "built $out"
 
 # 4. run

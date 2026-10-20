@@ -10,13 +10,46 @@
 #include <dirent.h>
 #include "km_runtime.h"
 
-/* file.exists(path) : bool */
+/* The whole stream, NUL-terminated, on the collected heap; *len =
+ * bytes read.  Reads until EOF instead of trusting the size the file
+ * reports, so /proc files, pipes and files that grow while being read
+ * come back complete. */
+static char *slurp(FILE *f, size_t *len)
+{
+    size_t cap = 4096, n = 0;
+    char *buf = km_alloc_atomic(cap);
+    for (;;) {
+        if (n + 1 >= cap) {
+            char *nb = km_alloc_atomic(cap * 2);
+            memcpy(nb, buf, n);
+            buf = nb;
+            cap *= 2;
+        }
+        size_t got = fread(buf + n, 1, cap - 1 - n, f);
+        n += got;
+        if (got == 0) break;
+    }
+    buf[n] = '\0';
+    *len = n;
+    return buf;
+}
+
+/* file.exists(path) : bool  — a regular file exists at `path` */
 long exists(long argc, KmArg *items)
 {
     if (argc < 1) return 0;
     struct stat st;
     const char *path = (const char *)items[0].value;
     return stat(path, &st) == 0 && S_ISREG(st.st_mode);
+}
+
+/* file.is_dir(path) : bool */
+long is_dir(long argc, KmArg *items)
+{
+    if (argc < 1) return 0;
+    struct stat st;
+    const char *path = (const char *)items[0].value;
+    return stat(path, &st) == 0 && S_ISDIR(st.st_mode);
 }
 
 /* file.read_all(path) : string */
@@ -26,12 +59,8 @@ const char *read_all(long argc, KmArg *items)
     const char *path = (const char *)items[0].value;
     FILE *f = fopen(path, "rb");
     if (!f) return "";
-    fseek(f, 0, SEEK_END);
-    long n = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    char *buf = malloc((size_t)n + 1);
-    size_t got = fread(buf, 1, (size_t)n, f);
-    buf[got] = '\0';
+    size_t got = 0;
+    char *buf = slurp(f, &got);
     fclose(f);
     return buf;
 }
@@ -69,12 +98,8 @@ KmArray *read_lines(long argc, KmArg *items)
     const char *path = (const char *)items[0].value;
     FILE *f = fopen(path, "rb");
     if (!f) return km_array_new(0);
-    fseek(f, 0, SEEK_END);
-    long n = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    char *buf = malloc((size_t)n + 1);
-    size_t got = fread(buf, 1, (size_t)n, f);
-    buf[got] = '\0';
+    size_t got = 0;
+    char *buf = slurp(f, &got);
     fclose(f);
 
     long lines = 1;
@@ -89,15 +114,11 @@ KmArray *read_lines(long argc, KmArg *items)
             size_t end = i;
             if (end > start && buf[end - 1] == '\r') end--;
             if (i == got && start == got) break;   /* trailing newline */
-            char *line = malloc(end - start + 1);
-            memcpy(line, buf + start, end - start);
-            line[end - start] = '\0';
-            out->data[li++] = (long)line;
+            out->data[li++] = (long)km_strndup(buf + start, end - start);
             start = i + 1;
         }
     }
     out->len = li;
-    free(buf);
     return out;
 }
 
@@ -119,7 +140,7 @@ KmArray *list_dir(long argc, KmArg *items)
     long i = 0;
     while (i < n && (ent = readdir(d)))
         if (strcmp(ent->d_name, ".") && strcmp(ent->d_name, ".."))
-            out->data[i++] = (long)strdup(ent->d_name);
+            out->data[i++] = (long)km_strndup(ent->d_name, strlen(ent->d_name));
     out->len = i;
     closedir(d);
     return out;
@@ -127,20 +148,20 @@ KmArray *list_dir(long argc, KmArg *items)
 
 /* Recursively search the directory tree containing `from_path` for
  * `{name}.kmm` (then `{name}.km`); return its path, or 0. */
-static char *find_rec(const char *dir, const char *name)
+static const char *find_rec(const char *dir, const char *name)
 {
     DIR *d = opendir(dir);
     if (!d) return NULL;
     struct dirent *ent;
     char path[4096];
-    char *found = NULL;
+    const char *found = NULL;
     /* first: a direct hit in this directory */
     const char *exts[2] = { ".kmm", ".km" };
     for (int e = 0; e < 2 && !found; e++) {
         snprintf(path, sizeof path, "%s/%s%s", dir, name, exts[e]);
         struct stat st;
         if (stat(path, &st) == 0 && S_ISREG(st.st_mode))
-            found = strdup(path);
+            found = km_strndup(path, strlen(path));
     }
     /* then: recurse into subdirectories */
     rewinddir(d);

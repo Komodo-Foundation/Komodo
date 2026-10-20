@@ -21,6 +21,7 @@
 !/examples/*.km
 !/examples/*.kmm
 !/examples/*.expected
+!/examples/*.c
 /demos/*
 !/demos/*.km
 !/demos/*.kmm

@@ -29,11 +29,12 @@ only, for keeping the implementation and sample code coherent.
 - `import <name>` — pull in a module. `<name>.kmm` is resolved from the
   directory tree of the file being compiled (and, as a fallback, the
   compiler's own directory, which is where the standard library lives);
-  then every sibling `.km` / `.kmm` in that file's directory declaring
-  the same `module` is merged in too. Applied transitively, everything
-  reached is compiled as one unit. The interpreter and the self-hosted
-  compiler resolve modules the same way, so `kmc main.km` builds the
-  compiler straight from `modules/*.kmm` — no concatenation step.
+  then every `.km` / `.kmm` **anywhere under that file's directory**
+  declaring the same `module` is merged in too — so a module's files may
+  be grouped into sub-folders (the compiler's own sources are, under
+  `modules/frontend/`, `modules/analyze/`, `modules/codegen/`, …).
+  Applied transitively, everything reached is compiled as one unit, so
+  `kmc main.km` builds the compiler with no concatenation step.
 - Members are reached as `name::member` (scope) or `name.member`. After the
   merge namespaces are flat, so `name::member` resolves to `member`.
 - Entry point: `void main()` or `void main(args)`; `args` is a string array,
@@ -50,19 +51,37 @@ only, for keeping the implementation and sample code coherent.
 
 | Kind    | Examples |
 |---------|----------|
-| int     | `0`, `42`, `256` |
+| int     | `0`, `42`, `256`, `0xFF` (hex) |
 | float   | `2.0`, `3.14`, `2.0f`, `2f` (trailing `f` forces float) |
 | string  | `"hi"`, `"a\nb"` (backslash escapes) |
+| interp. string | `` `x = {a + 1}` `` — backtick-delimited; each `{expr}` is spliced in as `string(expr)` |
 | char    | `'a'`, `'\n'` |
 | bool    | `true`, `false` |
 | null    | `null` |
 | array   | `[]`, `[4, 15, 8]` |
 | range   | `a to b` (usable as a value) |
 
+An **interpolated string** is written with backticks: `` `Score {n}` ``. The
+lexer rewrites it in place to `("Score " + string(n) + "")` — an ordinary
+concatenation the rest of the pipeline never sees as special, so `{…}` may
+hold any expression (`` `{a > b and "hi" or "lo"}` ``) and the result is a
+plain `string`. Inside the text the usual `\n` / `\t` / `\\` escapes work,
+a literal backtick is `\` + `` ` ``, and `\{` / `\}` write literal braces.
+There is no format-spec syntax; a `float` prints in `string(x)`'s `%g`
+form, so round it first if you want fixed decimals.
+
 ## Types
 
 - Primitives: `int`, `uint`, `float`, `bool`, `string`, `char`.
 - Fixed-width integer containers: `u8`/`u16`/`u32`/`u64`, `i8`/`i16`/`i32`/`i64`.
+- Fixed-width floats: `f64` (a spelling of `float`) and **`f32`**. An `f32`
+  is arithmetically identical to `float` everywhere inside Komodo — it is
+  held and computed as a 64-bit double, shares every code path, and
+  `f32`↔`float`↔`int` mix freely. Its 32-bit width matters only at a
+  boundary: a `struct` field declared `f32` occupies 4 bytes in the C
+  layout used for a by-value FFI argument (see *Foreign functions*), and
+  an `extern` parameter / return typed `f32` binds a C `float` (not
+  `double`). Use it to mirror a C struct like raylib's `Vector3`.
 - Array: `[T]` (e.g. `[int]`, `[[Token]]`).
 - Nullable: `T?` (e.g. `char?`, `string?`, `Expression?`).
 - Annotations are written `name: Type`, after params, vars, members, and as
@@ -389,7 +408,9 @@ extern "SDL2"                       // a block: one library, many decls
   `(tag,value)[]` ABI):
   - integer / pointer / `string` / handle args fill `rdi, rsi, rdx, rcx,
     r8, r9`, then spill to the stack — any number of arguments;
-  - `float` args fill `xmm0..7`, then spill;
+  - `float` args fill `xmm0..7`, then spill; a Komodo `float` is a
+    64-bit IEEE double, so the C prototype it binds to must say `double`
+    (not `float`) for every such parameter and for a `: float` return;
   - `al` is set to the number of xmm registers used, so C varargs
     (`printf`, …) work;
   - `: float` return type comes back in `xmm0`; any other return type
@@ -404,8 +425,28 @@ extern "SDL2"                       // a block: one library, many decls
 - `data(arr)` — the element pointer of a Komodo array, for passing a
   writable buffer / out-param to C (e.g. `SDL_PollEvent(data(ev))`). Read
   results back with ordinary `arr[i]`.
-- Not supported: passing/returning structs by value; `float` in a callback
-  signature; a callback with more than 6 parameters.
+- **Structs by value — `copy(x)`.** An `extern` argument written
+  `copy(structVal)` is passed *by value*: the compiler repacks the
+  Komodo object (one 8-byte slot per field) into the tight C layout its
+  declared field types imply — `f32`→4 bytes, `i32`/`u32`→4, `u8`→1,
+  `float`/`int`→8 — in a static scratch buffer, then places it per the
+  System V AMD64 aggregate rules:
+  - ≤ 8 bytes → one eightbyte; ≤ 16 → two. Each eightbyte is SSE (an
+    `xmm` register) when every field in it is floating-point, otherwise
+    INTEGER (a GP register); it spills to the stack when the register
+    file is full. So `Vector2`→one `xmm`, `Vector3`→two `xmm`,
+    `Color{u8×4}`→one GP reg, `Rectangle`→two `xmm`.
+  - 17–192 bytes → MEMORY class: the whole aggregate goes in the stack
+    argument area, consuming no registers (this is how a 44-byte
+    `Camera3D` or a 64-byte `Matrix` is passed).
+  An `extern fn` whose declared **return** type is such a struct (≤ 16
+  bytes) is unpacked from `rax:rdx` / `xmm0:xmm1` into a fresh Komodo
+  object. A struct argument *without* `copy(...)` still passes the bare
+  handle as a pointer (for a `T*` parameter), as before. Nested struct
+  fields, arrays, and MEMORY-class returns are not supported; see
+  `stdlib/raylib.kmm` for a shim-free binding built on this.
+- Not supported in a callback: `float` in the signature; more than 6
+  parameters.
 - With `build.sh` (the interpreter path) pass link flags after the output
   name — `./build.sh app.km x86 ./app -lSDL2`; the `komodo` CLI reads
   `<file>.links` and needs none.
@@ -417,6 +458,10 @@ A handful of names the compiler lowers directly (no `import`, no library):
 - `print(...)` — write values. A `float` argument is shown in `%g` form
   with a trailing `.0` kept when integral.
 - `string(x)` — convert any value to its text form (same `float` rule).
+- `int(x)` — narrow a number to a 64-bit signed integer: a `float` /
+  `f32` is truncated toward zero (`cvttsd2si`), an integer-class value
+  passes through unchanged. This is the sanctioned float→int conversion;
+  a plain assignment / return stays width-checked and rejects it.
 - `join(parts, sep)` — concatenate a `[string]` with `sep` between, in
   one pass (avoids the O(n²) churn of repeated `s = s + line`).
 - `data(arr)` — an array's element pointer, for handing a buffer to C.
@@ -443,7 +488,7 @@ ships as a `.kmm` file of prototype declarations (bodies linked from
 | `math` | ints: `abs`, `min`, `max`, `pow`, `gcd`, `clamp`, `sign`; floats: `sqrt`, `floor`, `ceil`, `round`, `trunc`, `fabs`, `sin`, `cos`, `tan`, `atan`, `atan2`, `exp`, `log`, `log2`, `log10`, `powf`, `hypot`; constants `pi()`, `e()` |
 | `string` | `length`, `split`, `join`, `trim`, `trim_start`, `trim_end`, `replace`, `index_of`, `contains`, `starts_with`, `ends_with`, `to_upper`, `to_lower`, `repeat`, `reverse`, `substring`, `pad_start`, `pad_end` |
 | `algorithm` | `sort`, `reverse`, `sum`, `max`, `min`, `contains`, `index_of`, `fill` — each **overloaded** for `[int]` and `[float]` (same call, resolved on the array's element type) |
-| `file` | `exists`, `read_all`, `read_lines`, `write_all`, `append_all`, `find`, `list_dir` |
+| `file` | `exists`, `is_dir`, `read_all`, `read_lines`, `write_all`, `append_all`, `find`, `list_dir` |
 | `sdl2` | a System-V-ABI subset of SDL2 (window / renderer / events) — see `stdlib/sdl2.kmm` |
 
 `math` / `string` / `algorithm` members carry a module-name prefix on
@@ -473,9 +518,16 @@ extern fn SDL_Init(flags: int): int
 ```
 
 - `link Name` — a bare identifier — becomes the linker flag `-lName`.
-- `link "path/to/file.c"` — a quoted string — is passed to the linker
-  as-is (relative to wherever the compiler is invoked from), for a
-  companion source file rather than an installed system library.
+  When a `Name.pc` exists, the `komodo` CLI expands it through
+  `pkg-config` — both `--static --libs` (the `-L` prefix and every
+  private transitive dependency) and `--cflags` (the `-I` for a
+  headers-in-a-prefix install), so a module's companion C shim can
+  `#include <lib.h>`.
+- `link "path/to/file.c"` — a quoted string — names a companion source
+  file rather than an installed system library. It is resolved against
+  the directory of the module file that declared it (unless already
+  absolute), so a library can ship its C shim next to its `.kmm` and
+  still be `import`ed from any directory.
 
 `kmc`'s driver resolves every `link` reachable from a program (the same
 traversal it uses for `import`) into ready linker tokens and writes them
@@ -562,29 +614,71 @@ natively).  A folded boolean is emitted as the int `1` / `0`, so
 
 ## Memory
 
-A struct / class instance carries an 8-byte **reference count** in the
-word *before* the handle, so the type-id word and every field / vtable
-offset are unchanged; `new` sets it to 1. The runtime exposes
-`km_retain` / `km_release` (`stdlib/runtime.c`) — `km_release` frees the
-whole block, header included, at count zero, without recursing into
-fields.
+Komodo is **garbage-collected**. Every heap value — struct / class
+instance, array, string — lives on a conservative collected heap (the
+Boehm–Demers–Weiser collector, `libgc.so.1`, linked into every program)
+and is reclaimed once nothing reaches it. There is no `free`, and nothing
+can be freed too early: a value stays valid for as long as anything
+refers to it. Cycles are collected like everything else.
 
-Codegen then runs a **conservative escape analysis** (`Codegen::computeFreeable`
-in `modules/codegen_stmt.kmm`) per function. A `let`-bound local of heap
-type (struct / class handle, or array) is *freeable* when:
+- **Roots** are the stack, the registers and the program's data / bss
+  (top-level `let`s). Objects and arrays are scanned for pointers;
+  string bytes are allocated *atomic* (never scanned).
+- **Layout.** An object handle points at `[ type_id | field0 | … ]`; an
+  array handle at `[ len | cap | elements… ]`. `new` and array literals
+  call `km_alloc` (zeroed), C stdlib code builds strings with
+  `km_alloc_atomic` / `km_strndup` (`stdlib/km_runtime.h`).
+- **Growth.** `arr += …` grows in place with doubling; when the buffer
+  moves, the old one is left to the collector, so another alias of the
+  array stays valid (it no longer sees the appends).
+- **C interop.** `data(arr)` is an interior pointer, which the collector
+  honours, so the array stays alive while that pointer is on the stack or
+  in the program's / a library's static data. Memory owned by C (libc
+  `malloc`, a library's buffers) is *not* scanned: if C keeps a pointer
+  into Komodo data beyond the call, keep a Komodo reference to it too.
 
-- every initialiser and `=` value for it is a **fresh** producer — `new`,
-  an array literal, or `copy(...)`; and
-- it never **escapes**: not returned, not stored into a field / element /
-  global, not passed to a call, not aliased to another binding, not used
-  as a method receiver, not handed to `data()`. Only pass-through reads
-  (`v.f`, `v[i]`, `#v`, `v == null`) keep it freeable.
+**Heap ceiling.** A program may use at most 70 % of the memory available
+to it — physical RAM, or the cgroup / container limit when that is lower
+(e.g. `systemd-run -p MemoryMax=4G`). Set `KOMODO_MAX_HEAP` to change it
+(bytes, or with a `K`/`M`/`G`/`T` suffix, powers of 1024: `2G`, `512M`;
+`0` = no ceiling). When the live data no longer fits — or the system
+refuses memory — the program stops with one line on stderr and exit
+status **3**; generated code is never handed a null allocation:
 
-Such a value has refcount 1 for its whole life, so the compiler emits an
-unconditional free — `km_release` for objects, `km_drop_array` for arrays
-(arrays carry no count word) — at every `return`, at fall-through
-function exit, and before each fresh reassignment (the slot is
-zero-initialised so the first release is a harmless no-op). Everything
-the analysis is unsure about, and the fields / elements *inside* a freed
-object, are left to leak; cyclic structures always leak. The `stackvm`
-backend treats the hooks as no-ops.
+```
+Komodo: out of memory - heap limit 10.4 GB reached in Mesh::rebuild (raise it with KOMODO_MAX_HEAP)
+```
+
+**Runtime errors.** `arr[i]` / `arr[i] = v` check `0 <= i < #arr` inline
+(one compare); out of range throws an ordinary Komodo error, so `f(...)?`
+can catch it, and uncaught it reads
+`Uncaught error: array index 5 out of range (length 3) in parse`
+(status 1). String indexing `s[i]` is not checked (`s[#s]` is `""`).
+
+**Crashes.** A hardware fault never ends in a silent core dump. The
+runtime handles SIGSEGV, SIGBUS, SIGFPE, SIGILL and SIGABRT on its own
+signal stack (so a stack overflow is caught too), prints what happened,
+where, and the Komodo call stack — direct recursion folded into one line
+— then exits with 128 + the signal number (139 for SIGSEGV), the status a
+shell shows for that signal:
+
+```
+Komodo: crash - stack overflow (recursion too deep) in depth
+Komodo call stack (innermost first):
+    depth
+    depth   (x 130979, recursive)
+    main
+```
+
+Other headlines: `invalid memory access (a null value was used)`,
+`invalid memory access at address 0x…`, `integer division by zero`,
+`bus error`, `illegal instruction`, `aborted`. Function names come from
+the executable's own symbol table (so don't strip it); C frames are
+unwound through their unwind tables, generated code through its rbp
+frame chain.
+
+Code built by a compiler from before the collector (it allocates with raw
+`malloc` and lacks the `km_abi_gc` marker) still links and runs, with
+collection switched off — that keeps bootstrapping from an older `kmc`
+working (`build-self.sh` twice: the first run reports a fixpoint mismatch
+because the code generator changed, the second reaches the fixpoint).

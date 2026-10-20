@@ -36,6 +36,12 @@ class Analyzer
 public
     constructor(strict: bool)
         m_strict = strict
+        m_typeIdx = new StrIndex()
+        m_fnIdx = new StrIndex()
+
+    mut setSourceMap(files: [string], starts: [int])
+        m_srcFiles = files
+        m_srcStarts = starts
 
     mut analyze(prog: Program)
         // ── Pass 0: register enums, then types parent-before-child ──
@@ -55,16 +61,16 @@ public
         //  loosely typed.
         for fd in prog.functions do
             if fnIsTemplate(fd) then
-                if not listHas(m_templateNames, fd.name) then
+                if not (fd.name in m_templateNames) then
                     m_templateNames += [fd.name]
                 continue
             if freeDeclCount(prog, fd.name) >= 2 then
-                if not listHas(m_overloadNames, fd.name) then
+                if not (fd.name in m_overloadNames) then
                     m_overloadNames += [fd.name]
                 if not hasFn(fd.name) then
                     registerFn(fd.name, "", fd)
                 continue
-            if listHas(m_fnNames, fd.name) then
+            if hasFn(fd.name) then
                 err(fd, "duplicate function '" + fd.name + "'")
             registerFn(fd.name, "", fd)
         for cl in prog.classes do
@@ -97,7 +103,7 @@ public
 
         // non-fatal bad-practice warnings, in source order
         for w in m_lints do
-            print(w)
+            print(locate(w, m_srcFiles, m_srcStarts))
 
         prog.analyzed = true
         prog.usesCopy = m_usesCopy
@@ -208,7 +214,7 @@ public
             let progressed = false
             for d in work do
                 let par = declParentName(d)
-                if par == "" or listHas(done, par) then
+                if par == "" or (par in done) then
                     ordered += [d]
                     done += [declName(d)]
                     progressed = true
@@ -223,8 +229,9 @@ public
         return ordered
 
     mut registerEnum(en: EnumDecl)
-        if listHas(m_typeNames, en.name) then
+        if (en.name in m_typeNames) then
             err(en, "duplicate type '" + en.name + "'")
+        m_typeIdx.add(en.name, #m_typeNames)
         m_typeNames += [en.name]
         m_typeIsClass += [false]
         m_typeIsEnum += [true]
@@ -265,7 +272,7 @@ public
                 m_typeOwnMethods[ti] += [m.name]
 
     mut registerType(name: string, parent: string?, node: ASTNode, isClass: bool, isAbs: bool, isUniq: bool, fnames: [string], ftypes: [string], fdef: [bool])
-        if listHas(m_typeNames, name) then
+        if (name in m_typeNames) then
             err(node, "duplicate type '" + name + "'")
         let par = parentOrEmpty(parent)
         // ownership is inherited: a child of a `unique` base is unique too.
@@ -293,6 +300,7 @@ public
             allTypes += [ftypes[k]]
             allDef += [fdef[k]]
             k += 1
+        m_typeIdx.add(name, #m_typeNames)
         m_typeNames += [name]
         m_typeIsClass += [isClass]
         m_typeIsEnum += [false]
@@ -307,12 +315,7 @@ public
         m_enumVariants += [[]]
 
     mut typeIndex(name: string): int
-        let i = 0
-        while i < #m_typeNames do
-            if m_typeNames[i] == name then
-                return i
-            i += 1
-        return 0 - 1
+        return m_typeIdx.first(name)
 
     mut isObjType(name: string): bool
         return typeIndex(name) >= 0
@@ -372,7 +375,7 @@ public
         return m_typeFieldNames[ti]
 
     mut hasField(typeName: string, field: string): bool
-        return listHas(fieldNamesOf(typeName), field)
+        return (field in fieldNamesOf(typeName))
 
     // the declared type string of a field (may carry a trailing "?")
     mut fieldDeclType(typeName: string, field: string): string
@@ -421,7 +424,7 @@ public
         let guard = 0
         while cur != "" do
             let ti = typeIndex(cur)
-            if ti >= 0 and listHas(m_typeOwnMethods[ti], method) then
+            if ti >= 0 and (method in m_typeOwnMethods[ti]) then
                 return cur
             cur = typeParentOf(cur)
             guard += 1
@@ -434,7 +437,7 @@ public
         if ci >= 0 and m_typeIsAbstract[ci] then
             let d = 0
             while d < #m_typeNames do
-                if isDescendantOf(m_typeNames[d], className) and listHas(m_typeOwnMethods[d], method) then
+                if isDescendantOf(m_typeNames[d], className) and (method in m_typeOwnMethods[d]) then
                     return m_typeNames[d]
                 d += 1
         return ""
@@ -442,6 +445,7 @@ public
     // ── function-signature registry ──────────────────────────────
 
     mut registerFn(sym: string, owner: string, fd: FunctionDecl)
+        m_fnIdx.add(sym, #m_fnNames)
         m_fnNames += [sym]
         m_fnOwner += [owner]
         let ptypes: [string] = []
@@ -484,12 +488,7 @@ public
         return "fn"
 
     mut fnIndex(sym: string): int
-        let i = 0
-        while i < #m_fnNames do
-            if m_fnNames[i] == sym then
-                return i
-            i += 1
-        return 0 - 1
+        return m_fnIdx.first(sym)
 
     mut hasFn(sym: string): bool
         return fnIndex(sym) >= 0
@@ -543,7 +542,7 @@ public
     // ── macro registry (block-scoped stack, mirrors Codegen) ─────
 
     mut isMacro(name: string): bool
-        return listHas(m_macroNames, name)
+        return (name in m_macroNames)
 
     mut macroExprOf(name: string): Expression?
         let i = #m_macroNames - 1
@@ -570,7 +569,7 @@ public
     // ── top-level variable registry (process-wide, never reset) ──
 
     mut isGlobalVar(name: string): bool
-        return listHas(m_globalNames, name)
+        return (name in m_globalNames)
 
     mut globalVarType(name: string): Type
         let i = 0
@@ -584,7 +583,7 @@ public
     // its type.  Initialisers see functions (Pass 1) and every earlier
     // global; a forward reference to a later global is not allowed.
     mut registerGlobal(g: VarDecl)
-        if isGlobalVar(g.name) or isMacro(g.name) or listHas(m_fnNames, g.name) then
+        if isGlobalVar(g.name) or isMacro(g.name) or (g.name in m_fnNames) then
             err(g, "duplicate top-level name '" + g.name + "'")
 
         let declared: Type? = null
@@ -628,7 +627,7 @@ public
         m_pathTypes = []
 
     mut scopeHas(name: string): bool
-        return listHas(m_scopeNames, name)
+        return (name in m_scopeNames)
 
     mut scopeAdd(name: string, t: Type, immut: bool)
         if scopeHas(name) then
@@ -834,14 +833,6 @@ public
 
     // ── misc helpers ───────────────────────────────────────────
 
-    mut listHas(xs: [string], v: string): bool
-        let i = 0
-        while i < #xs do
-            if xs[i] == v then
-                return true
-            i += 1
-        return false
-
     // ── "did you mean" suggestions ───────────────────────────────
     //
     //  A small Levenshtein distance: the number of single-character
@@ -979,18 +970,22 @@ public
         return n
 
     mut isTemplateName(name: string): bool
-        return listHas(m_templateNames, name)
+        return (name in m_templateNames)
 
     mut isOverloadedName(name: string): bool
-        return listHas(m_overloadNames, name)
+        return (name in m_overloadNames)
 
 private
     m_strict: bool = false
+    // merged-source line map, for reporting warnings per file (`locate`)
+    m_srcFiles: [string] = []
+    m_srcStarts: [int] = []
     // non-fatal warnings collected during analysis (see `lint`)
     m_lints: [string] = []
 
-    // type registry
+    // type registry (`m_typeIdx` hashes m_typeNames — see StrIndex)
     m_typeNames: [string] = []
+    m_typeIdx: StrIndex
     m_typeIsClass: [bool] = []
     m_typeIsEnum: [bool] = []
     m_typeIsAbstract: [bool] = []
@@ -1008,8 +1003,9 @@ private
     m_templateNames: [string] = []
     m_overloadNames: [string] = []
 
-    // function-signature registry
+    // function-signature registry (`m_fnIdx` hashes m_fnNames)
     m_fnNames: [string] = []
+    m_fnIdx: StrIndex
     m_fnOwner: [string] = []
     m_fnParamTypes: [[string]] = []
     m_fnRet: [string] = []

@@ -18,7 +18,7 @@ module km_compiler
 class X86Backend : Backend
 private
     m_lines: [string] = []         // .text body, one entry per line
-    m_rodata: string = ""          // .rodata lines (dq / db)
+    m_rodata: [string] = []        // .rodata lines (dq / db), joined in footer
     m_globals: [string] = []       // top-level variable names → .bss cells
     m_doubleId: int = 0
     m_stringId: int = 0
@@ -29,17 +29,23 @@ private
     m_intern: bool = true
     m_poolKeys: [string] = []      // "d:<value>" / "s:<lexeme>"
     m_poolLabels: [string] = []
+    m_poolIdx: StrIndex = new StrIndex()   // hash index over m_poolKeys
     m_externs: [string] = []       // link-time symbols to `extern`
-    m_usesMalloc: bool = false
+    m_usesAlloc: bool = false
+    m_usesIndexCheck: bool = false
+    m_idxFail: string = ""          // this function's out-of-range stub label ("" = none yet)
     m_usesAppend: bool = false
     m_usesStr: bool = false
-    m_vtblText: string = ""         // `__vt_<id>: dq …` lines
+    m_usesFfiStruct: bool = false   // reserve km_ffi_marshal scratch in .bss
+    m_vtblText: [string] = []         // `__vt_<id>: dq …` lines
     m_vtabCount: int = 0            // number of registered type ids
     m_vtabSet: [int] = []           // ids that have a real vtable
     m_dispEnd: string = ""          // overload dispatch: shared exit label
     m_dispNext: string = ""         // overload dispatch: current case's skip label
     m_tryCatch: [string] = []       // protected-call: catch labels (nesting stack)
     m_tryDone: [string] = []        // protected-call: done labels (nesting stack)
+    m_pSpan: int = 0                // peephole: source lines covered by the last rewrite
+    m_keepJumps: [string] = []      // targets of `and`/`or` branches whose rax is read at the join
 
 // ── line buffer ────────────────────────────────────────────────────
 
@@ -67,15 +73,14 @@ void X86Backend::emitCall(sym: string)
 mut X86Backend::poolFind(key: string): string
     if not m_intern then
         return ""
-    let i = 0
-    while i < #m_poolKeys do
-        if m_poolKeys[i] == key then
-            return m_poolLabels[i]
-        i += 1
-    return ""
+    let i = m_poolIdx.first(key)
+    if i < 0 then
+        return ""
+    return m_poolLabels[i]
 
 mut X86Backend::poolAdd(key: string, label: string)
     if m_intern then
+        m_poolIdx.add(key, #m_poolKeys)
         m_poolKeys += [key]
         m_poolLabels += [label]
 
@@ -85,7 +90,7 @@ mut X86Backend::addDouble(value: string): string
         return hit
     m_doubleId += 1
     let name = "LC" + string(m_doubleId)
-    m_rodata = m_rodata + name + ": dq " + value + "\n"
+    m_rodata += [name + ": dq " + value + "\n"]
     poolAdd("d:" + value, name)
     return name
 
@@ -109,16 +114,27 @@ mut X86Backend::addString(lexeme: string): string
         else
             body = body + raw[i]
         i += 1
-    m_rodata = m_rodata + name + ": db `" + body + "`, 0\n"
+    m_rodata += [name + ": db `" + body + "`, 0\n"]
     return name
+
+// How a program symbol is spelled in NASM text.  The `$` prefix makes
+// NASM read the name as an identifier even when it is also one of its
+// reserved words (`at`, `abs`, `rel`, `seg`, `byte`, `mov`, `ax`, …); the
+// object file still carries the bare name.  Every symbol that comes from
+// a Komodo name (function labels, call targets, externs) goes through it.
+fn X86Backend::asmSym(name: string): string
+    return "$" + name
 
 // A call target that isn't defined in this program is resolved at link
 // time — record it so the header can `extern` it.
 void X86Backend::recordExtern(sym: string)
     if isLocalFn(sym) then
         return
-    if not listHas(m_externs, sym) then
-        m_externs += [sym]
+    addExtern(asmSym(sym))
+
+void X86Backend::addExtern(asmName: string)
+    if not (asmName in m_externs) then
+        m_externs += [asmName]
 
 // ── lifecycle ──────────────────────────────────────────────────────
 
@@ -129,10 +145,11 @@ void X86Backend::begin()
 // frame offset.  `main` is entered by the C runtime with the C ABI;
 // every other function receives  rsi = &(tag,value)[argc].
 void X86Backend::beginFunction(name: string, frame: int, paramOffsets: [int], isMain: bool)
+    m_idxFail = ""
     if isMain then
         label("km_program_main")
     else
-        label(name)
+        label(asmSym(name))
     ins("push rbp")
     ins("mov rbp, rsp")
     ins("push rbx")
@@ -149,6 +166,14 @@ void X86Backend::beginFunction(name: string, frame: int, paramOffsets: [int], is
 void X86Backend::endFunction()
     ins("xor eax, eax")
     epilogue()
+    // cold path shared by every `arr[i]` in this function: index in rcx,
+    // handle in rax → km_index_error(index, handle), which throws
+    if m_idxFail != "" then
+        label(m_idxFail)
+        ins("mov rdi, rcx")
+        ins("mov rsi, rax")
+        ins("and rsp, -16")
+        ins("call km_index_error")
     emit("")
 
 void X86Backend::epilogue()
@@ -196,7 +221,7 @@ void X86Backend::storeLocal(off: int, ty: string)
 // `main`.
 
 void X86Backend::declareGlobal(name: string, ty: string)
-    if not listHas(m_globals, name) then
+    if not (name in m_globals) then
         m_globals += [name]
 
 void X86Backend::loadGlobal(name: string, ty: string)
@@ -416,10 +441,20 @@ mut X86Backend::sliceArray()
 
 // ── arrays ─────────────────────────────────────────────────────────
 
+// Out-of-range indexes go to the function's shared cold stub (emitted
+// by endFunction).  One unsigned compare also catches a negative index.
+void X86Backend::indexCheck()
+    if m_idxFail == "" then
+        m_idxFail = newLabel()
+    m_usesIndexCheck = true
+    ins("cmp rcx, [rax]")
+    ins("jae near " + m_idxFail)
+
 // object spilled by pushAcc(), index in rax.
 void X86Backend::indexAcc()
     ins("mov rcx, rax")
     ins("pop rax")
+    indexCheck()
     ins("mov rax, [rax + rcx*8 + 16]")
 
 // `#arr` — the length field lives at offset 0 of the handle.
@@ -427,9 +462,9 @@ void X86Backend::arrayLenField()
     ins("mov rax, [rax]")
 
 mut X86Backend::arrayBegin(n: int)
-    m_usesMalloc = true
+    m_usesAlloc = true
     ins("mov rdi, " + string(16 + 8 * n))
-    emitCall("malloc")
+    emitCall("km_alloc")
     ins("mov qword [rax], " + string(n))
     ins("mov qword [rax + 8], " + string(n))
     ins("push rax")
@@ -443,79 +478,20 @@ void X86Backend::arrayEnd()
 
 // ── objects (structs + classes) ───────────────────────────────────
 //
-//  An object handle is a bare pointer to `fieldCount` contiguous 8-byte
-//  slots — no header.  `new` mallocs and zeroes it and leaves the handle
-//  pushed (like arrayBegin); `objFinishNew` pops it back as the result.
+//  `new` takes a zeroed block from the collected heap (km_alloc, so every
+//  field starts 0 / null) and leaves the handle pushed (like arrayBegin);
+//  `objFinishNew` pops it back as the result.  Nothing frees it: the
+//  collector reclaims it once unreachable.
 
 // An object handle points at  [ type_id | field0 | field1 | … ]  — one
 // leading 8-byte word holding the integer type id (structs and classes
 // both), so every field offset is shifted by 8.
 mut X86Backend::objNew(typeId: int, nFields: int)
-    m_usesMalloc = true
-    // one extra word for the refcount, which sits just *before* the
-    // handle — so the type-id word and every field offset are unchanged.
-    let bytes = (nFields + 2) * 8
-    ins("mov rdi, " + string(bytes))
-    emitCall("malloc")
-    ins("mov qword [rax], 1")               // refcount = 1
-    ins("add rax, 8")                       // handle = block + 8
+    m_usesAlloc = true
+    ins("mov rdi, " + string((nFields + 1) * 8))
+    emitCall("km_alloc")
     ins("mov qword [rax], " + string(typeId))
-    let k = 0
-    while k < nFields do
-        ins("mov qword [rax + " + string(8 + k * 8) + "], 0")
-        k += 1
     ins("push rax")
-
-// ── object / array lifetime (conservative auto-free) ──────────────
-//
-//  The compiler's escape analysis (codegen_stmt.kmm) hands each function
-//  the frame offsets of its `let`-bound heap locals that provably never
-//  escape — those are freed here, and only here.
-
-void X86Backend::zeroFreeableSlots(offsets: [int])
-    for off in offsets do
-        ins("mov qword [rbp - " + string(off) + "], 0")
-
-// Release every freeable local.  `preserveAcc` keeps the return value
-// alive across the C calls (each `km_release` clobbers rax and every xmm);
-// `accIsFloat` says whether it rides in xmm0 rather than rax.
-mut X86Backend::emitScopeReleases(objOffsets: [int], arrOffsets: [int], preserveAcc: bool, accIsFloat: bool)
-    if #objOffsets == 0 and #arrOffsets == 0 then
-        return
-    if preserveAcc then
-        if accIsFloat then
-            ins("sub rsp, 16")
-            ins("movsd [rsp], xmm0")
-        else
-            ins("push rax")
-    for off in objOffsets do
-        ins("mov rdi, [rbp - " + string(off) + "]")
-        recordExtern("km_release")
-        emitCall("km_release")
-    for off in arrOffsets do
-        ins("mov rdi, [rbp - " + string(off) + "]")
-        recordExtern("km_drop_array")
-        emitCall("km_drop_array")
-    if preserveAcc then
-        if accIsFloat then
-            ins("movsd xmm0, [rsp]")
-            ins("add rsp, 16")
-        else
-            ins("pop rax")
-
-// `v = <fresh>` for a freeable local: drop the value it held first.  The
-// new value is already in rax.
-mut X86Backend::releaseStoreLocal(off: int, isArray: bool)
-    ins("push rax")
-    ins("mov rdi, [rbp - " + string(off) + "]")
-    if isArray then
-        recordExtern("km_drop_array")
-        emitCall("km_drop_array")
-    else
-        recordExtern("km_release")
-        emitCall("km_release")
-    ins("pop rax")
-    ins("mov [rbp - " + string(off) + "], rax")
 
 // value in rax, handle at [rsp] (positional field init for `new`)
 void X86Backend::objSetField(idx: int)
@@ -532,7 +508,7 @@ mut X86Backend::isTypeCheck(ids: [int])
     let falseL = newLabel()
     let endL = newLabel()
     ins("test rax, rax")
-    ins("jz " + falseL)
+    ins("jz near " + falseL)
     ins("mov rax, [rax]")
     ins("xor ecx, ecx")
     for id in ids do
@@ -541,7 +517,7 @@ mut X86Backend::isTypeCheck(ids: [int])
         ins("sete dl")
         ins("or rcx, rdx")
     ins("mov rax, rcx")
-    ins("jmp " + endL)
+    ins("jmp near " + endL)
     label(falseL)
     ins("xor eax, eax")
     label(endL)
@@ -567,10 +543,11 @@ void X86Backend::storeField(idx: int)
 
 // `arr[i] = v` — value in rax, index spilled, handle spilled below it
 void X86Backend::indexAssign()
-    ins("mov rcx, rax")
+    ins("mov rdx, rax")
+    ins("pop rcx")
     ins("pop rax")
-    ins("pop rdx")
-    ins("mov [rdx + rax*8 + 16], rcx")
+    indexCheck()
+    ins("mov [rax + rcx*8 + 16], rdx")
 
 // `dst += src` — value in rax, dst at [rbp - off].
 mut X86Backend::arrayAppendTo(off: int)
@@ -611,6 +588,29 @@ mut X86Backend::arrayRepeat()
     recordExtern("km_array_repeat")
     emitCall("km_array_repeat")
 
+// `dst += [v]` — value in rax, dst at [rbp - off].  km_array_push appends
+// it in place (the handle may move, and is stored back).
+mut X86Backend::arrayPushTo(off: int)
+    m_usesAppend = true
+    ins("mov rsi, rax")
+    ins("mov rdi, [rbp - " + string(off) + "]")
+    emitCall("km_array_push")
+    ins("mov [rbp - " + string(off) + "], rax")
+
+// `obj.field += [v]` — value in rax, receiver spilled by pushAcc().
+mut X86Backend::arrayPushToField(idx: int)
+    m_usesAppend = true
+    ins("mov rsi, rax")
+    ins("pop rax")
+    ins("mov rdi, [rax + " + string(8 + idx * 8) + "]")
+    ins("push rax")
+    emitCall("km_array_push")
+    ins("pop rcx")
+    ins("mov [rcx + " + string(8 + idx * 8) + "], rax")
+
+mut X86Backend::inPlaceAppend(): bool
+    return true
+
 // `self.field += src` (array append) — src in rax, receiver spilled by
 // pushAcc().  self.field = km_array_append(self.field, src).
 mut X86Backend::arrayAppendToField(idx: int)
@@ -633,22 +633,24 @@ void X86Backend::subFromLocal(off: int)
 // ── control flow ───────────────────────────────────────────────────
 
 void X86Backend::jump(name: string)
-    ins("jmp " + name)
+    ins("jmp near " + name)
 
 void X86Backend::branchIfZero(name: string)
     ins("test rax, rax")
-    ins("je " + name)
+    ins("je near " + name)
 
 void X86Backend::branchIfNonzero(name: string)
     ins("test rax, rax")
-    ins("jne " + name)
+    ins("jne near " + name)
 
 // `and` / `or` short-circuit: `test` already leaves the value in rax, so
 // the "keep" forms are identical to the plain ones on x86.
 void X86Backend::branchIfZeroKeep(name: string)
+    m_keepJumps += [name]
     branchIfZero(name)
 
 void X86Backend::branchIfNonzeroKeep(name: string)
+    m_keepJumps += [name]
     branchIfNonzero(name)
 
 // loop-variable in rax spilled by pushAcc(), bound in rax; exit when the
@@ -659,14 +661,14 @@ void X86Backend::forCompareExit(endL: string, descending: bool, inclusive: bool)
     ins("cmp rax, rcx")
     if descending then
         if inclusive then
-            ins("jl " + endL)
+            ins("jl near " + endL)
         else
-            ins("jle " + endL)
+            ins("jle near " + endL)
     else
         if inclusive then
-            ins("jg " + endL)
+            ins("jg near " + endL)
         else
-            ins("jge " + endL)
+            ins("jge near " + endL)
 
 void X86Backend::stepLocal(off: int, desc: bool)
     ins("mov rax, [rbp - " + string(off) + "]")
@@ -686,7 +688,7 @@ void X86Backend::forInHead(viOff: int, vaOff: int, endL: string)
     ins("mov rax, [rbp - " + string(viOff) + "]")
     ins("mov rdx, [rbp - " + string(vaOff) + "]")
     ins("cmp rax, [rdx]")
-    ins("jge " + endL)
+    ins("jge near " + endL)
 
 // rax = cursor, rdx = handle (left by forInHead).
 void X86Backend::forInElem(xOff: int)
@@ -710,7 +712,7 @@ mut X86Backend::call0(name: string)
     recordExtern(sym)
     ins("xor edi, edi")
     ins("xor esi, esi")
-    emitCall(sym)
+    emitCall(asmSym(sym))
 
 void X86Backend::callFrameBegin(n: int)
     ins("sub rsp, " + string(n * 16))
@@ -726,7 +728,7 @@ mut X86Backend::callFrameEnd(name: string, n: int)
     recordExtern(sym)
     ins("mov rdi, " + string(n))
     ins("mov rsi, rsp")
-    emitCall(sym)
+    emitCall(asmSym(sym))
     ins("add rsp, " + string(n * 16))
 
 // ── overload dispatch ─────────────────────────────────────────────
@@ -746,20 +748,20 @@ mut X86Backend::dispatchCaseBegin()
 // arg `j`'s tag word must equal `tag`.
 void X86Backend::dispatchTestTag(j: int, tag: int)
     ins("cmp qword [rsp + " + string(j * 16) + "], " + string(tag))
-    ins("jne " + m_dispNext)
+    ins("jne near " + m_dispNext)
 
 // arg `j` must be a non-null object handle whose header type id is one
 // of `ids`.
 mut X86Backend::dispatchTestType(j: int, ids: [int])
     ins("mov rax, [rsp + " + string(j * 16 + 8) + "]")
     ins("test rax, rax")
-    ins("jz " + m_dispNext)
+    ins("jz near " + m_dispNext)
     ins("mov rax, [rax]")
     let okL = newLabel()
     for id in ids do
         ins("cmp rax, " + string(id))
-        ins("je " + okL)
-    ins("jmp " + m_dispNext)
+        ins("je near " + okL)
+    ins("jmp near " + m_dispNext)
     label(okL)
 
 mut X86Backend::dispatchCall(sym: string, n: int)
@@ -767,8 +769,8 @@ mut X86Backend::dispatchCall(sym: string, n: int)
     recordExtern(s)
     ins("mov rdi, " + string(n))
     ins("mov rsi, rsp")
-    emitCall(s)
-    ins("jmp " + m_dispEnd)
+    emitCall(asmSym(s))
+    ins("jmp near " + m_dispEnd)
 
 void X86Backend::dispatchCaseEnd()
     label(m_dispNext)
@@ -808,7 +810,7 @@ mut X86Backend::setVtable(typeId: int, labels: [string])
             line = line + ", "
         line = line + labels[i]
         i += 1
-    m_vtblText = m_vtblText + line + "\n"
+    m_vtblText += [line + "\n"]
     m_vtabSet += [typeId]
 
 // ── C FFI (`extern fn`) — full System V AMD64 call ─────────────────
@@ -833,7 +835,13 @@ void X86Backend::cCallBegin(n: int)
     return
 
 void X86Backend::cCallArg(i: int, cls: string)
-    if cls == "float" then
+    if cls == "f32" then
+        // a 32-bit C `float` argument: narrow the double now, then spill
+        // it like any other SSE word (only the low 32 bits are read).
+        ins("cvtsd2ss xmm0, xmm0")
+        ins("sub rsp, 8")
+        ins("movsd [rsp], xmm0")
+    else if cls == "float" then
         ins("sub rsp, 8")
         ins("movsd [rsp], xmm0")
     else
@@ -841,10 +849,8 @@ void X86Backend::cCallArg(i: int, cls: string)
 
 mut X86Backend::cCallEnd(name: string, classes: [string])
     let n = #classes
-    // `$`-prefix so NASM always reads it as an identifier, never as one
-    // of its own reserved words (`abs`, `rel`, `seg`, …).
-    let sym = "$" + name
-    recordExtern(sym)
+    let sym = asmSym(name)
+    addExtern(sym)
 
     let gpRegs = ["rdi", "rsi", "rdx", "rcx", "r8", "r9"]
     let xmmRegs = ["xmm0", "xmm1", "xmm2", "xmm3", "xmm4", "xmm5", "xmm6", "xmm7"]
@@ -860,12 +866,15 @@ mut X86Backend::cCallEnd(name: string, classes: [string])
     while i < n do
         let cls = classes[i]
         let src = "[rbx + " + string((n - 1 - i) * 8) + "]"
-        if cls == "float" then
+        if cls == "float" or cls == "f32" then
             if xmm < 8 then
                 ins("movsd " + xmmRegs[xmm] + ", " + src)
                 xmm += 1
             else
                 stackArgs += [i]
+        else if cls == "mem" then
+            // a MEMORY-class aggregate word: always in the stack area
+            stackArgs += [i]
         else
             if gp < 6 then
                 ins("mov " + gpRegs[gp] + ", " + src)
@@ -893,6 +902,119 @@ mut X86Backend::cCallEnd(name: string, classes: [string])
     // Unwind the outgoing block and the scratch in one move.
     ins("mov rsp, rbx")
     ins("add rsp, " + string(n * 8))
+
+// ── by-value struct marshalling for `extern` calls ────────────────
+//
+//  `km_ffi_marshal` is a 32-byte static scratch (two eightbytes plus
+//  slack).  `ffiStructMarshal` repacks a Komodo struct — every field in
+//  its own 8-byte slot — into the tight C layout there; `ffiStructLoadWord`
+//  then hands one eightbyte to `cCallArg` like any scalar.  Argument
+//  structs are marshalled one at a time and their eightbytes pushed onto
+//  the scratch block before the next argument, so a single buffer is
+//  enough.  `ffiStructRet` runs the reverse: it stashes the return
+//  registers, allocates a Komodo object and widens each C field back into
+//  its slot.
+
+mut X86Backend::ffiStructMarshal(totalSize: int, slots: [int], coffs: [int], sizes: [int], flts: [int])
+    m_usesFfiStruct = true
+    ins("mov r10, rax")                      // r10 = Komodo struct handle
+    ins("xor rcx, rcx")                      // clear the destination bytes
+    let z = 0
+    while z < totalSize do
+        ins("mov [km_ffi_marshal + " + string(z) + "], rcx")
+        z += 8
+    let i = 0
+    while i < #slots do
+        let src = "[r10 + " + string(8 + slots[i] * 8) + "]"
+        let dst = "km_ffi_marshal + " + string(coffs[i])
+        if flts[i] == 1 then
+            ins("movsd xmm0, " + src)
+            if sizes[i] == 4 then
+                ins("cvtsd2ss xmm0, xmm0")
+                ins("movss [" + dst + "], xmm0")
+            else
+                ins("movsd [" + dst + "], xmm0")
+        else
+            ins("mov rcx, " + src)
+            if sizes[i] == 1 then
+                ins("mov [" + dst + "], cl")
+            else if sizes[i] == 2 then
+                ins("mov [" + dst + "], cx")
+            else if sizes[i] == 4 then
+                ins("mov [" + dst + "], ecx")
+            else
+                ins("mov [" + dst + "], rcx")
+        i += 1
+
+// Widen a 32-bit C `float` result (in xmm0) to a 64-bit double.
+void X86Backend::cvtF32ToDouble()
+    ins("cvtss2sd xmm0, xmm0")
+
+void X86Backend::ffiStructLoadWord(off: int, cls: string)
+    if cls == "float" then
+        ins("movsd xmm0, [km_ffi_marshal + " + string(off) + "]")
+    else
+        ins("mov rax, [km_ffi_marshal + " + string(off) + "]")
+
+mut X86Backend::ffiStructRet(typeId: int, nFields: int, slots: [int], coffs: [int], sizes: [int], flts: [int], usig: [int], ebClasses: [string])
+    m_usesFfiStruct = true
+    // Stash the return registers before km_alloc clobbers them.  Eightbytes
+    // are consumed in order; INTEGER ones use rax then rdx, SSE ones
+    // xmm0 then xmm1.
+    let gpRet = 0
+    let sseRet = 0
+    let e = 0
+    while e < #ebClasses do
+        let slot = "km_ffi_marshal + " + string(e * 8)
+        if ebClasses[e] == "int" then
+            if gpRet == 0 then
+                ins("mov [" + slot + "], rax")
+            else
+                ins("mov [" + slot + "], rdx")
+            gpRet += 1
+        else
+            if sseRet == 0 then
+                ins("movsd [" + slot + "], xmm0")
+            else
+                ins("movsd [" + slot + "], xmm1")
+            sseRet += 1
+        e += 1
+
+    objNew(typeId, nFields)                  // fresh zeroed object, handle pushed
+    ins("pop rax")                           // rax = handle
+
+    let i = 0
+    while i < #slots do
+        let dst = "[rax + " + string(8 + slots[i] * 8) + "]"
+        let bsrc = "km_ffi_marshal + " + string(coffs[i])
+        if flts[i] == 1 then
+            if sizes[i] == 4 then
+                ins("movss xmm0, [" + bsrc + "]")
+                ins("cvtss2sd xmm0, xmm0")
+            else
+                ins("movsd xmm0, [" + bsrc + "]")
+            ins("movsd " + dst + ", xmm0")
+        else
+            if sizes[i] == 1 then
+                if usig[i] == 1 then
+                    ins("movzx rcx, byte [" + bsrc + "]")
+                else
+                    ins("movsx rcx, byte [" + bsrc + "]")
+            else if sizes[i] == 2 then
+                if usig[i] == 1 then
+                    ins("movzx rcx, word [" + bsrc + "]")
+                else
+                    ins("movsx rcx, word [" + bsrc + "]")
+            else if sizes[i] == 4 then
+                if usig[i] == 1 then
+                    ins("mov ecx, [" + bsrc + "]")
+                else
+                    ins("movsxd rcx, dword [" + bsrc + "]")
+            else
+                ins("mov rcx, [" + bsrc + "]")
+        if flts[i] != 1 then
+            ins("mov " + dst + ", rcx")
+        i += 1
 
 // `data(arr)` — element pointer of an array handle (skip len/cap).
 void X86Backend::arrayDataPtr()
@@ -930,7 +1052,7 @@ mut X86Backend::emitTrampoline(sym: string, argc: int)
         i += 1
     ins("mov rdi, " + string(n))
     ins("mov rsi, rsp")
-    ins("call " + sym)
+    ins("call " + asmSym(sym))
     ins("mov rsp, rbp")
     ins("pop rbp")
     ins("ret")
@@ -965,7 +1087,7 @@ mut X86Backend::tryBegin()
     recordExtern("_setjmp")
     emitCall("_setjmp")
     ins("test eax, eax")
-    ins("jnz " + catchL)
+    ins("jnz near " + catchL)
 
 mut X86Backend::tryEnd()
     let catchL = m_tryCatch[#m_tryCatch - 1]
@@ -978,16 +1100,249 @@ mut X86Backend::tryEnd()
     recordExtern("km_try_pop")
     emitCall("km_try_pop")
     ins("pop rax")
-    ins("jmp " + doneL)
+    ins("jmp near " + doneL)
     // caught path: km_throw already popped the pad; yield null
     label(catchL)
     ins("xor eax, eax")
     label(doneL)
     ins("add rsp, 256")
 
+// ── peephole ───────────────────────────────────────────────────────
+//
+//  The emitter works one node at a time: a binary operator spills its
+//  left operand (`push rax`, or `sub rsp, 16` + `movsd` for a float),
+//  computes the right operand, then reloads the left.  A local is also
+//  often stored and reloaded straight away.  `finish` runs this pass
+//  over the finished .text and turns those round trips through the
+//  stack into register moves.
+//
+//  Each rewrite leaves the same values in the same registers, and the
+//  same memory, as the sequence it replaces.  A spanned run of lines
+//  may not hold a label, a jump, a call, a push/pop or any stack-pointer
+//  use, so nothing can enter it midway and its stack depth stays put.
+//  The spilled value moves into a scratch register (r8-r11 for integers,
+//  xmm2-xmm15 for floats) that the run does not mention.  A nested
+//  expression keeps its own spills until the inner one is rewritten, so
+//  the pass repeats until nothing changes.
+
+extern fn km_str_find(s: string, sub: string): int
+
+// `line` contains `sub`
+fn asmHas(line: string, sub: string): bool
+    return km_str_find(line, sub) >= 0
+
+fn asmStarts(line: string, p: string): bool
+    return line.length >= p.length and line[0 to p.length] == p
+
+fn asmEnds(line: string, p: string): bool
+    return line.length >= p.length and line[line.length - p.length to line.length] == p
+
+// A line that may sit inside a spill span: straight-line code only.
+fn spanSafe(line: string): bool
+    if line.length == 0 then
+        return false
+    if line[line.length - 1] == ':' then
+        return false
+    if asmStarts(line, "    j") then
+        return false
+    if asmHas(line, "rsp") or asmHas(line, "call") then
+        return false
+    if asmHas(line, "push") or asmHas(line, "pop") then
+        return false
+    return true
+
+// Index of the first line at or after `start` equal to `stop`, provided
+// every line before it is span-safe; -1 otherwise.
+fn spanEnd(src: [string], start: int, stop: string): int
+    let j = start
+    while j < #src do
+        if src[j] == stop then
+            return j
+        if not spanSafe(src[j]) then
+            return -1
+        j += 1
+    return -1
+
+// The jump taken when the `setcc al` line `line` sets rax to 1.
+fn jccOf(line: string): string
+    if line == "    sete al" then
+        return "je"
+    if line == "    setne al" then
+        return "jne"
+    if line == "    setl al" then
+        return "jl"
+    if line == "    setg al" then
+        return "jg"
+    if line == "    setle al" then
+        return "jle"
+    if line == "    setge al" then
+        return "jge"
+    if line == "    seta al" then
+        return "ja"
+    if line == "    setae al" then
+        return "jae"
+    if line == "    setb al" then
+        return "jb"
+    if line == "    setbe al" then
+        return "jbe"
+    return ""
+
+// The jump taken on the opposite condition.
+fn jccInverse(j: string): string
+    if j == "je" then
+        return "jne"
+    if j == "jne" then
+        return "je"
+    if j == "jl" then
+        return "jge"
+    if j == "jge" then
+        return "jl"
+    if j == "jg" then
+        return "jle"
+    if j == "jle" then
+        return "jg"
+    if j == "ja" then
+        return "jbe"
+    if j == "jbe" then
+        return "ja"
+    if j == "jae" then
+        return "jb"
+    if j == "jb" then
+        return "jae"
+    return ""
+
+// The first of `cands` that no line in src[lo to hi) mentions, or "".
+fn freeReg(src: [string], lo: int, hi: int, cands: [string]): string
+    let c = 0
+    while c < #cands do
+        let used = false
+        let k = lo
+        while k < hi do
+            if asmHas(src[k], cands[c]) then
+                used = true
+            k += 1
+        if not used then
+            return cands[c]
+        c += 1
+    return ""
+
+// The rewrite for the sequence starting at src[i], or [] when none
+// applies.  Sets m_pSpan to the number of source lines it covers.
+mut X86Backend::peepholeAt(src: [string], i: int): [string]
+    let n = #src
+    let a = src[i]
+    m_pSpan = 1
+
+    // store then reload of the same slot: the reload is a no-op
+    if i + 1 < n then
+        let b = src[i + 1]
+        if asmStarts(a, "    mov [") and asmEnds(a, "], rax") then
+            let mem = a[8 to (a.length - 5)]
+            if b == "    mov rax, " + mem then
+                m_pSpan = 2
+                return [a]
+        if asmStarts(a, "    movsd [") and asmEnds(a, "], xmm0") then
+            let mem = a[10 to (a.length - 6)]
+            if b == "    movsd xmm0, " + mem then
+                m_pSpan = 2
+                return [a]
+
+    // integer left operand, one-instruction right operand:
+    //   push rax / mov rax, X / mov rcx, rax / pop rax  →  mov rcx, X
+    if a == "    push rax" and i + 3 < n then
+        let b = src[i + 1]
+        if asmStarts(b, "    mov rax, ") and not asmHas(b, "rsp") and src[i + 2] == "    mov rcx, rax" and src[i + 3] == "    pop rax" then
+            m_pSpan = 4
+            return ["    mov rcx, " + b[13 to b.length]]
+
+    // integer left operand, longer right operand: keep left in a scratch
+    // comparison straight into a branch: cmp / setcc / movzx / test / je
+    //   → cmp / jncc.  Skipped when the branch joins a value still in rax.
+    if (asmStarts(a, "    cmp ") or asmStarts(a, "    ucomisd ")) and i + 4 < n then
+        let br = src[i + 4]
+        let isJe = asmStarts(br, "    je near ")
+        let isJne = asmStarts(br, "    jne near ")
+        if isJe or isJne then
+            // the label follows "    je near " (12 bytes) or "    jne near " (13)
+            let off = 13
+            if isJe then
+                off = 12
+            let target = br[off to br.length]
+            let cc = jccOf(src[i + 1])
+            if cc != "" and src[i + 2] == "    movzx eax, al" and src[i + 3] == "    test rax, rax" and not (target in m_keepJumps) then
+                let jump = cc
+                if isJe then
+                    jump = jccInverse(cc)
+                m_pSpan = 5
+                return [a, "    " + jump + " near " + target]
+
+    if a == "    push rax" then
+        let j = spanEnd(src, i + 1, "    pop rax")
+        if j >= i + 3 and src[j - 1] == "    mov rcx, rax" then
+            let s = freeReg(src, i + 1, j - 1, ["r8", "r9", "r10", "r11"])
+            if s != "" then
+                let out: [string] = ["    mov " + s + ", rax"]
+                let k = i + 1
+                while k <= j - 2 do
+                    out += [src[k]]
+                    k += 1
+                out += ["    mov rcx, rax", "    mov rax, " + s]
+                m_pSpan = j - i + 1
+                return out
+
+    if a == "    sub rsp, 16" and i + 1 < n and src[i + 1] == "    movsd [rsp], xmm0" then
+        // float left operand, one-instruction memory right operand
+        if i + 5 < n then
+            let r = src[i + 2]
+            if asmStarts(r, "    movsd xmm0, [") and not asmHas(r, "rsp") and src[i + 3] == "    movsd xmm1, xmm0" and src[i + 4] == "    movsd xmm0, [rsp]" and src[i + 5] == "    add rsp, 16" then
+                m_pSpan = 6
+                return ["    movsd xmm1, " + r[16 to r.length]]
+        // float left operand, longer right operand: keep left in a scratch
+        let j = spanEnd(src, i + 2, "    movsd xmm0, [rsp]")
+        if j >= i + 4 and j + 1 < n and src[j - 1] == "    movsd xmm1, xmm0" and src[j + 1] == "    add rsp, 16" then
+            let s = freeReg(src, i + 2, j - 1, ["xmm2", "xmm3", "xmm4", "xmm5", "xmm6", "xmm7", "xmm8", "xmm9", "xmm10", "xmm11", "xmm12", "xmm13", "xmm14", "xmm15"])
+            if s != "" then
+                let out: [string] = ["    movsd " + s + ", xmm0"]
+                let k = i + 2
+                while k <= j - 2 do
+                    out += [src[k]]
+                    k += 1
+                out += ["    movsd xmm1, xmm0", "    movsd xmm0, " + s]
+                m_pSpan = j + 2 - i
+                return out
+
+    return []
+
+// One sweep over m_lines; returns how many rewrites it made.
+mut X86Backend::peepholePass(): int
+    let src = m_lines
+    let out: [string] = []
+    let n = #src
+    let i = 0
+    let hits = 0
+    while i < n do
+        let rep = peepholeAt(src, i)
+        if #rep > 0 then
+            out += rep
+            i += m_pSpan
+            hits += 1
+        else
+            out += [src[i]]
+            i += 1
+    m_lines = out
+    return hits
+
+mut X86Backend::peephole()
+    let pass = 0
+    while pass < 4 do
+        if peepholePass() == 0 then
+            return
+        pass += 1
+
 // ── final assembly ─────────────────────────────────────────────────
 
 mut X86Backend::finish(): string
+    peephole()
     return header() + join(m_lines, "\n") + "\n" + footer()
 
 mut X86Backend::header(): string
@@ -995,12 +1350,17 @@ mut X86Backend::header(): string
     h = h + "default rel\n\n"
     // The C runtime provides `main` (it marshals argv into a Komodo
     // string array); the program's own entry point is `km_program_main`.
-    h = h + "global km_program_main\n\n"
-    if m_usesMalloc then
-        h = h + "extern malloc\n"
+    h = h + "global km_program_main\n"
+    // marks code that allocates on the collected heap (runtime.c)
+    h = h + "global km_abi_gc\n\n"
+    if m_usesAlloc then
+        h = h + "extern km_alloc\n"
+    if m_usesIndexCheck then
+        h = h + "extern km_index_error\n"
     if m_usesAppend then
         h = h + "extern km_array_append\n"
         h = h + "extern km_array_grow\n"
+        h = h + "extern km_array_push\n"
     if m_usesStr then
         h = h + "extern km_str_concat\n"
         h = h + "extern km_str_repeat\n"
@@ -1014,31 +1374,25 @@ mut X86Backend::header(): string
     h = h + "\nsection .text\n\n"
     return h
 
-fn X86Backend::intListHas(xs: [int], v: int): bool
-    let i = 0
-    while i < #xs do
-        if xs[i] == v then
-            return true
-        i += 1
-    return false
-
 fn X86Backend::footer(): string
     let r = ""
-    if #m_globals > 0 then
+    if #m_globals > 0 or m_usesFfiStruct then
         r = r + "\nsection .bss\n"
         let gi = 0
         while gi < #m_globals do
             r = r + "KG_" + m_globals[gi] + ": resq 1\n"
             gi += 1
-    r = r + "\nsection .rodata\n" + m_rodata
+        if m_usesFfiStruct then
+            r = r + "align 16\nkm_ffi_marshal: resb 256\n"
+    r = r + "\nsection .rodata\nkm_abi_gc: dq 1\n" + join(m_rodata, "")
     if m_vtabCount > 0 then
-        r = r + m_vtblText
+        r = r + join(m_vtblText, "")
         r = r + "__km_vtab: dq "
         let i = 0
         while i < m_vtabCount do
             if i > 0 then
                 r = r + ", "
-            if intListHas(m_vtabSet, i) then
+            if i in m_vtabSet then
                 r = r + "__vt_" + string(i)
             else
                 r = r + "0"

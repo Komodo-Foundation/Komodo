@@ -1,0 +1,33 @@
+// Small conveniences: interpolated strings, hex literals, `int(x)`,
+// `f32`, and int → float widening on assignment.
+
+struct Pixel
+    x: f32 = 0.0
+    y: f32 = 0.0
+
+let SCALE: float = 2
+
+void main()
+    // `{expr}` inside backticks is spliced in as string(expr)
+    let n = 41
+    let who = "world"
+    print(`hello {who}, n+1 = {n + 1}`)
+    print(`nested: {n > 40 and "big" or "small"} / {`inner {n}`}`)
+    print(`escapes: \{literal\} \`tick\` "quotes"\tdone`)
+
+    // hex literals
+    print(0xFF, 0x10 + 1, 0xCAFE)
+
+    // int(x) truncates toward zero
+    print(int(3.99), int(-2.5), int(7))
+
+    // f32 / f64 behave as float inside Komodo
+    let p = new Pixel(1.5, 2)
+    let h: f64 = 0.25
+    print(p.x + p.y + h)
+
+    // an int stored into a float slot is converted, not bit-copied
+    let g: float = 3
+    g = 7
+    print(g / 2, SCALE * 1.5)
+

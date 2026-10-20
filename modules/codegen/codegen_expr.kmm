@@ -326,6 +326,24 @@ void Codegen::genArray(e: ArrayExpr)
         i += 1
     m_backend.arrayEnd()
 
+// `[v]` → v, the sole element of a one-element array literal; null for
+// anything else.  Used by `dst += [v]`, which appends v in place.
+fn Codegen::soleElement(e: Expression?): Expression?
+    if e is ArrayExpr then
+        if #e.elements == 1 then
+            return e.elements[0]
+    return null
+
+// The sole element `elem` of the literal `lit`, into the accumulator
+// stored exactly as genArray stores a literal element.
+void Codegen::genSoleElement(lit: Expression?, elem: Expression?)
+    let floatElems = elemTypeOf(exprType(lit)) == "float"
+    genExpr(elem)
+    if floatElems and exprType(elem) != "float" then
+        m_backend.cvtIntToFloat()
+    if floatElems or exprType(elem) == "float" then
+        m_backend.floatToBits()
+
 // Runtime type tag for a call argument (see km_runtime.h):
 //   0 int / pointer   1 float   2 string   3 bool   4+ array (packed,
 //   see arrayTag) — lets `print`/`string(x)` pretty-print array values.
@@ -417,6 +435,17 @@ void Codegen::genCall(e: CallExpr)
         m_backend.toStringOf(tg)
         return
 
+    // `int(x)` — narrow to a 64-bit integer.  A float is truncated
+    // toward zero (`cvttsd2si`); an integer-class value is already in
+    // the right register, so it's a no-op.
+    if e.name == "int" then
+        if #e.args != 1 then
+            throw "int(x) takes exactly one argument"
+        genExpr(e.args[0])
+        if exprType(e.args[0]) == "float" then
+            m_backend.cvtFloatToInt()
+        return
+
     // `recv.method(args)` where `recv` is an object-typed local, a field
     // of the enclosing class, or `self` — a method call: the receiver
     // rides in as implicit argument 0.
@@ -484,29 +513,7 @@ void Codegen::genCall(e: CallExpr)
     if kind == "extern" then
         if fnArity(e.name) != #e.args then
             throw ("extern '" + e.name + "' takes " + string(fnArity(e.name)) + " argument(s), got " + string(#e.args))
-        // Classify every argument up front — an argument may itself be a
-        // nested extern call, so nothing stateful can live in the backend
-        // across the evaluation loop.
-        let classes: [string] = []
-        for a in e.args do
-            if a is Identifier and isCallbackArg(a) then
-                classes += ["int"]
-            else if exprType(a) == "float" then
-                classes += ["float"]
-            else
-                classes += ["int"]
-        m_backend.cCallBegin(#e.args)
-        let ci = 0
-        for a in e.args do
-            if a is Identifier and isCallbackArg(a) then
-                // pass C a pointer to this Komodo function's trampoline
-                recordTramp(a.name)
-                m_backend.loadFnPtr(m_backend.mangle(a.name))
-            else
-                genExpr(a)
-            m_backend.cCallArg(ci, classes[ci])
-            ci += 1
-        m_backend.cCallEnd(e.name, classes)
+        genExternCall(e)
         return
 
     // Enforcements for calls to functions defined in this program.
@@ -531,6 +538,127 @@ void Codegen::genCall(e: CallExpr)
         m_backend.callArgStore(j)
         j += 1
     m_backend.callFrameEnd(e.name, n)
+
+// `extern fn` — the native System V AMD64 C ABI.  A scalar argument fills
+// the next integer (rdi..r9) or SSE (xmm0..7) register, then spills to
+// the stack.  An argument written `copy(structval)` is passed *by value*:
+// its Komodo fields (each in an 8-byte slot) are repacked into the tight
+// C layout in a static buffer, then its one or two eightbytes are placed
+// per the ABI's INTEGER / SSE classification.  A struct return type is
+// unpacked from rax:rdx / xmm0:xmm1 back into a fresh Komodo object.
+// Only aggregates of ≤ 16 bytes with scalar fields are supported.
+void Codegen::genExternCall(e: CallExpr)
+    // Plan every argument first — an argument may be a nested extern call,
+    // so nothing stateful may straddle the evaluation loop.
+    let classes: [string] = []          // one entry per outgoing eightbyte
+    m_backend.cCallBegin(#e.args)
+    let ci = 0
+    let ai = 0
+    for a in e.args do
+        let byvalName = byValStructArgType(a)
+        if a is Identifier and isCallbackArg(a) then
+            recordTramp(a.name)
+            m_backend.loadFnPtr(m_backend.mangle(a.name))
+            m_backend.cCallArg(ci, "int")
+            classes += ["int"]
+            ci += 1
+        else if byvalName != "" then
+            let lay = structCLayout(byvalName)
+            if not lay.ok then
+                throw ("argument " + string(ai + 1) + " to extern '" + e.name + "': " + lay.err)
+            let inner = copyArgInner(a)
+            genExpr(inner)                       // struct handle → int acc
+            let slots: [int] = []
+            let coffs: [int] = []
+            let sizes: [int] = []
+            let flts: [int] = []
+            for fm in lay.fields do
+                slots += [fm.slot]
+                coffs += [fm.coff]
+                sizes += [fm.csize]
+                flts += [fm.isFloat and 1 or 0]
+            m_backend.ffiStructMarshal(lay.size, slots, coffs, sizes, flts)
+            if lay.memory then
+                // whole aggregate → consecutive 8-byte words in the stack
+                // argument area (class "mem" never takes a register)
+                let words = (lay.size + 7) / 8
+                let w = 0
+                while w < words do
+                    m_backend.ffiStructLoadWord(w * 8, "int")
+                    m_backend.cCallArg(ci, "mem")
+                    classes += ["mem"]
+                    ci += 1
+                    w += 1
+            else
+                let ebi = 0
+                while ebi < #lay.ebClasses do
+                    let sse = lay.ebClasses[ebi] == "sse"
+                    m_backend.ffiStructLoadWord(ebi * 8, sse and "float" or "int")
+                    m_backend.cCallArg(ci, sse and "float" or "int")
+                    classes += [sse and "float" or "int"]
+                    ci += 1
+                    ebi += 1
+        else
+            genExpr(a)
+            let pt = rawParamTypeAt(e.name, ai)
+            let isF = exprType(a) == "float"
+            if pt == "f32" then
+                if not isF then
+                    m_backend.cvtIntToFloat()
+                m_backend.cCallArg(ci, "f32")
+                classes += ["f32"]
+            else if isF then
+                m_backend.cCallArg(ci, "float")
+                classes += ["float"]
+            else
+                m_backend.cCallArg(ci, "int")
+                classes += ["int"]
+            ci += 1
+        ai += 1
+    m_backend.cCallEnd(e.name, classes)
+
+    // A C `float` return arrives 32-bit in xmm0; widen it to the double
+    // every `float` value is inside Komodo.
+    if rawRetType(e.name) == "f32" then
+        m_backend.cvtF32ToDouble()
+
+    let retStruct = externRetStructName(e.name)
+    if retStruct != "" then
+        let rl = structCLayout(retStruct)
+        if not rl.ok then
+            throw ("return type of extern '" + e.name + "': " + rl.err)
+        if rl.memory then
+            throw ("extern '" + e.name + "' returns '" + retStruct + "' (" + string(rl.size) + " bytes) by value; aggregates over 16 bytes can't be returned by value yet")
+        let rslots: [int] = []
+        let rcoffs: [int] = []
+        let rsizes: [int] = []
+        let rflts: [int] = []
+        let rusig: [int] = []
+        let rraws = m_typeFieldRawTypes[typeIndex(retStruct)]
+        for fm in rl.fields do
+            rslots += [fm.slot]
+            rcoffs += [fm.coff]
+            rsizes += [fm.csize]
+            rflts += [fm.isFloat and 1 or 0]
+            rusig += [cIsUnsigned(rraws[fm.slot]) and 1 or 0]
+        m_backend.ffiStructRet(typeIdOf(retStruct), #m_typeFieldNames[typeIndex(retStruct)], rslots, rcoffs, rsizes, rflts, rusig, rl.ebClasses)
+
+// The struct type name of a `copy(x)` argument whose `x` is an aggregate,
+// or "" for any other argument shape.
+mut Codegen::byValStructArgType(a: Expression): string
+    if not (a is CallExpr) then
+        return ""
+    if a.name != "copy" or #a.args != 1 then
+        return ""
+    let it = exprType(a.args[0])
+    if typeIndex(it) >= 0 then
+        return it
+    return ""
+
+mut Codegen::copyArgInner(a: Expression): Expression
+    if a is CallExpr then
+        return a.args[0]
+    return a
 
 // Build the (tag,value)[] frame and call `sym` directly — the shared tail
 // of a plain call and of every statically-resolved overload / generic

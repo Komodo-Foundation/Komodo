@@ -377,6 +377,20 @@ void StackVMBackend::cCallArg(i: int, cls: string)
 void StackVMBackend::cCallEnd(name: string, classes: [string])
     op("CCALL " + name + " " + string(#classes))
 
+// Passing / returning a C struct by value needs the native register file;
+// the stack-VM has no C ABI to model it against.
+void StackVMBackend::ffiStructMarshal(totalSize: int, slots: [int], coffs: [int], sizes: [int], flts: [int])
+    throw "by-value struct arguments (copy(x) to an extern fn) require the x86 backend"
+
+void StackVMBackend::ffiStructLoadWord(off: int, cls: string)
+    throw "by-value struct arguments (copy(x) to an extern fn) require the x86 backend"
+
+void StackVMBackend::cvtF32ToDouble()
+    return
+
+void StackVMBackend::ffiStructRet(typeId: int, nFields: int, slots: [int], coffs: [int], sizes: [int], flts: [int], usig: [int], ebClasses: [string])
+    throw "by-value struct return from an extern fn requires the x86 backend"
+
 void StackVMBackend::arrayDataPtr()
     op("ADATA")
 
@@ -395,17 +409,6 @@ void StackVMBackend::loadFnPtr(sym: string)
 
 mut StackVMBackend::emitTrampoline(sym: string, argc: int)
     op("; trampoline " + sym + " / " + string(argc) + " args")
-
-// Conservative auto-free — no-ops for the VM (a future GC / interpreter
-// owns object lifetime); codegen stays target-agnostic.
-void StackVMBackend::zeroFreeableSlots(offsets: [int])
-    return
-
-mut StackVMBackend::emitScopeReleases(objOffsets: [int], arrOffsets: [int], preserveAcc: bool, accIsFloat: bool)
-    return
-
-mut StackVMBackend::releaseStoreLocal(off: int, isArray: bool)
-    op("STL " + string(off))
 
 // ── error handling ────────────────────────────────────────────────
 //

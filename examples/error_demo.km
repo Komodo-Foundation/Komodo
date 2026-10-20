@@ -1,5 +1,6 @@
 // Error handling: `throw "msg"` raises an error; a call written with a
 // trailing `?` catches any error thrown out of it and evaluates to null.
+// An out-of-range `arr[i]` (read or write) throws the same way.
 
 import console
 
@@ -10,6 +11,22 @@ fn safe_div(a: int, b: int) : int
 
 fn must_pos(n: int) : int
     return n or throw "not positive"
+
+fn elem(xs: [int], i: int) : int
+    return xs[i]
+
+void put(xs: [int], i: int, v: int)
+    xs[i] = v
+
+// Every level guards the next: the error is caught right above the
+// throw however deep the recursion goes.
+fn dive(n: int) : int
+    if n == 0 then
+        throw "bottom"
+    let r = dive(n - 1)?
+    if r == null then
+        return n
+    return r
 
 fn outer(n: int) : int
     let inner = must_pos(n)?
@@ -47,3 +64,13 @@ void main()
         console.print("outer(0) caught")
     else
         console.print("outer(0) =", e)
+
+    let xs = [10, 20, 30]
+    console.print("elem(xs, 2) =", elem(xs, 2))
+    if elem(xs, 3)? == null then
+        console.print("elem(xs, 3) caught")
+    if elem(xs, 0 - 1)? == null then
+        console.print("elem(xs, -1) caught")
+    put(xs, 3, 99)?
+    console.print("xs after put(xs, 3, 99)? =", xs)
+    console.print("dive(1000) =", dive(1000))

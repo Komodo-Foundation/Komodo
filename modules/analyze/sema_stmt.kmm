@@ -132,7 +132,7 @@ mut Analyzer::bodyMutates(stmts: [Statement], fields: [string]): bool
         if s is IndexAssignStmt then
             return true
         if s is AssignStmt then
-            if listHas(fields, s.name) then
+            if (s.name in fields) then
                 return true
         if s is IfStmt then
             if bodyMutates(s.thenBody, fields) or bodyMutates(s.elseBody, fields) then
@@ -327,8 +327,8 @@ mut Analyzer::checkAssign(s: AssignStmt)
         scopeNarrow(s.name, decl)
         return
     checkAssignable(s, decl, vt, "'" + s.name + "'")
-    // a plain `=` re-widens the binding to (at most) its declared type
-    scopeNarrow(s.name, narrowTo(decl, vt))
+    // a plain `=` re-widens the binding to its declared type
+    scopeNarrow(s.name, decl)
     // `y = x` moves a `unique` value out of `x`; the fresh value now in
     // `y` makes `y` an owner again even if it had been moved away earlier.
     consumeMove(s.value, vt)
@@ -549,14 +549,14 @@ mut Analyzer::checkStructPattern(p: StructPattern, subjT: Type)
         err(p, "struct pattern type '" + pn + "' is unrelated to subject type '" + sn + "'")
     let seen: [string] = []
     for fp in p.fields do
-        if listHas(seen, fp.field) then
+        if (fp.field in seen) then
             err(p, "field '" + fp.field + "' named twice in pattern '" + pn + "'")
         seen += [fp.field]
         if not hasField(pn, fp.field) then
             err(p, "type '" + pn + "' has no field '" + fp.field + "'" + didYouMean(fp.field, fieldNamesOf(pn)))
         let ft = fieldReadType(pn, fp.field)
         let fb = stripNull(ft)
-        if fb.kind == "float" then
+        if isFloatKind(fb.kind) then
             err(p, "struct pattern cannot match on `float` field '" + fp.field + "' yet")
         if fp.lit != null then
             let lt = inferExpr(fp.lit)
@@ -572,7 +572,7 @@ mut Analyzer::enumMissing(enumName: string, covered: [string]): string
         return ""
     let missing = ""
     for v in m_enumVariants[ti] do
-        if not listHas(covered, v) then
+        if not (v in covered) then
             if missing != "" then
                 missing = missing + ", "
             missing = missing + v
@@ -710,18 +710,6 @@ mut Analyzer::lastDot(s: string): int
         i -= 1
     return 0 - 1
 
-mut Analyzer::narrowName(name: string, t: Type)
-    narrowKey(name, t)
-
-mut Analyzer::narrowNameNonNull(name: string)
-    narrowKeyNonNull(name)
-
-// Constrain `decl` by an observed value type `vt` (used after `x = v`).
-mut Analyzer::narrowTo(decl: Type, vt: Type): Type
-    if vt.kind == "never" or vt.kind == "null" then
-        return decl
-    return decl
-
 // ── assignability ─────────────────────────────────────────────────
 
 mut Analyzer::checkAssignable(node: ASTNode, dst: Type, src: Type, what: string)
@@ -753,8 +741,10 @@ mut Analyzer::isAssignable(dst: Type, src: Type): bool
 
     if isNumeric(dst) and isNumeric(src) then
         // permit widening/among-integers and int→float, matching the
-        // conversions codegen already performs
-        if dst.kind == "float" then
+        // conversions codegen already performs.  `f32` accepts any
+        // numeric source too — it is a 64-bit double inside Komodo and is
+        // only narrowed to 32 bits at a struct / C-FFI boundary.
+        if isFloatKind(dst.kind) then
             return true
         return isIntKind(src.kind) and isIntKind(dst.kind)
 

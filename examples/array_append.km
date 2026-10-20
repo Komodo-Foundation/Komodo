@@ -1,0 +1,35 @@
+// `dst += [v]` appends one element in place: growth past the capacity,
+// local / field / nested / string arrays, and float elements.
+
+struct Bag
+    items: [int]
+    fs: [float]
+
+void main()
+    let a: [int] = []
+    let i = 0
+    while i < 20 do
+        a += [i * i]
+        i += 1
+    print(`a {#a} {a[0]} {a[19]}`)
+
+    let fs: [float] = []
+    fs += [3.0]
+    fs += [2.5]
+    let x = 1.25
+    fs += [x * 2.0]
+    print(`fs {fs[0]} {fs[1]} {fs[2]}`)
+
+    let b = new Bag([], [])
+    b.items += [7]
+    b.items += [8]
+    b.fs += [4.0]
+    print(`bag {#b.items} {b.items[1]} {b.fs[0]}`)
+
+    let n: [[int]] = []
+    n += [[1, 2]]
+    print(`nested {#n} {#n[0]} {n[0][1]}`)
+
+    let s: [string] = []
+    s += ["hi"]
+    print(`str {s[0]}`)
