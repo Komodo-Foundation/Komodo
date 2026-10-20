@@ -592,6 +592,14 @@ long km_str_hash(const char *s)
     return (long)(h & 0x7fffffffffffffffUL);
 }
 
+/* Index of the first occurrence of `sub` in `s`, or -1 — the compiler's
+ * x86 peephole pass searches its emitted assembly lines with it. */
+long km_str_find(const char *s, const char *sub)
+{
+    const char *p = strstr(s, sub);
+    return p ? (long)(p - s) : -1;
+}
+
 /* `s[start to end]` for a caller that already knows `n == #s` — the same
  * clamping as km_str_slice, without re-measuring `s`.  The lexer cuts
  * every token out of a source of hundreds of KB; measuring up to `end`

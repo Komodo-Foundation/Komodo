@@ -44,6 +44,7 @@ private
     m_dispNext: string = ""         // overload dispatch: current case's skip label
     m_tryCatch: [string] = []       // protected-call: catch labels (nesting stack)
     m_tryDone: [string] = []        // protected-call: done labels (nesting stack)
+    m_pSpan: int = 0                // peephole: source lines covered by the last rewrite
 
 // ── line buffer ────────────────────────────────────────────────────
 
@@ -1080,9 +1081,174 @@ mut X86Backend::tryEnd()
     label(doneL)
     ins("add rsp, 256")
 
+// ── peephole ───────────────────────────────────────────────────────
+//
+//  The emitter works one node at a time: a binary operator spills its
+//  left operand (`push rax`, or `sub rsp, 16` + `movsd` for a float),
+//  computes the right operand, then reloads the left.  A local is also
+//  often stored and reloaded straight away.  `finish` runs this pass
+//  over the finished .text and turns those round trips through the
+//  stack into register moves.
+//
+//  Each rewrite leaves the same values in the same registers, and the
+//  same memory, as the sequence it replaces.  A spanned run of lines
+//  may not hold a label, a jump, a call, a push/pop or any stack-pointer
+//  use, so nothing can enter it midway and its stack depth stays put.
+//  The spilled value moves into a scratch register (r8-r11 for integers,
+//  xmm2-xmm15 for floats) that the run does not mention.  A nested
+//  expression keeps its own spills until the inner one is rewritten, so
+//  the pass repeats until nothing changes.
+
+extern fn km_str_find(s: string, sub: string): int
+
+// `line` contains `sub`
+fn asmHas(line: string, sub: string): bool
+    return km_str_find(line, sub) >= 0
+
+fn asmStarts(line: string, p: string): bool
+    return line.length >= p.length and line[0 to p.length] == p
+
+fn asmEnds(line: string, p: string): bool
+    return line.length >= p.length and line[line.length - p.length to line.length] == p
+
+// A line that may sit inside a spill span: straight-line code only.
+fn spanSafe(line: string): bool
+    if line.length == 0 then
+        return false
+    if line[line.length - 1] == ':' then
+        return false
+    if asmStarts(line, "    j") then
+        return false
+    if asmHas(line, "rsp") or asmHas(line, "call") then
+        return false
+    if asmHas(line, "push") or asmHas(line, "pop") then
+        return false
+    return true
+
+// Index of the first line at or after `start` equal to `stop`, provided
+// every line before it is span-safe; -1 otherwise.
+fn spanEnd(src: [string], start: int, stop: string): int
+    let j = start
+    while j < #src do
+        if src[j] == stop then
+            return j
+        if not spanSafe(src[j]) then
+            return -1
+        j += 1
+    return -1
+
+// The first of `cands` that no line in src[lo to hi) mentions, or "".
+fn freeReg(src: [string], lo: int, hi: int, cands: [string]): string
+    let c = 0
+    while c < #cands do
+        let used = false
+        let k = lo
+        while k < hi do
+            if asmHas(src[k], cands[c]) then
+                used = true
+            k += 1
+        if not used then
+            return cands[c]
+        c += 1
+    return ""
+
+// The rewrite for the sequence starting at src[i], or [] when none
+// applies.  Sets m_pSpan to the number of source lines it covers.
+mut X86Backend::peepholeAt(src: [string], i: int): [string]
+    let n = #src
+    let a = src[i]
+    m_pSpan = 1
+
+    // store then reload of the same slot: the reload is a no-op
+    if i + 1 < n then
+        let b = src[i + 1]
+        if asmStarts(a, "    mov [") and asmEnds(a, "], rax") then
+            let mem = a[8 to (a.length - 5)]
+            if b == "    mov rax, " + mem then
+                m_pSpan = 2
+                return [a]
+        if asmStarts(a, "    movsd [") and asmEnds(a, "], xmm0") then
+            let mem = a[10 to (a.length - 6)]
+            if b == "    movsd xmm0, " + mem then
+                m_pSpan = 2
+                return [a]
+
+    // integer left operand, one-instruction right operand:
+    //   push rax / mov rax, X / mov rcx, rax / pop rax  →  mov rcx, X
+    if a == "    push rax" and i + 3 < n then
+        let b = src[i + 1]
+        if asmStarts(b, "    mov rax, ") and not asmHas(b, "rsp") and src[i + 2] == "    mov rcx, rax" and src[i + 3] == "    pop rax" then
+            m_pSpan = 4
+            return ["    mov rcx, " + b[13 to b.length]]
+
+    // integer left operand, longer right operand: keep left in a scratch
+    if a == "    push rax" then
+        let j = spanEnd(src, i + 1, "    pop rax")
+        if j >= i + 3 and src[j - 1] == "    mov rcx, rax" then
+            let s = freeReg(src, i + 1, j - 1, ["r8", "r9", "r10", "r11"])
+            if s != "" then
+                let out: [string] = ["    mov " + s + ", rax"]
+                let k = i + 1
+                while k <= j - 2 do
+                    out += [src[k]]
+                    k += 1
+                out += ["    mov rcx, rax", "    mov rax, " + s]
+                m_pSpan = j - i + 1
+                return out
+
+    if a == "    sub rsp, 16" and i + 1 < n and src[i + 1] == "    movsd [rsp], xmm0" then
+        // float left operand, one-instruction memory right operand
+        if i + 5 < n then
+            let r = src[i + 2]
+            if asmStarts(r, "    movsd xmm0, [") and not asmHas(r, "rsp") and src[i + 3] == "    movsd xmm1, xmm0" and src[i + 4] == "    movsd xmm0, [rsp]" and src[i + 5] == "    add rsp, 16" then
+                m_pSpan = 6
+                return ["    movsd xmm1, " + r[16 to r.length]]
+        // float left operand, longer right operand: keep left in a scratch
+        let j = spanEnd(src, i + 2, "    movsd xmm0, [rsp]")
+        if j >= i + 4 and j + 1 < n and src[j - 1] == "    movsd xmm1, xmm0" and src[j + 1] == "    add rsp, 16" then
+            let s = freeReg(src, i + 2, j - 1, ["xmm2", "xmm3", "xmm4", "xmm5", "xmm6", "xmm7", "xmm8", "xmm9", "xmm10", "xmm11", "xmm12", "xmm13", "xmm14", "xmm15"])
+            if s != "" then
+                let out: [string] = ["    movsd " + s + ", xmm0"]
+                let k = i + 2
+                while k <= j - 2 do
+                    out += [src[k]]
+                    k += 1
+                out += ["    movsd xmm1, xmm0", "    movsd xmm0, " + s]
+                m_pSpan = j + 2 - i
+                return out
+
+    return []
+
+// One sweep over m_lines; returns how many rewrites it made.
+mut X86Backend::peepholePass(): int
+    let src = m_lines
+    let out: [string] = []
+    let n = #src
+    let i = 0
+    let hits = 0
+    while i < n do
+        let rep = peepholeAt(src, i)
+        if #rep > 0 then
+            out += rep
+            i += m_pSpan
+            hits += 1
+        else
+            out += [src[i]]
+            i += 1
+    m_lines = out
+    return hits
+
+mut X86Backend::peephole()
+    let pass = 0
+    while pass < 4 do
+        if peepholePass() == 0 then
+            return
+        pass += 1
+
 // ── final assembly ─────────────────────────────────────────────────
 
 mut X86Backend::finish(): string
+    peephole()
     return header() + join(m_lines, "\n") + "\n" + footer()
 
 mut X86Backend::header(): string

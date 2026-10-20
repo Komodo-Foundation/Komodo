@@ -134,6 +134,7 @@ const char *km_str_slice(const char *s, long start, long end);
 const char *km_str_char(const char *s, long i);
 long        km_str_cmp(const char *a, const char *b);
 long        km_str_hash(const char *s);
+long        km_str_find(const char *s, const char *sub);
 const char *km_str_sub(const char *s, long n, long start, long end);
 /* `x in coll` membership — 1 / 0 */
 long        km_in_str(const char *haystack, const char *needle);
