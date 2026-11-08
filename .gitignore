@@ -38,3 +38,4 @@
 # graphify output and Claude Code worktrees
 /graphify-out/
 /.claude/
+/.build/
