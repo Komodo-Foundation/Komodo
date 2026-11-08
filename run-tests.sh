@@ -28,6 +28,9 @@ fi
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
+have_wasm=0 wasm_ran=0
+if command -v emcc >/dev/null 2>&1 && command -v node >/dev/null 2>&1; then have_wasm=1; fi
+
 pass=0 fail=0
 for name in "${names[@]}"; do
     src="examples/$name.km"
@@ -74,10 +77,29 @@ for name in "${names[@]}"; do
         fi
     fi
 
+    # wasm: the same C output built with emcc and run under node (must match
+    # the same expected output).  Skipped entirely when emcc / node are not
+    # installed; a source that needs the native C ABI (FFI, SDL, ...) opts
+    # out with a `wasm: skip` comment.
+    if [[ $have_wasm -eq 1 ]] && ! grep -q 'wasm: skip' "$src"; then
+        if ! wgot="$("$komodo" -q -t wasm "$src" 2>"$work/$name.wasm.err")"; then
+            echo "FAIL     $name  (wasm build/run errored)"
+            sed 's/^/           /' "$work/$name.wasm.err"
+            fail=$((fail+1)); continue
+        fi
+        if [[ -f "$exp" ]] && ! diff -q <(printf '%s\n' "$wgot") "$exp" >/dev/null; then
+            echo "FAIL     $name  (wasm output mismatch)"
+            diff <(printf '%s\n' "$wgot") "$exp" | sed 's/^/           /'
+            fail=$((fail+1)); continue
+        fi
+        wasm_ran=$((wasm_ran+1))
+    fi
+
     echo "ok       $name"
     pass=$((pass+1))
 done
 
 echo "────────────────────────────────"
 echo "$pass passed, $fail failed"
+if [[ $have_wasm -eq 1 ]]; then echo "(wasm leg ran for $wasm_ran examples)"; else echo "(wasm leg skipped: no emcc / node)"; fi
 [[ $fail -eq 0 ]]
