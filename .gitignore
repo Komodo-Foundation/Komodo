@@ -34,3 +34,7 @@
 # ── editor / OS ──────────────────────────────────────────────────────
 /.vscode/
 .DS_Store
+
+# graphify output and Claude Code worktrees
+/graphify-out/
+/.claude/

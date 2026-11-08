@@ -1,0 +1,30 @@
+// Unqualified `m_field = value` stores to float fields (constructor and
+// methods), including through a virtual call from a base-class method.
+
+import console
+
+abstract class Shape
+    constructor(n: int)
+        m_n = n
+    fn area() : float
+        return 0.0
+    fn describe() : float
+        return area()
+    m_n: int
+
+class Sq : Shape
+    constructor(s: float)
+        m_n = 1
+        m_s = s
+    fn area() : float
+        return m_s * m_s
+    mut grow(by: int)
+        m_s = m_s + by
+    m_s: float
+
+void main()
+    let q = new Sq(1.5)
+    print(`{q.describe()} {q.area()}`)
+    q.grow(1)
+    let s: Shape = q
+    print(`{s.describe()} {s.area()}`)

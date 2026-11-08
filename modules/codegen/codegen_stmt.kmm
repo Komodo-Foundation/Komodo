@@ -207,6 +207,11 @@ void Codegen::genAssign(s: AssignStmt)
             m_backend.loadLocal(slotOf("self"), "int")
             m_backend.pushAcc()
             genExpr(s.value)
+            // a float field is stored as raw bits; widen an int RHS first
+            if fieldTypeOf(m_curClass, s.name) == "float" then
+                if exprType(s.value) != "float" then
+                    m_backend.cvtIntToFloat()
+                m_backend.floatToBits()
             m_backend.storeField(idx)
             return
         // compound `field += v` / `field -= v` against the receiver

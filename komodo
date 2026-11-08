@@ -66,9 +66,10 @@ version="Komodo (native, self-hosted) — kmc"
 usage() {
     cat <<'EOF'
 usage: komodo [options] <file.km> [-- <extra linker args>]
+       komodo repl [-O level]        interactive prompt
 
   -o, --output <path>   output binary path (default: <file> without .km)
-  -t, --target <name>   x86 (default) | stackvm | c (portable C, built with gcc)
+  -t, --target <name>   x86 (default) | stackvm | c (portable C via gcc)
   -O <level>             optimization level: none|low|medium|max, or 0-3
                          (default: none)
       --strict           turn every analyser warning into a hard error
@@ -133,13 +134,25 @@ normalize_opt() {
     esac
 }
 
+# `komodo repl [options]` — the interactive prompt (see kmrepl)
+if [[ "${1:-}" == "repl" ]]; then
+    shift
+    exec "$here/kmrepl" "$@"
+fi
+
 # ── parse flags ────────────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do
     case "$1" in
         -h|--help)    usage; exit 0 ;;
         -V|--version) echo "$version"; exit 0 ;;
         -o|--output)  out="$2"; shift 2 ;;
-        -t|--target)  target="$2"; shift 2 ;;
+        -t|--target)
+            target="${2:-}"
+            case "$target" in
+                x86|stackvm|c) ;;
+                *) echo "$prog: unknown target '$target' (known: x86, stackvm, c)" >&2; exit 2 ;;
+            esac
+            shift 2 ;;
         -O)           opt="$(normalize_opt "$2")"; shift 2 ;;
         -O*)          opt="$(normalize_opt "${1#-O}")"; shift ;;
         --opt=*)      opt="$(normalize_opt "${1#--opt=}")"; shift ;;
