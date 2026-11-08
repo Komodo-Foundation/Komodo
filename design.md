@@ -51,7 +51,7 @@ only, for keeping the implementation and sample code coherent.
 
 | Kind    | Examples |
 |---------|----------|
-| int     | `0`, `42`, `256`, `0xFF` (hex) |
+| int     | `0`, `42`, `256`, `0xFF` (hex), `0b1010` (binary), `1_000_000` (`_` digit separators, any base) |
 | float   | `2.0`, `3.14`, `2.0f`, `2f` (trailing `f` forces float) |
 | string  | `"hi"`, `"a\nb"` (backslash escapes) |
 | interp. string | `` `x = {a + 1}` `` — backtick-delimited; each `{expr}` is spliced in as `string(expr)` |

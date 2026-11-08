@@ -156,6 +156,7 @@ interpreter), `extern fn` C FFI (full System V AMD64 ABI), body-less function
 itself), and a static analyser (`modules/sema*.kmm`) with flow-sensitive
 null-safety, ahead of an optional constant-folding / dead-code optimizer.
 Also: interpolated strings (`` `n = {n + 1}` ``), hex literals (`0xFF`),
+`_` digit separators and binary literals (`1_000_000`, `0b1010`),
 `int(x)` float→int truncation, `f32` and by-value C structs (`copy(x)` to an
 `extern fn`, e.g. raylib's `Vector3` — see `stdlib/raylib.kmm`).
 

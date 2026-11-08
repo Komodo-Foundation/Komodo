@@ -1,0 +1,12 @@
+// Numeric literals: `_` digit separators in decimal / hex / binary /
+// fraction parts, and binary `0b` literals.
+
+import console
+
+void main()
+    let million = 1_000_000
+    console.print("decimal:", million, 12_34, 1_0)
+    console.print("hex:", 0xFF_FF, 0xff, 0xA_B)
+    console.print("binary:", 0b1010, 0B11, 0b1111_0000, 0b0)
+    console.print("float:", 1_000.5, 2.0_5)
+    console.print("mixed:", 0b1010 + 0x0A + 10, 0b1_0 * 1_0)
