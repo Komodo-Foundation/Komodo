@@ -85,6 +85,13 @@ public
             for m in cl.methods do
                 checkParamDefaults(m, cl.name)
 
+        // ── Pass 1c: `export fn` / `extern fn … = "sym"` rules ──────
+        for fd in prog.functions do
+            if fd.isExport then
+                checkExport(fd)
+            if fd.isExtern and fd.symbol != null then
+                checkExternSymbol(fd)
+
         // ── Pass 2: top-level macros ──────────────────────────────
         for mac in prog.macros do
             if isMacro(mac.name) then

@@ -1,0 +1,4 @@
+extern fn f(x: int): int = 42
+
+void main()
+    f(1)

@@ -145,6 +145,51 @@ mut Analyzer::checkParamDefaults(fd: FunctionDecl, owner: string)
             if p.declaredType != null then
                 checkAssignable(fd, parseTypeStr(p.declaredType), dt, "default value of parameter '" + p.name + "'")
 
+// ── `export fn`: a Komodo function callable from C / C++ ────────────
+//
+// The C-ABI entry wrapper only knows how to marshal machine words and
+// doubles, so every parameter and the return type must be one of those.
+mut Analyzer::isExportableType(t: string): bool
+    let b = t
+    if #b > 0 and b[#b - 1] == "?" then
+        b = b[0 to (#b - 1)]
+    if isIntKind(b) or b == "bool" or b == "float" or b == "f32" or b == "f64" or b == "string" or b == "char" then
+        return true
+    return isExternType(b)
+
+mut Analyzer::checkExport(fd: FunctionDecl)
+    let nm = fd.name
+    if nm == "main" then
+        err(fd, "`export fn main` is not allowed — `main` is the program entry point; export a differently named function")
+    if isOverloadedName(nm) then
+        err(fd, "export fn '" + nm + "' cannot be overloaded — a C symbol names exactly one function")
+    for p in fd.params do
+        if p.declaredType == null then
+            err(fd, "export fn '" + nm + "': parameter '" + p.name + "' needs a type annotation")
+        let pt = p.declaredType or "int"
+        if not isExportableType(pt) then
+            err(fd, "export fn '" + nm + "': parameter '" + p.name + "' has type '" + pt + "', which can't cross the C ABI (use int / sized ints, bool, float, f32, string or an `extern type` handle)")
+        if p.defaultValue != null then
+            err(fd, "export fn '" + nm + "' cannot have default parameter values — C callers always pass every argument")
+    if not fd.isVoid and fd.returnType != null then
+        let rt = fd.returnType or "int"
+        if not isExportableType(rt) then
+            err(fd, "export fn '" + nm + "': return type '" + rt + "' can't cross the C ABI (use int / sized ints, bool, float, f32, string or an `extern type` handle)")
+
+// `extern fn f(...) = "sym"`: the symbol must be something the assembler
+// can spell as a bare identifier.
+mut Analyzer::checkExternSymbol(fd: FunctionDecl)
+    let sy = fd.symbol or ""
+    let i = 0
+    while i < #sy do
+        let c = sy[i]
+        let ok = (c >= "a" and c <= "z") or (c >= "A" and c <= "Z") or (c >= "0" and c <= "9") or c == "_" or c == "$" or c == "@" or c == "." or c == "?"
+        if not ok then
+            err(fd, "extern '" + fd.name + "': character '" + c + "' is not allowed in the C symbol \"" + sy + "\"")
+        i += 1
+    if sy[0] >= "0" and sy[0] <= "9" then
+        err(fd, "extern '" + fd.name + "': the C symbol \"" + sy + "\" cannot start with a digit")
+
 // "Mutating code" the caller can observe: a field write (`obj.f = v`, or
 // bare `field = v` against the receiver) or an array-element write.  A
 // pure `fn` may not contain any; a `mut` function/method must.  `void`

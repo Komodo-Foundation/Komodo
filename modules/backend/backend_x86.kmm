@@ -45,6 +45,11 @@ private
     m_tryCatch: [string] = []       // protected-call: catch labels (nesting stack)
     m_tryDone: [string] = []        // protected-call: done labels (nesting stack)
     m_pSpan: int = 0                // peephole: source lines covered by the last rewrite
+    m_aliasNames: [string] = []     // `extern fn f = "sym"`: Komodo name → C symbol
+    m_aliasSyms: [string] = []
+    m_exportNames: [string] = []    // `export fn` names (internal body symbol is renamed)
+    m_hasMain: bool = false
+    m_usesExportInit: bool = false  // reserve the once-flag in .bss
     m_keepJumps: [string] = []      // targets of `and`/`or` branches whose rax is read at the join
 
 // ── line buffer ────────────────────────────────────────────────────
@@ -123,6 +128,16 @@ mut X86Backend::addString(lexeme: string): string
 // object file still carries the bare name.  Every symbol that comes from
 // a Komodo name (function labels, call targets, externs) goes through it.
 fn X86Backend::asmSym(name: string): string
+    if #m_aliasNames > 0 and (name in m_aliasNames) then
+        let k = 0
+        while k < #m_aliasNames do
+            if m_aliasNames[k] == name then
+                return "$" + m_aliasSyms[k]
+            k += 1
+    // an exported function's Komodo-ABI body lives under an internal
+    // name; the plain symbol is the C-ABI wrapper (see emitExport)
+    if #m_exportNames > 0 and (name in m_exportNames) then
+        return "$" + name + "__kmx"
     return "$" + name
 
 // A call target that isn't defined in this program is resolved at link
@@ -147,6 +162,7 @@ void X86Backend::begin()
 void X86Backend::beginFunction(name: string, frame: int, paramOffsets: [int], isMain: bool)
     m_idxFail = ""
     if isMain then
+        m_hasMain = true
         label("km_program_main")
     else
         label(asmSym(name))
@@ -1058,6 +1074,99 @@ mut X86Backend::emitTrampoline(sym: string, argc: int)
     ins("ret")
     emit("")
 
+// ── symbol aliasing + C-callable exports ───────────────────────────
+
+mut X86Backend::declareAlias(name: string, symbol: string)
+    m_aliasNames += [name]
+    m_aliasSyms += [symbol]
+
+mut X86Backend::declareExport(name: string)
+    if not (name in m_exportNames) then
+        m_exportNames += [name]
+
+//  `export fn name(...)`: the reverse of a callback trampoline.  `$name`
+//  is a native System V AMD64 entry point; it packs its register / stack
+//  arguments into a Komodo (tag,value)[] frame, runs the one-time library
+//  init when the program has no `main` (collector + top-level `let`s),
+//  then calls the Komodo-ABI body `$name__kmx` and returns its result
+//  (rax, or xmm0 for a float) straight to the C caller.  Narrow integer
+//  and bool parameters are re-extended from the low bits — the C ABI
+//  leaves the rest of the register undefined.
+mut X86Backend::emitExport(name: string, cls: [string], tags: [int], ret: string, initFn: string)
+    let n = #cls
+    let gp = ["rdi", "rsi", "rdx", "rcx", "r8", "r9"]
+    label("$" + name)
+    ins("push rbp")
+    ins("mov rbp, rsp")
+    if n > 0 then
+        ins("sub rsp, " + string(n * 16))
+    let ig = 0                      // integer registers consumed
+    let fx = 0                      // xmm registers consumed
+    let st = 0                      // stack words consumed
+    let i = 0
+    while i < n do
+        let c = cls[i]
+        let slot = "[rsp + " + string(i * 16 + 8) + "]"
+        ins("mov qword [rsp + " + string(i * 16) + "], " + string(tags[i]))
+        if c == "float" or c == "f32" then
+            if fx < 8 then
+                if c == "f32" then
+                    ins("cvtss2sd xmm0, xmm" + string(fx))
+                    ins("movsd " + slot + ", xmm0")
+                else
+                    ins("movsd " + slot + ", xmm" + string(fx))
+                fx += 1
+            else
+                ins("mov rax, [rbp + " + string(16 + st * 8) + "]")
+                st += 1
+                if c == "f32" then
+                    ins("movd xmm0, eax")
+                    ins("cvtss2sd xmm0, xmm0")
+                    ins("movq rax, xmm0")
+                ins("mov " + slot + ", rax")
+        else
+            if ig < 6 then
+                ins("mov rax, " + gp[ig])
+                ig += 1
+            else
+                ins("mov rax, [rbp + " + string(16 + st * 8) + "]")
+                st += 1
+            if c == "i8" then
+                ins("movsx rax, al")
+            else if c == "i16" then
+                ins("movsx rax, ax")
+            else if c == "i32" then
+                ins("movsxd rax, eax")
+            else if c == "u8" or c == "bool" then
+                ins("movzx eax, al")
+            else if c == "u16" then
+                ins("movzx eax, ax")
+            else if c == "u32" then
+                ins("mov eax, eax")
+            ins("mov " + slot + ", rax")
+        i += 1
+    if initFn != "" then
+        m_usesExportInit = true
+        let ready = ".ready"
+        ins("cmp byte [rel km_export_ready], 0")
+        ins("jne " + ready)
+        ins("mov byte [rel km_export_ready], 1")
+        addExtern(asmSym("GC_init"))
+        ins("call $GC_init")
+        ins("xor edi, edi")
+        ins("xor esi, esi")
+        ins("call " + asmSym(initFn))
+        label(ready)
+    ins("mov rdi, " + string(n))
+    ins("mov rsi, rsp")
+    ins("call " + asmSym(name))
+    if ret == "f32" then
+        ins("cvtsd2ss xmm0, xmm0")
+    ins("mov rsp, rbp")
+    ins("pop rbp")
+    ins("ret")
+    emit("")
+
 // ── error handling ────────────────────────────────────────────────
 //
 //  `throw msg` — the message pointer is in rax.  `km_throw` never
@@ -1350,9 +1459,15 @@ mut X86Backend::header(): string
     h = h + "default rel\n\n"
     // The C runtime provides `main` (it marshals argv into a Komodo
     // string array); the program's own entry point is `km_program_main`.
-    h = h + "global km_program_main\n"
+    if m_hasMain then
+        h = h + "global km_program_main\n"
     // marks code that allocates on the collected heap (runtime.c)
-    h = h + "global km_abi_gc\n\n"
+    h = h + "global km_abi_gc\n"
+    let xi = 0
+    while xi < #m_exportNames do
+        h = h + "global $" + m_exportNames[xi] + "\n"
+        xi += 1
+    h = h + "\n"
     if m_usesAlloc then
         h = h + "extern km_alloc\n"
     if m_usesIndexCheck then
@@ -1384,6 +1499,8 @@ fn X86Backend::footer(): string
             gi += 1
         if m_usesFfiStruct then
             r = r + "align 16\nkm_ffi_marshal: resb 256\n"
+    if m_usesExportInit then
+        r = r + "\nsection .bss\nkm_export_ready: resb 8\n"
     r = r + "\nsection .rodata\nkm_abi_gc: dq 1\n" + join(m_rodata, "")
     if m_vtabCount > 0 then
         r = r + join(m_vtblText, "")

@@ -36,6 +36,17 @@ public
                 break
             if at(TokenType::EXTERN) then
                 parseExternInto(prog)
+            else if at(TokenType::IDENT) and peek().lexeme == "export" and (peekAt(1).type == TokenType::FN or peekAt(1).type == TokenType::MUT or peekAt(1).type == TokenType::VOID) then
+                // `export fn name(...)` — a Komodo function also callable
+                // from C / C++.  `export` is a contextual keyword (an
+                // ordinary identifier everywhere else).
+                eat()               // export
+                let xdecl = parseFunction()
+                if xdecl.isPrototype or xdecl.ownerClass != null then
+                    throw ("`export` needs a free function with a body: '" + xdecl.name + "'")
+                xdecl.isExport = true
+                stampDecl(xdecl)
+                prog.functions += [xdecl]
             else if at(TokenType::FN) or at(TokenType::MUT) or at(TokenType::VOID) then
                 let fdecl = parseFunction()
                 stampDecl(fdecl)
@@ -318,12 +329,24 @@ private
         if at(TokenType::COLON) then
             eat()
             returnType = parseType()
+        // `= "sym"` — bind a C symbol whose name differs from `name`
+        let symbol: string? = null
+        if at(TokenType::EQUALS) then
+            eat()
+            if not at(TokenType::STRING) then
+                throw ("expected a string literal after `=` (the C symbol name) in extern '" + name + "'")
+            let sl = peek().lexeme
+            eat()
+            symbol = sl[1 to (sl.length - 1)]
+            if #(symbol or "") == 0 then
+                throw ("extern '" + name + "': the C symbol name after `=` is empty")
         skipNewlines()
         let decl = new FunctionDecl(name)
         decl.params = trimVariadic(params)
         decl.variadic = paramsAreVariadic(params)
         decl.returnType = returnType
         decl.isVoid = isVoid
+        decl.symbol = symbol
         decl.isExtern = true
         prog.functions += [decl]
 

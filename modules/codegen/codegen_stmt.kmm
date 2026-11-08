@@ -45,7 +45,7 @@ void Codegen::genFunction(func: FunctionDecl)
     m_backend.beginFunction(emitName, m_frame, paramOffsets, func.name == "main")
 
     // top-level `let` initialisers run once, at the very start of `main`
-    if func.name == "main" and (func.ownerClass or "") == "" then
+    if (func.name == "main" or (func.name == "km_lib_init" and m_exportInit != "")) and (func.ownerClass or "") == "" then
         genGlobalInits()
 
     let macroMark = macroScopeMark()

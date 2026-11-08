@@ -263,6 +263,14 @@ struct FunctionDecl : Declaration
     // `extern fn` — a foreign C function, no body; calls use the native
     // System V AMD64 C ABI instead of Komodo's (tag,value)[] ABI.
     isExtern: bool = false
+    // `export fn` — a Komodo function with a body that is also callable
+    // FROM C / C++ under its unmangled name, through a native System V
+    // C-ABI entry wrapper.
+    isExport: bool = false
+    // `extern fn f(...) = "sym"` — the C symbol to bind when it differs
+    // from the Komodo name (a C++ mangled name, or a C name that is not a
+    // valid Komodo identifier).  null = the function's own name.
+    symbol: string? = null
     // A body-less declaration (`fn name(params): T` with no indented
     // block): the signature is known to the compiler but the definition
     // is supplied at link time, using the ordinary Komodo call ABI (this

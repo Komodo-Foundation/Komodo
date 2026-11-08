@@ -74,6 +74,19 @@ fn compileMapped(source: string, target: string, strict: bool, opt: string, file
     analyzer.setSourceMap(files, starts)
     analyzer.analyze(ast)
 
+    // `header` is a pseudo-target: the C prototypes of the `export fn`s.
+    if target == "header" then
+        let hsrc = ""
+        if #files > 0 then
+            hsrc = files[0]
+        return exportHeader(ast, hsrc)
+
+    // `export fn` is implemented by the x86 backend only
+    if target != "x86" and target != "" then
+        for xf in ast.functions do
+            if xf.isExport then
+                throw (string(xf.line) + ":" + string(xf.column) + ": export fn is not supported on target '" + target + "' yet (use the x86 target)")
+
     let optimizer = new Optimizer(opt)
     optimizer.run(ast)
 

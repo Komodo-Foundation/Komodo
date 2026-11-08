@@ -455,6 +455,89 @@ extern "SDL2"                       // a block: one library, many decls
   name — `./build.sh app.km x86 ./app -lSDL2`; the `komodo` CLI reads
   `<file>.links` and needs none.
 
+### Exporting to C and C++ (`export fn`)
+
+The reverse direction: a Komodo function callable *from* C / C++.
+
+```
+export fn add(a: int, b: int): int
+    return a + b
+
+export fn greet(name: string): string
+    return "hello, " + name
+
+export void tick()
+    ...
+```
+
+- `export` prefixes an ordinary free function **with a body**. It is a
+  contextual keyword (still a plain identifier elsewhere). The function
+  keeps working as a normal Komodo function; additionally the compiler
+  emits a native System V AMD64 entry point under the **unmangled** symbol
+  `add`, which repackages the C arguments into Komodo's `(argc, KmArg*)`
+  call ABI (the mirror image of the callback trampoline) and calls the
+  real body, which lives under an internal symbol (`add__kmx`).
+- Parameters and the return type must be machine words or doubles:
+  `int` / `uint` / `i8..i64` / `u8..u64` (narrow values are re-extended
+  from the low bits, as C leaves the rest of the register undefined),
+  `bool`, `float` (`double` in C), `f32` (`float`), `string`
+  (`const char *`, NUL-terminated), or an `extern type` handle (an opaque
+  pointer). Arrays, structs and classes are rejected by the analyser.
+  Any number of arguments is fine (stack-passed beyond the registers).
+  Overloading, generics (untyped parameters), default values and the
+  name `main` are rejected: a C symbol names exactly one function.
+- Ownership: a returned `string` points into the Komodo heap. Copy it
+  before calling back into Komodo; do not `free` it. An unhandled
+  `throw` inside an export aborts the process (there is no C++ exception
+  mapping).
+- **Runtime start-up.** If the program has a `main`, the C runtime's own
+  `main` has already set everything up. If it has **none**, the first
+  export call lazily initialises the collector and runs the top-level
+  `let` initialisers (a once-flag in the wrapper; not thread-safe, so
+  make the first call from one thread). The C/C++ side then supplies
+  `main`.
+- Only the **x86** target implements it; `-t c` / `-t stackvm` report
+  `export fn is not supported on target 'X' yet`.
+
+**Building a library** — `komodo --lib prog.km` writes `prog.o` and
+`libprog.a` (the program plus the Komodo runtime, with the runtime's own
+`main` renamed so it cannot clash with yours) and links nothing:
+
+```bash
+komodo --lib --emit-header prog.h prog.km
+gcc -no-pie main.c -L. -lprog -l:libgc.so.1 -lm        # C
+g++ -no-pie main.cpp -L. -lprog -l:libgc.so.1 -lm      # C++
+```
+
+`-no-pie` is required (the generated code is not position-independent).
+Alternatively let `komodo` link it for you: a program with no `main`
+takes the C/C++ `main` as an extra, `komodo prog.km -- driver.cpp`.
+
+**Headers** — `komodo --emit-header out.h prog.km` writes one prototype
+per `export fn` inside `#ifdef __cplusplus extern "C" { #endif`, with
+`int64_t` / `double` / `const char *` / `bool` / `float` mappings, plus a
+`typedef void *Name;` for every `extern type` an exported signature
+mentions. Used alone it only writes the header; with `--lib` / `-c` it
+also builds.
+
+### Binding C++ and oddly named C symbols
+
+`extern fn nice(x: int): int = "_Z3fooi"` binds the Komodo name `nice`
+to the symbol `_Z3fooi` — a C++ mangled name, or a C name that is not a
+valid Komodo identifier (a Komodo keyword such as `match`, say). The
+`= "symbol"` suffix works on `extern fn` / `extern void` and on the
+members of an `extern "lib"` block; the symbol may contain letters,
+digits, `_ $ @ ?`. C++ *classes* are reached the usual way: write a
+small `extern "C"` wrapper (`counter_new`, `counter_add`, …) and bind
+those, with the class held as an opaque `extern type` handle — see
+`examples/ffi_cxx.km`.
+
+C++ sources are built by `komodo` itself: `.cpp` / `.cc` / `.cxx` files
+after `--` (or named by a module's `link "x.cpp"`) are compiled with
+`g++` (cached by content, the headers beside them and the toolchain) and
+linked with `-lstdc++`. `-I…` / `-D…` / `-std=…` extras are forwarded to
+the compile.
+
 ## Built-ins
 
 A handful of names the compiler lowers directly (no `import`, no library):

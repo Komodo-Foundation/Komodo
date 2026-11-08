@@ -80,4 +80,10 @@ done
 
 echo "────────────────────────────────"
 echo "$pass passed, $fail failed"
+
+# C / C++ interop (export fn, --lib, C++ sources): tests/interop/run.sh.
+# Run with the full suite only, not when a name subset was asked for.
+if [[ $# -eq 0 ]]; then
+    "$here/tests/interop/run.sh" || fail=$((fail+1))
+fi
 [[ $fail -eq 0 ]]

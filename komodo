@@ -77,7 +77,12 @@ usage: komodo [options] <file.km> [-- <extra linker args>]
                          `x = x`, a constant `if`, unreachable code — are
                          printed by default; --strict makes them fatal)
   -S, --emit-asm         stop after writing <file>.asm (no assemble/link/run)
-  -c, --compile          assemble + link, but do not run the result
+  -c, --compile         assemble + link, but do not run the result
+      --lib              build a C-linkable library instead of a program:
+                         writes <out>.o and lib<out>.a (the program's `export fn`s
+                         plus the Komodo runtime), no executable, no `main` needed
+      --emit-header <h>  write a C/C++ header (`export fn` prototypes) to <h>;
+                         alone it stops there, with --lib / -c it also builds
   -k, --kmc <path>       use this kmc binary instead of the one alongside
                          komodo (same as $KMC)
       --no-cache         ignore the build cache for this run (still fills it)
@@ -95,7 +100,12 @@ komodo adds it automatically — no manual -l flags for those.
 
 Anything after a literal `--` is extra, on top of that: .c / .o / .a
 files, -l flags, -I/-L paths for something with no interface file yet.
-$KM_CC_INPUTS is read the same way.
+$KM_CC_INPUTS is read the same way. C++ sources (.cpp / .cc / .cxx) are
+compiled with g++ (cached) and linked with -lstdc++:
+    komodo prog.km -- util.cpp
+A program with no `main` (only `export fn`s) links against a C/C++
+`main` supplied this way; the Komodo runtime starts itself on the first
+exported call.
 
 The build cache lives under $KOMODO_CACHE
 (default ${XDG_CACHE_HOME:-~/.cache}/komodo); it is safe to delete.
@@ -104,6 +114,7 @@ Examples:
   komodo hello.km
   komodo -O max -o build/app src/main.km
   komodo demos/sdl_window.km              # -lSDL2 comes from stdlib/sdl2.kmm
+  komodo --lib --emit-header mylib.h mylib.km    # -> mylib.o libmylib.a mylib.h
 EOF
 }
 
@@ -111,7 +122,10 @@ EOF
 target="x86"
 opt="none"
 strict=""
-mode="run"          # run | compile | emit-asm
+mode="run"          # run | compile | emit-asm | lib
+mode_set=0
+lib=0
+emit_header=""
 out=""
 quiet=0
 verbose=0
@@ -157,8 +171,10 @@ while [[ $# -gt 0 ]]; do
         -O*)          opt="$(normalize_opt "${1#-O}")"; shift ;;
         --opt=*)      opt="$(normalize_opt "${1#--opt=}")"; shift ;;
         --strict)     strict="strict"; shift ;;
-        -S|--emit-asm) mode="emit-asm"; shift ;;
-        -c|--compile) mode="compile"; shift ;;
+        -S|--emit-asm) mode="emit-asm"; mode_set=1; shift ;;
+        -c|--compile) mode="compile"; mode_set=1; shift ;;
+        --lib)        lib=1; mode_set=1; shift ;;
+        --emit-header) emit_header="${2:-}"; [[ -n "$emit_header" ]] || { echo "$prog: --emit-header needs a file name" >&2; exit 2; }; shift 2 ;;
         -k|--kmc)     kmc="$2"; shift 2 ;;
         --no-cache)   no_cache=1; shift ;;
         --clean)      do_clean=1; shift ;;
@@ -180,6 +196,8 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+[[ $lib -eq 1 && "$mode" != "emit-asm" ]] && mode="lib"
 
 log()  { [[ $quiet -eq 1 ]] || echo "$@" >&2; }
 vlog() { [[ $verbose -eq 1 ]] && echo "+ $*" >&2; return 0; }
@@ -283,6 +301,15 @@ read_link_flags() {
     done < "$linkfile"
 }
 
+# ── 0. C header for the `export fn`s (--emit-header) ───────────────
+if [[ -n "$emit_header" ]]; then
+    vlog "$kmc" "$src" header $strict
+    "$kmc" "$src" header $strict 1>&2 || exit 1
+    mv -f "$src.h" "$emit_header" || exit 1
+    log "wrote $emit_header"
+    [[ $mode_set -eq 1 ]] || exit 0
+fi
+
 # ── 1. Komodo front end + codegen ─────────────────────────────────
 #
 # Front-end cache key: the source's absolute path + target/opt/strict +
@@ -358,6 +385,94 @@ if [[ $quiet -eq 0 && ${#auto_cc[@]} -gt 0 ]]; then
     log "auto-linking: ${auto_cc[*]}"
 fi
 
+# ── C++ sources among the extras ───────────────────────────────────
+#
+# .cpp / .cc / .cxx files after `--` are compiled with g++ (once; cached
+# by content + the headers beside them + the toolchain) and replaced in
+# the link list by their object; -lstdc++ is added. In --lib mode plain
+# .c extras are compiled to objects too, so they can join the archive.
+is_cxx() { case "$1" in *.cpp|*.cc|*.cxx|*.C|*.c++) return 0 ;; esac; return 1; }
+tmp_objdir=""
+objdir() {
+    if [[ $cache_ok -eq 1 ]]; then echo "$cache/obj"; return; fi
+    [[ -n "$tmp_objdir" ]] || { tmp_objdir="$(mktemp -d)"; trap 'rm -rf "$tmp_objdir"' EXIT; }
+    echo "$tmp_objdir"
+}
+have_cxx=0
+cc_flags=( -I"$(dirname "$src")" )
+[[ -n "$emit_header" ]] && cc_flags+=( -I"$(dirname "$emit_header")" )
+for tok in ${extra_cc[@]+"${extra_cc[@]}"}; do
+    case "$tok" in -I*|-D*|-std=*) cc_flags+=( "$tok" ) ;; esac
+done
+# prep_extras <array-name>: rewrite that array (extra_cc, or auto_cc for
+# a module's `link "x.cpp"`), compiling C++ sources to objects.
+prep_extras() {
+    local -n list="$1"
+    local new=() tok d hsig oh oo od cxx_id
+    cxx_id="g++:$(g++ -dumpversion 2>/dev/null)"
+    od="$(objdir)"
+    for tok in ${list[@]+"${list[@]}"}; do
+        if [[ -f "$tok" ]] && is_cxx "$tok"; then
+            have_cxx=1
+            d="$(dirname "$tok")"
+            hsig="$(cat "$d"/*.h "$d"/*.hpp "$d"/*.hh "$(dirname "$src")"/*.h ${emit_header:+"$emit_header"} 2>/dev/null | sha256sum | cut -d' ' -f1)"
+            oh="$(sha_str "cxx-obj-v1|$cxx_id|$(sha_file "$tok")|$hsig|${cc_flags[*]}")"
+            oo="$od/$oh.o"
+            if [[ ! -f "$oo" ]]; then
+                vlog g++ -c "${cc_flags[@]}" "$tok" -o "$oo"
+                g++ -c "${cc_flags[@]}" "$tok" -o "$oo.tmp.$$" || exit 1
+                mv -f "$oo.tmp.$$" "$oo"
+            fi
+            new+=( "$oo" )
+        elif [[ -f "$tok" && "$tok" == *.c && "$mode" == "lib" ]]; then
+            oh="$(sha_str "c-obj-v1|$tool_id|$(sha_file "$tok")|${cc_flags[*]}")"
+            oo="$od/$oh.o"
+            if [[ ! -f "$oo" ]]; then
+                vlog gcc -c "${cc_flags[@]}" "$tok" -o "$oo"
+                gcc -c "${cc_flags[@]}" "$tok" -o "$oo.tmp.$$" || exit 1
+                mv -f "$oo.tmp.$$" "$oo"
+            fi
+            new+=( "$oo" )
+        else
+            new+=( "$tok" )
+        fi
+    done
+    list=( ${new[@]+"${new[@]}"} )
+    return 0
+}
+prep_extras extra_cc
+prep_extras auto_cc
+[[ $have_cxx -eq 1 ]] && extra_cc+=( -lstdc++ )
+
+# A program with no `main` (only `export fn`s) is meant to be driven by a
+# C/C++ `main`; the Komodo runtime's own `main` must then step aside.
+rt_nomain=0
+if [[ "$target" == "x86" ]] && ! grep -q '^km_program_main:' "$asm"; then
+    rt_nomain=1
+fi
+
+# The runtime objects, for a link where the Komodo runtime's `main` must
+# not be the entry point: runtime.o's `main` is renamed, and its
+# reference to the (absent) `km_program_main` made weak.
+stdlib_nomain_objs() {
+    stdlib_inputs=()
+    local od c oh oo
+    od="$(objdir)"
+    for c in "$here"/stdlib/*.c; do
+        oh="$(sha_str "stdlib-obj-nomain-v1|$tool_id|stdlib=$stdlib_sig|$(sha_file "$c")")"
+        oo="$od/$oh.o"
+        if [[ ! -f "$oo" ]]; then
+            vlog gcc -no-pie -I"$here/stdlib" -c "$c" -o "$oo"
+            gcc -no-pie -I"$here/stdlib" -c "$c" -o "$oo.tmp.$$" || exit 1
+            if [[ "$(basename "$c")" == "runtime.c" ]]; then
+                objcopy --redefine-sym main=km_rt_main_unused --weaken-symbol=km_program_main "$oo.tmp.$$" || exit 1
+            fi
+            mv -f "$oo.tmp.$$" "$oo"
+        fi
+        stdlib_inputs+=( "$oo" )
+    done
+}
+
 # ── C target: gcc builds the generated C ($asm holds C source for this
 #    target, so it is compiled as C with -x c) against stdlib/*.c ───────
 if [[ "$target" == "c" ]]; then
@@ -395,8 +510,30 @@ link_files_sig() {
     done
 }
 link_sig="$( { printf '%s\n' "${prefix_ldflags[@]:-}" "${auto_cc[@]:-}" "${extra_cc[@]:-}"; link_files_sig; } | LC_ALL=C sort | sha256sum | cut -d' ' -f1)"
-bin_key="$(sha_str "asm=$(sha_file "$asm")|link=$link_sig|stdlib=$stdlib_sig|$tool_id")"
+bin_key="$(sha_str "asm=$(sha_file "$asm")|link=$link_sig|stdlib=$stdlib_sig|nomain=$rt_nomain|$tool_id")"
 bin_hit="$cache/bin/$bin_key"
+
+# ── --lib: an object + a static archive, nothing linked ───────────
+if [[ "$mode" == "lib" ]]; then
+    t=$(now_ms)
+    vlog nasm -f elf64 "$asm" -o "$obj"
+    nasm -f elf64 "$asm" -o "$obj" || exit 1
+    stdlib_nomain_objs
+    libname="$(basename "$out")"
+    libdir="$(dirname "$out")"
+    cp -f "$obj" "$out.o" || exit 1
+    members=()
+    for tok in ${extra_cc[@]+"${extra_cc[@]}"}; do
+        [[ -f "$tok" && "$tok" == *.o ]] && members+=( "$tok" )
+    done
+    rm -f "$libdir/lib$libname.a"
+    vlog ar rcsD "$libdir/lib$libname.a" "$out.o" "${stdlib_inputs[@]}" ${members[@]+"${members[@]}"}
+    ar rcsD "$libdir/lib$libname.a" "$out.o" "${stdlib_inputs[@]}" ${members[@]+"${members[@]}"} || exit 1
+    report "lib" "$t"
+    log "built $out.o and $libdir/lib$libname.a"
+    log "link with: gcc -no-pie main.c -L$libdir -l$libname ${auto_cc[*]:+${auto_cc[*]} }-l:libgc.so.1 -lm$([[ $have_cxx -eq 1 ]] && echo ' -lstdc++')"
+    exit 0
+fi
 
 if [[ $cache_ok -eq 1 && -f "$bin_hit" ]]; then
     t=$(now_ms)
@@ -415,7 +552,9 @@ else
     # 3. link — stdlib/*.c is compiled once into $cache/obj and reused.
     t=$(now_ms)
     stdlib_inputs=()
-    if [[ $cache_ok -eq 1 ]]; then
+    if [[ $rt_nomain -eq 1 ]]; then
+        stdlib_nomain_objs
+    elif [[ $cache_ok -eq 1 ]]; then
         for c in "$here"/stdlib/*.c; do
             oh="$(sha_str "stdlib-obj-v1|$tool_id|stdlib=$stdlib_sig|$(sha_file "$c")")"
             oo="$cache/obj/$oh.o"

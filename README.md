@@ -31,8 +31,15 @@ komodo -O max -o app src/main.km  # optimize, name the output binary
 komodo -c file.km                  # compile + link only, don't run
 komodo -S file.km                  # emit file.km.asm only
 komodo file.km -- -lSDL2           # extra linker flags / objects
+komodo file.km -- util.cpp         # C++ sources are compiled with g++ and linked in
+komodo --lib --emit-header f.h f.km   # `export fn`s -> f.o, libf.a and a C/C++ header
 komodo -h                          # full flag list
 ```
+
+C and C++ interoperate in both directions: `extern fn` calls into them
+(`= "mangled_symbol"` binds C++ names), and `export fn` makes a Komodo
+function callable from them — see *Foreign functions* in
+[`design.md`](design.md).
 
 `komodo` is a thin wrapper: it drives `kmc` for the front end, then `nasm` +
 `gcc` for assembly and linking. It resolves its own real path, so installing
@@ -62,6 +69,7 @@ it as a symlink on your `PATH` still finds this checkout's `kmc` / `stdlib/`.
 | `examples/*.km` | sample programs, each with a `.expected` output fixture |
 | `demos/` | larger standalone demos (e.g. an SDL window loop) |
 | `tests/sema/` | negative tests for the analyser's diagnostics (`run-sema-tests.sh`) |
+| `tests/interop/` | C / C++ interop tests: `export fn`, `--lib`, C++ sources (`tests/interop/run.sh`, also run by `run-tests.sh`) |
 
 ## Requirements
 

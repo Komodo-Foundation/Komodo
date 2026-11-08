@@ -1,0 +1,4 @@
+extern fn f(x: int): int = "bad-name"
+
+void main()
+    f(1)
