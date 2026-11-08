@@ -615,6 +615,8 @@ public
     mut registerGlobal(g: VarDecl)
         if isGlobalVar(g.name) or isMacro(g.name) or (g.name in m_fnNames) then
             err(g, "duplicate top-level name '" + g.name + "'")
+        if g.isExtern then
+            checkExternVar(g)
 
         let declared: Type? = null
         if g.declaredType != null then

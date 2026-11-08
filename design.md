@@ -423,9 +423,12 @@ extern "SDL2"                       // a block: one library, many decls
   argument is handed to C as a function pointer: the compiler emits a
   System V ABI *trampoline* that repackages the integer-register arguments
   into Komodo's call ABI and invokes the function. The target may take up
-  to 6 plain-machine-word parameters (int / bool / char / string / handle)
-  and return one or `void` — no `float`, no arrays. See
-  `examples/ffi_callback.km`.
+  any number of parameters, each an int / bool / string / handle word or
+  a `float` / `f32` (a C `double` / `float`), and return one of those or
+  `void` — no arrays. Parameters beyond the six integer / eight SSE
+  registers are read from the C stack, so a callback may take, say, ten
+  arguments. See `examples/ffi_callback.km` and
+  `examples/ffi_callback_ext.km`.
 - `data(arr)` — the element pointer of a Komodo array, for passing a
   writable buffer / out-param to C (e.g. `SDL_PollEvent(data(ev))`). Read
   results back with ordinary `arr[i]`.
@@ -447,10 +450,24 @@ extern "SDL2"                       // a block: one library, many decls
   bytes) is unpacked from `rax:rdx` / `xmm0:xmm1` into a fresh Komodo
   object. A struct argument *without* `copy(...)` still passes the bare
   handle as a pointer (for a `T*` parameter), as before. Nested struct
-  fields, arrays, and MEMORY-class returns are not supported; see
+  fields and arrays are not supported; see
   `stdlib/raylib.kmm` for a shim-free binding built on this.
-- Not supported in a callback: `float` in the signature; more than 6
-  parameters.
+- **Struct returns over 16 bytes** (System V MEMORY class, e.g. a 32-byte
+  `{double,double,double,long}`): the compiler passes a hidden pointer to
+  a static buffer as the first integer argument (so the visible
+  arguments shift by one register) and unpacks the filled buffer into a
+  fresh Komodo object, exactly like the register case. Same field
+  restrictions (scalars only, up to 192 bytes) — see
+  `examples/ffi_sret.km`. (The buffer is shared, so the result must be
+  consumed before the next struct-returning call, which it always is.)
+- **Global variables — `extern let name: T`.** Reads and writes go
+  straight to the C symbol (`extern let counter: i32`,
+  `extern let scale: float`); the declared type is the C width — `i8`
+  ... `u64`, `bool`, `f32` (C `float`), `float` (`double`), `string`
+  (`const char *`), or a handle — widened on read and narrowed on write,
+  so `counter += 1` on a C `int` is correct. Add `= "sym"` to bind a
+  differently spelled symbol. Arrays and structs are rejected. Works in
+  `extern "lib"` blocks too. See `examples/ffi_extern_var.km`.
 - With `build.sh` (the interpreter path) pass link flags after the output
   name — `./build.sh app.km x86 ./app -lSDL2`; the `komodo` CLI reads
   `<file>.links` and needs none.

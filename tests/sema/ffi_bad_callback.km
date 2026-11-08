@@ -1,11 +1,11 @@
 import console
 
 // A Komodo function handed to C as a callback must use only plain
-// machine-word parameters — no floats.
+// machine-word / double parameters — no arrays.
 extern fn run_cb(cb: int): int
 
-fn scale(factor: float, n: int): int
+fn scale(xs: [int], n: int): int
     return n
 
 void main()
-    let r = run_cb(scale)   // error: float parameter can't cross the callback ABI
+    let r = run_cb(scale)   // error: array parameter can't cross the callback ABI

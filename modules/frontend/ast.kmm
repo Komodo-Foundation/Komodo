@@ -147,6 +147,10 @@ struct VarDecl : Statement
     // `private` section, mirroring `Declaration`.
     modOwner: string = ""
     visMod: string = "public"
+    // `extern let name: T [= "sym"]` — a C global variable: no storage of
+    // our own, reads / writes go straight to the C symbol.
+    isExtern: bool = false
+    symbol: string? = null
 
 struct AssignStmt : Statement
     name: string

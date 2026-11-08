@@ -596,6 +596,16 @@ void Codegen::genExternCall(e: CallExpr)
     m_backend.cCallBegin(#e.args)
     let ci = 0
     let ai = 0
+    // A struct result over 16 bytes (MEMORY class) comes back through a
+    // hidden first argument: a pointer to the buffer the callee fills.
+    let sretName = externRetStructName(e.name)
+    if sretName != "" then
+        let sl = structCLayout(sretName)
+        if sl.ok and sl.memory then
+            m_backend.ffiRetBufAddr()
+            m_backend.cCallArg(ci, "int")
+            classes += ["int"]
+            ci += 1
     for a in e.args do
         let byvalName = byValStructArgType(a)
         if a is Identifier and isCallbackArg(a) then
@@ -669,8 +679,6 @@ void Codegen::genExternCall(e: CallExpr)
         let rl = structCLayout(retStruct)
         if not rl.ok then
             throw ("return type of extern '" + e.name + "': " + rl.err)
-        if rl.memory then
-            throw ("extern '" + e.name + "' returns '" + retStruct + "' (" + string(rl.size) + " bytes) by value; aggregates over 16 bytes can't be returned by value yet")
         let rslots: [int] = []
         let rcoffs: [int] = []
         let rsizes: [int] = []

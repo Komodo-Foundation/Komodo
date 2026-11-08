@@ -1,0 +1,17 @@
+// Reading and writing C global variables with `extern let`.
+// (stackvm: skip — needs the native x86 C ABI.)
+// (c: skip — extern variables are an x86-backend feature.)
+
+import console
+import cglobals
+
+void main()
+    console.print(`counter={cglobals::cg_counter} scale={cglobals::cg_scale} flag={cglobals::cg_flag}`)
+    console.print(`name={cglobals::cg_name} f32={cglobals::cg_f32} big={cglobals::big}`)
+
+    cglobals::cg_counter += 12
+    cglobals::cg_scale = cglobals::cg_scale * 2.0
+    cglobals::cg_flag = 7
+    cglobals::cg_f32 = 0.75
+    console.print(`after: counter={cglobals::cg_counter} scale={cglobals::cg_scale} flag={cglobals::cg_flag} f32={cglobals::cg_f32}`)
+    console.print(`C sees: {cglobals::cg_total()}`)

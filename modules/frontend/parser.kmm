@@ -304,6 +304,32 @@ private
     // One foreign declaration — `fn` / `void` prototype or `type` handle —
     // with the leading `extern` (or block indent) already consumed.
     mut parseExternMemberInto(prog: Program)
+        if at(TokenType::LET) then
+            // `extern let name: T [= "sym"]` — a C global variable
+            eat()                   // let
+            let vname = peek().lexeme
+            eat()
+            if not at(TokenType::COLON) then
+                throw ("extern variable '" + vname + "' needs a type: `extern let " + vname + ": int`")
+            eat()
+            let vtype = parseType()
+            let vsym: string? = null
+            if at(TokenType::EQUALS) then
+                eat()
+                if not at(TokenType::STRING) then
+                    throw ("expected a string literal after `=` (the C symbol name) in extern variable '" + vname + "'")
+                let vsl = peek().lexeme
+                eat()
+                vsym = vsl[1 to (vsl.length - 1)]
+                if #(vsym or "") == 0 then
+                    throw ("extern variable '" + vname + "': the C symbol name after `=` is empty")
+            skipNewlines()
+            let vd = new VarDecl(vname)
+            vd.declaredType = vtype
+            vd.isExtern = true
+            vd.symbol = vsym
+            prog.globals += [vd]
+            return
         if at(TokenType::IDENT) and peek().lexeme == "type" then
             eat()                   // type
             let name = peek().lexeme

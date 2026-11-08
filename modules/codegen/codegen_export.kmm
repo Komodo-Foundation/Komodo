@@ -39,3 +39,20 @@ void Codegen::genExportWrapper(func: FunctionDecl)
     if not isVoidFn(func) then
         ret = exportClass(func.returnType)
     m_backend.emitExport(func.name, cls, tags, ret, m_exportInit)
+
+// The native-ABI trampoline of a Komodo function passed to C as a
+// callback: integer / double parameters (any number — beyond the
+// registers they come from the C stack) and a word, double or void
+// result.
+void Codegen::genCallbackTramp(name: string)
+    let fi = fnIndexOf(name)
+    let cls: [string] = []
+    let tags: [int] = []
+    let ret = "void"
+    if fi >= 0 then
+        for rp in m_fnRawParams[fi] do
+            cls += [exportClass(rp)]
+            tags += [exportTag(rp)]
+        if m_fnKinds[fi] != "void" then
+            ret = exportClass(m_fnRetRaw[fi])
+    m_backend.emitCallbackTramp(m_backend.mangle(name), cls, tags, ret)

@@ -1,0 +1,19 @@
+// A C function returning a struct larger than 16 bytes by value: the
+// System V "MEMORY" class, where the caller supplies a hidden result
+// pointer.  The compiler does that and unpacks the buffer into a fresh
+// Komodo struct.
+// (stackvm: skip — by-value structs need the native x86 C ABI.)
+// (c: skip — by-value structs over the C FFI are not supported by the c target.)
+
+import console
+import sretlib
+
+void main()
+    let b = sretlib::sr_make(7, 1.5)
+    console.print(`make: {b.a} {b.b} {b.c} {b.n}`)
+
+    let s = sretlib::sr_add(copy(b), copy(new sretlib::Big(1.0, 2.0, 3.0, 4)))
+    console.print(`add: {s.a} {s.b} {s.c} {s.n}`)
+
+    let m = sretlib::sr_mixed(5, 2.75)
+    console.print(`mixed: {m.id} {m.w} {m.big} {m.d} {m.tag}`)

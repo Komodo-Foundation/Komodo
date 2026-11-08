@@ -49,6 +49,9 @@ private
     m_aliasSyms: [string] = []
     m_exportNames: [string] = []    // `export fn` names (internal body symbol is renamed)
     m_hasMain: bool = false
+    m_xgNames: [string] = []        // `extern let` C globals: Komodo name, symbol, declared type
+    m_xgSyms: [string] = []
+    m_xgTypes: [string] = []
     m_usesExportInit: bool = false  // reserve the once-flag in .bss
     m_keepJumps: [string] = []      // targets of `and`/`or` branches whose rax is read at the join
 
@@ -240,13 +243,84 @@ void X86Backend::declareGlobal(name: string, ty: string)
     if not (name in m_globals) then
         m_globals += [name]
 
+mut X86Backend::declareExternGlobal(name: string, symbol: string, rawType: string)
+    m_xgNames += [name]
+    m_xgSyms += [symbol]
+    let t = rawType
+    if #t > 0 and t[#t - 1] == "?" then
+        t = t[0 to (#t - 1)]
+    if t == "f64" then
+        t = "float"
+    m_xgTypes += [t]
+    addExtern(asmSym(symbol))
+
+fn X86Backend::xgIndex(name: string): int
+    if #m_xgNames == 0 then
+        return 0 - 1
+    let k = 0
+    while k < #m_xgNames do
+        if m_xgNames[k] == name then
+            return k
+        k += 1
+    return 0 - 1
+
+// The C global `xi` → accumulator (rax, or xmm0 for a float), widening
+// from the declared C width.
+void X86Backend::loadExternGlobal(xi: int)
+    let ref = "[rel " + asmSym(m_xgSyms[xi]) + "]"
+    let t = m_xgTypes[xi]
+    if t == "float" then
+        ins("movsd xmm0, " + ref)
+    else if t == "f32" then
+        ins("movss xmm0, " + ref)
+        ins("cvtss2sd xmm0, xmm0")
+    else if t == "i8" then
+        ins("movsx rax, byte " + ref)
+    else if t == "u8" or t == "bool" then
+        ins("movzx eax, byte " + ref)
+    else if t == "i16" then
+        ins("movsx rax, word " + ref)
+    else if t == "u16" then
+        ins("movzx eax, word " + ref)
+    else if t == "i32" then
+        ins("movsxd rax, dword " + ref)
+    else if t == "u32" then
+        ins("mov eax, dword " + ref)
+    else
+        ins("mov rax, " + ref)
+
+void X86Backend::storeExternGlobal(xi: int)
+    let ref = "[rel " + asmSym(m_xgSyms[xi]) + "]"
+    let t = m_xgTypes[xi]
+    if t == "float" then
+        ins("movsd " + ref + ", xmm0")
+    else if t == "f32" then
+        ins("cvtsd2ss xmm1, xmm0")
+        ins("movss " + ref + ", xmm1")
+    else if t == "i8" or t == "u8" or t == "bool" then
+        ins("mov byte " + ref + ", al")
+    else if t == "i16" or t == "u16" then
+        ins("mov word " + ref + ", ax")
+    else if t == "i32" or t == "u32" then
+        ins("mov dword " + ref + ", eax")
+    else
+        ins("mov " + ref + ", rax")
+
 void X86Backend::loadGlobal(name: string, ty: string)
+    let xi = xgIndex(name)
+    if xi >= 0 then
+        loadExternGlobal(xi)
+        return
     if ty == "float" then
         ins("movsd xmm0, [rel KG_" + name + "]")
     else
         ins("mov rax, [rel KG_" + name + "]")
 
 void X86Backend::storeGlobal(name: string, ty: string)
+    let xi = xgIndex(name)
+    if xi >= 0 then
+        storeExternGlobal(xi)
+        return
     if ty == "float" then
         ins("movsd [rel KG_" + name + "], xmm0")
     else
@@ -1032,6 +1106,14 @@ mut X86Backend::ffiStructRet(typeId: int, nFields: int, slots: [int], coffs: [in
             ins("mov " + dst + ", rcx")
         i += 1
 
+// Hidden `sret` pointer for a MEMORY-class struct return: the static
+// marshalling scratch (free by then — by-value arguments were already
+// copied to the argument area).  The callee fills it; ffiStructRet then
+// unpacks it with no register classes.
+mut X86Backend::ffiRetBufAddr()
+    m_usesFfiStruct = true
+    ins("lea rax, [rel km_ffi_marshal]")
+
 // `data(arr)` — element pointer of an array handle (skip len/cap).
 void X86Backend::arrayDataPtr()
     ins("add rax, 16")
@@ -1093,9 +1175,18 @@ mut X86Backend::declareExport(name: string)
 //  and bool parameters are re-extended from the low bits — the C ABI
 //  leaves the rest of the register undefined.
 mut X86Backend::emitExport(name: string, cls: [string], tags: [int], ret: string, initFn: string)
+    cAbiEntry("$" + name, asmSym(name), cls, tags, ret, initFn)
+
+//  A callback trampoline is the same wrapper aimed at a Komodo function
+//  that C will call through a function pointer (no one-time init).
+mut X86Backend::emitCallbackTramp(sym: string, cls: [string], tags: [int], ret: string)
+    cAbiEntry("km_tramp_" + sym, asmSym(sym), cls, tags, ret, "")
+
+//  The wrapper proper: native System V entry `entry` → Komodo-ABI `target`.
+mut X86Backend::cAbiEntry(entry: string, target: string, cls: [string], tags: [int], ret: string, initFn: string)
     let n = #cls
     let gp = ["rdi", "rsi", "rdx", "rcx", "r8", "r9"]
-    label("$" + name)
+    label(entry)
     ins("push rbp")
     ins("mov rbp, rsp")
     if n > 0 then
@@ -1159,7 +1250,7 @@ mut X86Backend::emitExport(name: string, cls: [string], tags: [int], ret: string
         label(ready)
     ins("mov rdi, " + string(n))
     ins("mov rsi, rsp")
-    ins("call " + asmSym(name))
+    ins("call " + target)
     if ret == "f32" then
         ins("cvtsd2ss xmm0, xmm0")
     ins("mov rsp, rbp")

@@ -422,12 +422,11 @@ mut Analyzer::isCallbackRef(a: Identifier): bool
     return hasFn(nm) and fnKindOf(nm) != "extern"
 
 // A Komodo function handed to C as a callback must use only plain
-// machine-word parameters and an int-class or `void` result — the
-// generated trampoline marshals integer registers only.
+// machine-word / double parameters and a word, double or `void` result —
+// the generated trampoline marshals integer and SSE registers (and the
+// C stack beyond them), not arrays or aggregates.
 mut Analyzer::checkCallbackTarget(node: ASTNode, fnName: string)
     let params = fnParamTypes(fnName)
-    if #params > 6 then
-        err(node, "'" + fnName + "' cannot be a C callback: it takes " + string(#params) + " parameters (max 6)")
     for pt in params do
         if not callbackWordType(parseTypeStr(pt)) then
             err(node, "'" + fnName + "' cannot be a C callback: parameter type '" + pt + "' is not a plain machine word")
@@ -437,11 +436,13 @@ mut Analyzer::checkCallbackTarget(node: ASTNode, fnName: string)
         if not callbackWordType(rt) then
             err(node, "'" + fnName + "' cannot be a C callback: return type '" + ret + "' is not a plain machine word")
 
-// An integer-register-passable type: any integer width, bool, char,
-// string (char*), an object handle (pointer), or `any`.  Not float, not
-// an array, not void.
+// A register-passable type: any integer width, bool, char, string
+// (char*), an object handle (pointer), a float / f32, or `any`.  Not an
+// array, not void.
 mut Analyzer::callbackWordType(t: Type): bool
     let b = stripNull(t)
+    if isFloatKind(b.kind) then
+        return true
     if b.kind == "any" or b.kind == "bool" or b.kind == "char" or b.kind == "string" then
         return true
     if b.kind == "object" then

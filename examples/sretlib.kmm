@@ -1,0 +1,21 @@
+module sretlib
+
+link "sretlib.c"
+
+// Mirror structs for sretlib.c, field for field.
+struct Big
+    a: float = 0.0
+    b: float = 0.0
+    c: float = 0.0
+    n: int = 0
+
+struct Mixed
+    id: i32 = 0
+    w: f32 = 0.0
+    big: int = 0
+    d: float = 0.0
+    tag: u8 = 0
+
+extern fn sr_make(n: int, scale: float): Big
+extern fn sr_add(x: Big, y: Big): Big
+extern fn sr_mixed(id: i32, d: float): Mixed

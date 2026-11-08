@@ -190,6 +190,22 @@ mut Analyzer::checkExternSymbol(fd: FunctionDecl)
     if sy[0] >= "0" and sy[0] <= "9" then
         err(fd, "extern '" + fd.name + "': the C symbol \"" + sy + "\" cannot start with a digit")
 
+// `extern let name: T [= "sym"]`: a C global.  Only scalar types have a
+// layout we know; the symbol obeys the same spelling rule as `extern fn`.
+mut Analyzer::checkExternVar(g: VarDecl)
+    let t = g.declaredType or "int"
+    if not isExportableType(t) then
+        err(g, "extern variable '" + g.name + "': type '" + t + "' is not supported (use int / sized ints, bool, float, f32, string or an `extern type` handle)")
+    if g.symbol != null then
+        let sy = g.symbol or ""
+        let i = 0
+        while i < #sy do
+            let c = sy[i]
+            let ok = (c >= "a" and c <= "z") or (c >= "A" and c <= "Z") or (c >= "0" and c <= "9") or c == "_" or c == "$" or c == "@" or c == "?"
+            if not ok then
+                err(g, "extern variable '" + g.name + "': character '" + c + "' is not allowed in the C symbol \"" + sy + "\"")
+            i += 1
+
 // "Mutating code" the caller can observe: a field write (`obj.f = v`, or
 // bare `field = v` against the receiver) or an array-element write.  A
 // pure `fn` may not contain any; a `mut` function/method must.  `void`

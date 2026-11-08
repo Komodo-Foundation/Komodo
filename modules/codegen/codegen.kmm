@@ -75,7 +75,10 @@ public
             let gty = g.resolvedType or "int"
             m_globalNames += [g.name]
             m_globalTypes += [gty]
-            m_backend.declareGlobal(g.name, gty)
+            if g.isExtern then
+                m_backend.declareExternGlobal(g.name, g.symbol or g.name, g.declaredType or "int")
+            else
+                m_backend.declareGlobal(g.name, gty)
 
         // Enum variants become plain integer constants: `Color::RED` (which
         // the parser has already reduced to the bare name `RED`) lowers to
@@ -238,7 +241,7 @@ public
         // Pass 2b: one native-ABI trampoline per Komodo function passed to
         // C as a callback (collected while lowering `extern` calls).
         for nm in m_trampNames do
-            m_backend.emitTrampoline(m_backend.mangle(nm), fnArity(nm))
+            genCallbackTramp(nm)
 
         // Emit the per-class vtables + the type-id → vtable index table.
         emitVtables()
