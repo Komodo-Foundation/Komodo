@@ -584,8 +584,31 @@ const char *km_to_string(int64_t tag, int64_t value)
  * into that array and invokes it. */
 int64_t km_program_main(int64_t argc, KmArg *items);
 
+#ifdef __EMSCRIPTEN__
+/* emcc 3.1.6 + clang 15 only recognises a prototype-less `main` (a main
+ * taking argc / argv is mangled to __main_argc_argv and then never run),
+ * so the node command line is fetched from JS: argv[0] is the script. */
+#include <emscripten.h>
+EM_JS(int, km_js_argc, (void), { return process.argv.length - 1; });
+EM_JS(char *, km_js_argv, (int i), {
+    var s = process.argv[i + 1];
+    var n = lengthBytesUTF8(s) + 1;
+    var p = _malloc(n);
+    stringToUTF8(s, p, n);
+    return p;
+});
+
+int main()
+{
+    int argc = km_js_argc();
+    char **argv = malloc((size_t)(argc + 1) * sizeof *argv);
+    for (int i = 0; i < argc; i++)
+        argv[i] = km_js_argv(i);
+    argv[argc] = NULL;
+#else
 int main(int argc, char **argv)
 {
+#endif
     km_heap_init();
     km_crash_init();
 
