@@ -48,7 +48,7 @@ done
 
 sources_hash() {
     ( cd "$here"
-      cat build-self.sh main.km stdlib/*.c stdlib/*.h 2>/dev/null
+      cat build-self.sh tools/asm-split.awk main.km stdlib/*.c stdlib/*.h 2>/dev/null
       find modules -name '*.kmm' | LC_ALL=C sort | xargs cat ) | sha256sum | cut -d' ' -f1
 }
 stamp="$(sources_hash)"
@@ -106,6 +106,29 @@ build_runtime() {
     fi
 }
 
+# asm → objects: the assembly is cut at function boundaries (tools/asm-split.awk),
+# chunks are assembled in parallel, and each object is cached by the hash of
+# its body — editing one function reassembles only the chunk it lives in.
+# Sets kobjs=( … ) for the link line.
+assemble() {
+    local in="$1" d="$bdir/split" jobs; jobs="$(nproc 2>/dev/null || echo 4)"
+    rm -rf "$d"; mkdir -p "$d" "$bdir/asm"
+    awk -v outdir="$d" -v K=16 -f "$here/tools/asm-split.awk" "$in" >/dev/null
+    local nv; nv="$(nasm -v | head -1 | sha256sum | cut -c1-6)"
+    local todo=() f key o
+    kobjs=()
+    while read -r key f; do
+        o="$bdir/asm/${key:0:20}$nv.o"
+        kobjs+=("$o")
+        if [[ -f "$o" ]]; then touch "$o"; else todo+=("${f%.body}.asm|$o"); fi
+    done < <(sha256sum "$d"/c_*.body)
+    if [[ ${#todo[@]} -gt 0 ]]; then
+        printf '%s\n' "${todo[@]}" | xargs -P "$jobs" -I{} bash -c \
+            'in="{}"; nasm -f elf64 "${in%%|*}" -o "${in##*|}"'
+    fi
+    find "$bdir/asm" -name '*.o' -mtime +7 -delete 2>/dev/null || true
+}
+
 # bootstrap stage: produce main.km.asm from whatever compiler we have
 if [[ -n "${KMC:-}" && -x "${KMC:-}" ]]; then
     echo "bootstrap: \$KMC ($KMC)";  "$KMC" "$here/main.km" x86
@@ -114,10 +137,11 @@ elif [[ -x "$here/kmc" ]]; then
 elif [[ -f "$seed" ]]; then
     echo "bootstrap: seed ($seed)"
     gzip -dc "$seed" > "$asm"
-    nasm -f elf64 "$asm" -o "$bdir/seed.o"
-    gcc -no-pie -I"$here/stdlib" -o "$bdir/kmc.seed" "$bdir/seed.o" "$here"/stdlib/*.c -lm -l:libgc.so.1
+    assemble "$asm"
+    build_runtime
+    gcc -no-pie -o "$bdir/kmc.seed" "${kobjs[@]}" "${objs[@]}" -lm -l:libgc.so.1
     "$bdir/kmc.seed" "$here/main.km" x86
-    rm -f "$bdir/seed.o" "$bdir/kmc.seed"
+    rm -f "$bdir/kmc.seed"
 else
     run_interp
 fi
@@ -125,8 +149,8 @@ fi
 
 build_runtime
 link_kmc() {
-    nasm -f elf64 "$asm" -o "$bdir/kmc.o"
-    gcc -no-pie -o "$here/kmc" "$bdir/kmc.o" "${objs[@]}" -lm -l:libgc.so.1
+    assemble "$asm"
+    gcc -no-pie -o "$here/kmc" "${kobjs[@]}" "${objs[@]}" -lm -l:libgc.so.1
 }
 link_kmc
 echo "built $here/kmc"
@@ -149,7 +173,7 @@ if [[ $fast -eq 0 ]]; then
     rm -f "$prev"
     echo "fixpoint OK — kmc compiles itself to identical assembly"
 fi
-rm -f "$bdir/kmc.o"
+rm -rf "$bdir/split"
 
 if [[ $update_seed -eq 1 ]]; then
     mkdir -p "$here/bootstrap"
