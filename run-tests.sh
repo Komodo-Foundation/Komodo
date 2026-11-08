@@ -3,7 +3,8 @@
 # run-tests.sh — compile every examples/*.km, run it, and check its output
 # against the matching examples/<name>.expected file.  Also compiles each
 # with the `stackvm` backend to confirm the target-independent path stays
-# wired up.
+# wired up, and builds + runs it through the `c` backend (portable C via
+# gcc) against the same expected output.
 #
 # Uses the native, self-hosted compiler via the `komodo` CLI (build one
 # first with ./build-self.sh).  Set $KOMODO to point at a different driver.
@@ -55,6 +56,22 @@ for name in "${names[@]}"; do
         echo "FAIL     $name  (output mismatch)"
         diff <(printf '%s\n' "$got") "$exp" | sed 's/^/           /'
         fail=$((fail+1)); continue
+    fi
+
+    # c: portable C via gcc, built and run (must match the same expected
+    # output).  A source that needs the native C ABI opts out with a
+    # `c: skip` comment.
+    if ! grep -q 'c: skip' "$src"; then
+        if ! cgot="$("$komodo" -q -t c "$src" 2>"$work/$name.c.err")"; then
+            echo "FAIL     $name  (c build/run errored)"
+            sed 's/^/           /' "$work/$name.c.err"
+            fail=$((fail+1)); continue
+        fi
+        if [[ -f "$exp" ]] && ! diff -q <(printf '%s\n' "$cgot") "$exp" >/dev/null; then
+            echo "FAIL     $name  (c output mismatch)"
+            diff <(printf '%s\n' "$cgot") "$exp" | sed 's/^/           /'
+            fail=$((fail+1)); continue
+        fi
     fi
 
     echo "ok       $name"

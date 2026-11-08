@@ -120,9 +120,11 @@ fn digitVal(c: char): int
 fn selectBackend(target: string): Backend
     if target == "stackvm" then
         return new StackVMBackend()
+    if target == "c" then
+        return new CBackend()
     if target == "x86" or target == "" then
         return new X86Backend()
-    throw ("unknown target '" + target + "' (known: x86, stackvm)")
+    throw ("unknown target '" + target + "' (known: x86, stackvm, c)")
 
 void save(asm: string, path: string)
     file::write_all(path, asm)

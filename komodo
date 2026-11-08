@@ -68,7 +68,7 @@ usage() {
 usage: komodo [options] <file.km> [-- <extra linker args>]
 
   -o, --output <path>   output binary path (default: <file> without .km)
-  -t, --target <name>   x86 (default) | stackvm
+  -t, --target <name>   x86 (default) | stackvm | c (portable C, built with gcc)
   -O <level>             optimization level: none|low|medium|max, or 0-3
                          (default: none)
       --strict           turn every analyser warning into a hard error
@@ -334,7 +334,7 @@ fi
 if [[ "$mode" == "emit-asm" ]]; then
     exit 0
 fi
-if [[ "$target" != "x86" ]]; then
+if [[ "$target" != "x86" && "$target" != "c" ]]; then
     log "target '$target' has no assembler/runner — stopping after $asm"
     exit 0
 fi
@@ -343,6 +343,28 @@ fi
 mapfile -t auto_cc < <(read_link_flags)
 if [[ $quiet -eq 0 && ${#auto_cc[@]} -gt 0 ]]; then
     log "auto-linking: ${auto_cc[*]}"
+fi
+
+# ── C target: gcc builds the generated C ($asm holds C source for this
+#    target, so it is compiled as C with -x c) against stdlib/*.c ───────
+if [[ "$target" == "c" ]]; then
+    t=$(now_ms)
+    vlog gcc -std=gnu11 -O1 -w -no-pie -I"$here/stdlib" -o "$out" -x c "$asm" -x none "$here"/stdlib/*.c
+    gcc -std=gnu11 -O1 -w -no-pie -I"$here/stdlib" -o "$out" -x c "$asm" -x none "$here"/stdlib/*.c \
+        ${prefix_ldflags[@]+"${prefix_ldflags[@]}"} \
+        ${auto_cc[@]+"${auto_cc[@]}"} ${extra_cc[@]+"${extra_cc[@]}"} -lm -l:libgc.so.1 || exit 1
+    report "gcc" "$t"
+    log "built $out"
+    if [[ "$mode" == "compile" ]]; then
+        exit 0
+    fi
+    log "── running $out ──"
+    t=$(now_ms)
+    case "$out" in */*|/*) "$out" ;; *) "./$out" ;; esac
+    status=$?
+    report "run" "$t"
+    log "── exit $status ──"
+    exit $status
 fi
 
 # ── 2+3. assemble + link, or reuse a cached executable ────────────
