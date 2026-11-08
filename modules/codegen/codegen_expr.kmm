@@ -383,7 +383,43 @@ mut Codegen::arrayTag(t: string): int
 // Every Komodo call is lowered the same way: an argc-long (tag, value)[]
 // buffer, filled one pair at a time.  `print`, `algorithm.sort`, … are
 // just calls whose symbol is resolved by the target's linker / loader.
+// A call that omits trailing defaulted arguments (`f(a)` for
+// `fn f(a: int, b: int = 1)`) gets the callee's default expressions
+// appended, so the lowering below sees a full argument list.  Idempotent;
+// a missing required argument is left for the arity check to report.
+mut Codegen::fillDefaults(e: CallExpr, fd: FunctionDecl)
+    let i = #e.args
+    while i < #fd.params do
+        let d = fd.params[i].defaultValue
+        if d == null then
+            return
+        e.args += [d]
+        i += 1
+
 void Codegen::genCall(e: CallExpr)
+    // `assert(cond, "message")` — lowered to `if not cond then throw
+    // "<site>assertion failed: message"`, so it needs no runtime support
+    // and works in statement and expression position alike.  The message
+    // expression is only evaluated when the assertion fails.
+    if e.name == "assert" then
+        // StringLiteral.value keeps its quotes (loadStrLit strips them)
+        let text: Expression = new StringLiteral("\"" + e.site + "assertion failed\"")
+        if #e.args == 2 then
+            let detail = new CallExpr("string", [e.args[1]])
+            detail.resolvedType = "string"
+            let head = new StringLiteral("\"" + e.site + "assertion failed: \"")
+            let joined = new BinaryOp("+", head, detail)
+            joined.resolvedType = "string"
+            text = joined
+        let thr = new ThrowStmt()
+        thr.message = text
+        let chk = new IfStmt()
+        chk.cond = new UnaryOp("not", e.args[0])
+        chk.thenBody = [thr]
+        genStmt(chk)
+        m_backend.loadIntLit("0")
+        return
+
     // `data(arr)` — the element pointer of a Komodo array (handle + 16),
     // for handing a writable buffer to an `extern fn` (out-params, event
     // structs, …).  Read results back with ordinary `arr[i]`.
@@ -483,6 +519,7 @@ void Codegen::genCall(e: CallExpr)
     // static argument types and call the specialized instance.
     if isTemplate(e.name) then
         let tpl = templateDeclOf(e.name)
+        fillDefaults(e, tpl)
         if #tpl.params != #e.args then
             throw ("function '" + e.name + "' takes " + string(#tpl.params) + " argument(s), got " + string(#e.args))
         let gsym = ensureInstance(e.name, tplArgTypes(e.args))
@@ -503,6 +540,11 @@ void Codegen::genCall(e: CallExpr)
                 throw ("a pure `fn` cannot call the void procedure '" + e.name + "'")
             genDirectCall(m_fnLink[sel], e.args)
         return
+
+    // a plain function: omitted trailing arguments take their defaults
+    let di = m_fnIdx.first(e.name)
+    if di >= 0 then
+        fillDefaults(e, m_fnDecls[di])
 
     let kind = fnKind(e.name)
 

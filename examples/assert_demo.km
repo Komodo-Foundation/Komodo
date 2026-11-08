@@ -1,0 +1,23 @@
+// assert(cond) / assert(cond, "message"): a false condition throws
+// "file:line: assertion failed: message".  Here the failures are caught
+// with a protected call (`f(args)?` yields null), so the output is stable.
+
+import console
+
+fn half(n: int): int
+    assert(n % 2 == 0, "half needs an even number")
+    return n / 2
+
+fn positive(n: int): int
+    assert(n > 0)
+    return n
+
+void main()
+    assert(1 + 1 == 2)
+    assert(true, "never shown")
+    console.print("half:", half(10))
+    let odd = half(7)?
+    console.print("odd caught:", odd == null)
+    let neg = positive(-3)?
+    console.print("no message caught:", neg == null)
+    console.print("done")

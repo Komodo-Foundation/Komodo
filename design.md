@@ -51,7 +51,7 @@ only, for keeping the implementation and sample code coherent.
 
 | Kind    | Examples |
 |---------|----------|
-| int     | `0`, `42`, `256`, `0xFF` (hex) |
+| int     | `0`, `42`, `256`, `0xFF` (hex), `0b1010` (binary), `1_000_000` (`_` digit separators, any base) |
 | float   | `2.0`, `3.14`, `2.0f`, `2f` (trailing `f` forces float) |
 | string  | `"hi"`, `"a\nb"` (backslash escapes) |
 | interp. string | `` `x = {a + 1}` `` — backtick-delimited; each `{expr}` is spliced in as `string(expr)` |
@@ -136,7 +136,11 @@ void name(x: string)                // procedure — returns nothing
 mut name(): [Token]                 // mutates receiver / instance state
 ```
 
-- Parameters: `name: Type`, may have default values. A trailing `...`
+- Parameters: `name: Type`, may have default values — `fn greet(name: string, greeting: string = "hello")`.
+  A default must be a literal (optionally negated), assignable to the declared
+  type, and only trailing parameters may have one; a call may omit them. Defaults
+  apply to free functions (including generic ones); an overloaded name cannot
+  take defaults, so overloads never compete with defaulted arities. A trailing `...`
   makes the function **variadic** — the call may pass any number of extra
   arguments after the fixed ones (`void console::print(...)`).
 - Return type follows `:`. `return expr` / bare `return`.
@@ -462,6 +466,9 @@ A handful of names the compiler lowers directly (no `import`, no library):
   `f32` is truncated toward zero (`cvttsd2si`), an integer-class value
   passes through unchanged. This is the sanctioned float→int conversion;
   a plain assignment / return stays width-checked and rejects it.
+- `assert(cond)` / `assert(cond, "message")` — when `cond` is false, throws
+  `file:line: assertion failed: message` (an ordinary error: catchable with `f(...)?`,
+  otherwise `Uncaught error: …`). The message is evaluated only on failure. No value.
 - `join(parts, sep)` — concatenate a `[string]` with `sep` between, in
   one pass (avoids the O(n²) churn of repeated `s = s + line`).
 - `data(arr)` — an array's element pointer, for handing a buffer to C.

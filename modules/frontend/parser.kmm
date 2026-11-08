@@ -217,7 +217,15 @@ private
             if at(TokenType::COLON) then
                 eat()
                 ptype = parseType()
-            params += [new Param(pname, ptype)]
+            // `name: T = default` — the default is an expression, checked
+            // by the analyser (a literal, trailing parameters only).
+            let pdefault: Expression? = null
+            if at(TokenType::EQUALS) then
+                eat()
+                pdefault = parseExpression()
+            let param = new Param(pname, ptype)
+            param.defaultValue = pdefault
+            params += [param]
             if at(TokenType::COMMA) then
                 eat()
         return params

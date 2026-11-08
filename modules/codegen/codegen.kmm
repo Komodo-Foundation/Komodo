@@ -156,6 +156,7 @@ public
             m_fnSigs += [paramSig(func)]
             m_fnRawParams += [rawParamList(func)]
             m_fnLink += [func.name]
+            m_fnDecls += [func]
 
         // Pass 1a: two free overloads with the identical normalized
         // parameter-type list are a genuine duplicate (sema exempts every
@@ -906,6 +907,8 @@ private
     // symbol each function is emitted / called under — differs from its
     // source name only for overloaded free functions and generic instances
     m_fnLink: [string] = []
+    // declaration per m_fn* entry — default arguments are read from it
+    m_fnDecls: [FunctionDecl] = []
     // scratch: candidate order for the last runtime-dispatched call
     m_ovOrder: [int] = []
 

@@ -266,6 +266,19 @@ mut Analyzer::inferUnary(e: UnaryOp): Type
 // ── calls: free fn / method / stdlib / extern / builtin ─────────────
 
 mut Analyzer::inferCall(e: CallExpr): Type
+    // `assert(cond)` / `assert(cond, "message")` — when `cond` is false it
+    // throws `file:line: assertion failed: message`.  The file:line prefix
+    // is resolved here (only the analyser has the file map); codegen lowers
+    // the check.  Yields no value.
+    if e.name == "assert" then
+        if #e.args < 1 or #e.args > 2 then
+            err(e, "'assert' takes a condition and an optional message, got " + string(#e.args) + " argument(s)")
+        inferExpr(e.args[0])
+        if #e.args == 2 then
+            checkAssignable(e, tPrim("string"), inferExpr(e.args[1]), "assert message")
+        e.site = locate(string(e.line) + ": ", m_srcFiles, m_srcStarts)
+        return tVoid
+
     // `data(arr)` — element pointer for C interop; result is an int.
     if e.name == "data" then
         for a in e.args do
@@ -314,6 +327,8 @@ mut Analyzer::inferCall(e: CallExpr): Type
     // (so their own types resolve and side effects are seen) but leave
     // the call loosely typed.
     if isTemplateName(e.name) or isOverloadedName(e.name) then
+        if isTemplateName(e.name) then
+            checkTemplateArity(e)
         for a in e.args do
             inferExpr(a)
         return tAny
@@ -443,14 +458,35 @@ mut Analyzer::resolveFnCall(e: CallExpr, sym: string, display: string, argTs: [T
     if fnIsVariadic(sym) then
         if #argTs < fixed then
             err(e, "'" + display + "' takes at least " + string(fixed) + " argument(s), got " + string(#argTs))
-    else if #argTs != fixed then
-        err(e, "'" + display + "' takes " + string(fixed) + " argument(s), got " + string(#argTs))
+    else if #argTs < fnRequiredOf(sym) - skip or #argTs > fixed then
+        arityErr(e, display, fnRequiredOf(sym) - skip, fixed, #argTs)
     if m_curKind == "fn" and k == "void" and not fnIsLinked(sym) then
         err(e, "a pure `fn` cannot call the void procedure '" + display + "'")
     checkArgs(e, display, params, argTs, skip, k == "extern")
     if skip == 0 then
         e.resolvedSym = sym
     return parseTypeStr(fnRetType(sym))
+
+// "takes N argument(s)" or, when defaults make the count a range,
+// "takes LO to HI argument(s)".
+void Analyzer::arityErr(node: ASTNode, display: string, lo: int, hi: int, got: int)
+    let want = string(hi)
+    if lo != hi then
+        want = string(lo) + " to " + string(hi)
+    err(node, "'" + display + "' takes " + want + " argument(s), got " + string(got))
+
+// A call to a generic template: the argument count must fall between the
+// template's required and total parameter counts (codegen fills defaults).
+mut Analyzer::checkTemplateArity(e: CallExpr)
+    for fd in m_tplFns do
+        if fd.name == e.name then
+            let req = 0
+            for p in fd.params do
+                if p.defaultValue == null then
+                    req += 1
+            if #e.args < req or #e.args > #fd.params then
+                arityErr(e, e.name, req, #fd.params, #e.args)
+            return
 
 // Check each argument against its parameter's declared type.  `skip` is
 // the count of leading implicit params (1 for a method receiver).  An

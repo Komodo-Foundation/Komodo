@@ -103,6 +103,48 @@ mut Analyzer::matchReturns(s: MatchStmt): bool
             sawDefault = true
     return sawDefault
 
+// ── default parameter values ─────────────────────────────────────────
+//  `fn f(a: int, b: string = "x")`.  Rules: only free functions with a
+//  body take defaults; a default is a literal (optionally negated); only
+//  trailing parameters may have one; it must be assignable to the declared
+//  type; and an overloaded name cannot have one (overloads are resolved by
+//  exact arity first, so defaults are not combined with them).  A call that
+//  omits trailing defaulted arguments is completed by codegen
+//  (`Codegen::fillDefaults`).
+
+fn isLiteralDefault(e: Expression?): bool
+    if e is UnaryOp then
+        return e.op == "-" and isLiteralDefault(e.operand)
+    if e is IntLiteral or e is FloatLiteral or e is StringLiteral then
+        return true
+    if e is BoolLiteral or e is CharLiteral or e is NullLiteral then
+        return true
+    return false
+
+mut Analyzer::checkParamDefaults(fd: FunctionDecl, owner: string)
+    let hasDefault = false
+    for p in fd.params do
+        if p.defaultValue != null then
+            hasDefault = true
+    if not hasDefault then
+        return
+    if owner != "" or fd.isExtern or fd.isPrototype or fd.isConstructor or fd.variadic then
+        err(fd, "default parameter values are only allowed on free functions with a body")
+    if isOverloadedName(fd.name) then
+        err(fd, "overloaded function '" + fd.name + "' cannot have default parameter values")
+    let sawDefault = false
+    for p in fd.params do
+        if p.defaultValue == null then
+            if sawDefault then
+                err(fd, "parameter '" + p.name + "' needs a default value, because it follows a parameter that has one")
+        else
+            sawDefault = true
+            if not isLiteralDefault(p.defaultValue) then
+                err(fd, "default value of parameter '" + p.name + "' must be a literal")
+            let dt = inferExpr(p.defaultValue)
+            if p.declaredType != null then
+                checkAssignable(fd, parseTypeStr(p.declaredType), dt, "default value of parameter '" + p.name + "'")
+
 // "Mutating code" the caller can observe: a field write (`obj.f = v`, or
 // bare `field = v` against the receiver) or an array-element write.  A
 // pure `fn` may not contain any; a `mut` function/method must.  `void`
