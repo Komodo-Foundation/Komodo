@@ -405,6 +405,7 @@ mut Codegen::ensureInstance(name: string, argTypes: [string]): string
     m_fnSigs += [paramSig(inst)]
     m_fnRawParams += [rawParamList(inst)]
     m_fnLink += [sym]
+    m_fnDecls += [inst]
     m_backend.declareFn(sym)
     m_genQueue += [inst]
     return sym

@@ -136,7 +136,11 @@ void name(x: string)                // procedure — returns nothing
 mut name(): [Token]                 // mutates receiver / instance state
 ```
 
-- Parameters: `name: Type`, may have default values. A trailing `...`
+- Parameters: `name: Type`, may have default values — `fn greet(name: string, greeting: string = "hello")`.
+  A default must be a literal (optionally negated), assignable to the declared
+  type, and only trailing parameters may have one; a call may omit them. Defaults
+  apply to free functions (including generic ones); an overloaded name cannot
+  take defaults, so overloads never compete with defaulted arities. A trailing `...`
   makes the function **variadic** — the call may pass any number of extra
   arguments after the fixed ones (`void console::print(...)`).
 - Return type follows `:`. `return expr` / bare `return`.

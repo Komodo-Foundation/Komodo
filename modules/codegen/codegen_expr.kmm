@@ -383,6 +383,19 @@ mut Codegen::arrayTag(t: string): int
 // Every Komodo call is lowered the same way: an argc-long (tag, value)[]
 // buffer, filled one pair at a time.  `print`, `algorithm.sort`, … are
 // just calls whose symbol is resolved by the target's linker / loader.
+// A call that omits trailing defaulted arguments (`f(a)` for
+// `fn f(a: int, b: int = 1)`) gets the callee's default expressions
+// appended, so the lowering below sees a full argument list.  Idempotent;
+// a missing required argument is left for the arity check to report.
+mut Codegen::fillDefaults(e: CallExpr, fd: FunctionDecl)
+    let i = #e.args
+    while i < #fd.params do
+        let d = fd.params[i].defaultValue
+        if d == null then
+            return
+        e.args += [d]
+        i += 1
+
 void Codegen::genCall(e: CallExpr)
     // `data(arr)` — the element pointer of a Komodo array (handle + 16),
     // for handing a writable buffer to an `extern fn` (out-params, event
@@ -483,6 +496,7 @@ void Codegen::genCall(e: CallExpr)
     // static argument types and call the specialized instance.
     if isTemplate(e.name) then
         let tpl = templateDeclOf(e.name)
+        fillDefaults(e, tpl)
         if #tpl.params != #e.args then
             throw ("function '" + e.name + "' takes " + string(#tpl.params) + " argument(s), got " + string(#e.args))
         let gsym = ensureInstance(e.name, tplArgTypes(e.args))
@@ -503,6 +517,11 @@ void Codegen::genCall(e: CallExpr)
                 throw ("a pure `fn` cannot call the void procedure '" + e.name + "'")
             genDirectCall(m_fnLink[sel], e.args)
         return
+
+    // a plain function: omitted trailing arguments take their defaults
+    let di = m_fnIdx.first(e.name)
+    if di >= 0 then
+        fillDefaults(e, m_fnDecls[di])
 
     let kind = fnKind(e.name)
 

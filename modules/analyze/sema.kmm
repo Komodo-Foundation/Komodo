@@ -63,6 +63,7 @@ public
             if fnIsTemplate(fd) then
                 if not (fd.name in m_templateNames) then
                     m_templateNames += [fd.name]
+                m_tplFns += [fd]
                 continue
             if freeDeclCount(prog, fd.name) >= 2 then
                 if not (fd.name in m_overloadNames) then
@@ -76,6 +77,13 @@ public
         for cl in prog.classes do
             for m in cl.methods do
                 registerFn(methodSym(cl.name, m), cl.name, m)
+
+        // ── Pass 1b: default parameter values (see sema_stmt.kmm) ──
+        for fd in prog.functions do
+            checkParamDefaults(fd, "")
+        for cl in prog.classes do
+            for m in cl.methods do
+                checkParamDefaults(m, cl.name)
 
         // ── Pass 2: top-level macros ──────────────────────────────
         for mac in prog.macros do
@@ -457,6 +465,15 @@ public
         m_fnRet += [retDeclOf(fd)]
         m_fnKind += [kindOf(fd)]
         m_fnVariadic += [fd.variadic]
+        // fewest arguments a call may pass: every parameter without a
+        // default (the implicit receiver always counts)
+        let req = 0
+        if owner != "" then
+            req = 1
+        for p in fd.params do
+            if p.defaultValue == null then
+                req += 1
+        m_fnRequired += [req]
         m_fnLinked += [fd.isPrototype or fd.isExtern]
         m_fnVis += [fd.visibility]
         m_fnMod += [fd.moduleOwner]
@@ -510,6 +527,12 @@ public
         if i < 0 then
             return ""
         return m_fnKind[i]
+
+    mut fnRequiredOf(sym: string): int
+        let i = fnIndex(sym)
+        if i < 0 then
+            return 0
+        return m_fnRequired[i]
 
     mut fnIsVariadic(sym: string): bool
         let i = fnIndex(sym)
@@ -1011,6 +1034,9 @@ private
     m_fnRet: [string] = []
     m_fnKind: [string] = []
     m_fnVariadic: [bool] = []
+    m_fnRequired: [int] = []      // fewest args a call may pass (see registerFn)
+    // generic templates' declarations, for their call-arity check
+    m_tplFns: [FunctionDecl] = []
     m_fnLinked: [bool] = []
     m_fnVis: [string] = []       // "public" / "private" (module section)
     m_fnMod: [string] = []       // owning module name ("" for the program)

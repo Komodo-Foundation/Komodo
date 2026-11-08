@@ -1,0 +1,4 @@
+fn add(a: int, b: int = "two"): int
+    return a + b
+void main()
+    let x = add(1)

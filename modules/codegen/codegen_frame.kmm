@@ -122,6 +122,8 @@ mut Codegen::exprType(e: Expression?): string
                 if owner != "" then
                     return fnRet(owner + "__" + mth)
             cn = m_backend.mangle(e.name)
+        if isTemplate(cn) then
+            fillDefaults(e, templateDeclOf(cn))
         if isTemplate(cn) and #templateDeclOf(cn).params == #e.args then
             let gsym = ensureInstance(cn, tplArgTypes(e.args))
             return lookupRet(gsym)
