@@ -9,6 +9,7 @@
 #   komodo -O max file.km             optimize (none|low|medium|max, 0-3)
 #   komodo --strict file.km           enable strict analysis diagnostics
 #   komodo -t stackvm -S file.km      target the stack-VM backend
+#   komodo -t wasm file.km            WebAssembly: build with emcc, run with node
 #   komodo demos/sdl_window.km        SDL2 is linked automatically (see below)
 #   komodo file.km -- -lfoo -Ipath    extra flags/objects for the linker
 #
@@ -163,8 +164,8 @@ while [[ $# -gt 0 ]]; do
         -t|--target)
             target="${2:-}"
             case "$target" in
-                x86|stackvm|c) ;;
-                *) echo "$prog: unknown target '$target' (known: x86, stackvm, c)" >&2; exit 2 ;;
+                x86|stackvm|c|wasm) ;;
+                *) echo "$prog: unknown target '$target' (known: x86, stackvm, c, wasm)" >&2; exit 2 ;;
             esac
             shift 2 ;;
         -O)           opt="$(normalize_opt "$2")"; shift 2 ;;
@@ -374,7 +375,7 @@ fi
 if [[ "$mode" == "emit-asm" ]]; then
     exit 0
 fi
-if [[ "$target" != "x86" && "$target" != "c" ]]; then
+if [[ "$target" != "x86" && "$target" != "c" && "$target" != "wasm" ]]; then
     log "target '$target' has no assembler/runner — stopping after $asm"
     exit 0
 fi
@@ -489,6 +490,66 @@ if [[ "$target" == "c" ]]; then
     log "── running $out ──"
     t=$(now_ms)
     case "$out" in */*|/*) "$out" ;; *) "./$out" ;; esac
+    status=$?
+    report "run" "$t"
+    log "── exit $status ──"
+    exit $status
+fi
+
+# ── WebAssembly target: the generated C ($asm) is built with emcc against
+#    stdlib/*.c into <out>.js + <out>.wasm and run with node ─────────────
+if [[ "$target" == "wasm" ]]; then
+    command -v emcc >/dev/null 2>&1 || { echo "$prog: target wasm needs emcc (Emscripten) on PATH" >&2; exit 1; }
+    wout="${out%.js}.js"
+    wc_src="$src.wasm.c"        # emcc picks the language from the extension
+    cp -p "$asm" "$wc_src"
+    # sync instantiation + no `fetch`: works on node 18 and from any path.
+    # NODERAWFS lets file:: reach the real file system; the heap may grow.
+    wflags=( -std=gnu11 -O1 -w -I"$here/stdlib" )
+    wlink=( -sENVIRONMENT=node -sWASM_ASYNC_COMPILATION=0 -sNODERAWFS=1 -sEXIT_RUNTIME=1
+            -sALLOW_MEMORY_GROWTH=1 -sINITIAL_MEMORY=64MB -sTOTAL_STACK=16MB -lm )
+    wtool_id="emcc:$(emcc --version 2>/dev/null | head -1)"
+    t=$(now_ms)
+    stdlib_inputs=()
+    for c in "$here"/stdlib/*.c; do
+        if [[ $cache_ok -eq 1 ]]; then
+            oh="$(sha_str "stdlib-wasm-obj-v1|$wtool_id|stdlib=$stdlib_sig|$(sha_file "$c")")"
+            oo="$cache/obj/$oh.wasm.o"
+            if [[ ! -f "$oo" ]]; then
+                vlog emcc "${wflags[@]}" -c "$c" -o "$oo"
+                emcc "${wflags[@]}" -c "$c" -o "$oo.tmp.$$.o" || { rm -f "$wc_src"; exit 1; }
+                mv -f "$oo.tmp.$$.o" "$oo"
+            fi
+            stdlib_inputs+=( "$oo" )
+        else
+            stdlib_inputs+=( "$c" )
+        fi
+    done
+    vlog emcc "${wflags[@]}" -o "$wout" "$wc_src" "${stdlib_inputs[@]}" "${wlink[@]}"
+    emcc "${wflags[@]}" -o "$wout" "$wc_src" "${stdlib_inputs[@]}" \
+        ${extra_cc[@]+"${extra_cc[@]}"} "${wlink[@]}" || { rm -f "$wc_src"; exit 1; }
+    rm -f "$wc_src"
+    report "emcc" "$t"
+    log "built $wout"
+    if [[ "$mode" == "compile" ]]; then
+        exit 0
+    fi
+    command -v node >/dev/null 2>&1 || { echo "$prog: running a wasm build needs node on PATH" >&2; exit 1; }
+    log "── running $wout ──"
+    t=$(now_ms)
+    # V8's default stack (~1 MB) is far smaller than a native process's,
+    # which would cap recursion at a few thousand frames. Raise the OS soft
+    # limit (up to 1 GB, or the hard limit) in a subshell and tell V8 to
+    # use 90% of it, so deep recursion behaves like the native targets.
+    case "$wout" in */*|/*) ;; *) wout="./$wout" ;; esac
+    (
+        want=1000000
+        hard="$(ulimit -Hs)"
+        [[ "$hard" == unlimited ]] || { [[ "$hard" -lt "$want" ]] && want="$hard"; }
+        ulimit -s "$want" 2>/dev/null
+        cur="$(ulimit -s)"; [[ "$cur" == unlimited ]] && cur="$want"
+        exec node --stack-size=$(( cur * 9 / 10 )) "$wout"
+    )
     status=$?
     report "run" "$t"
     log "── exit $status ──"

@@ -789,3 +789,47 @@ Code built by a compiler from before the collector (it allocates with raw
 collection switched off — that keeps bootstrapping from an older `kmc`
 working (`build-self.sh` twice: the first run reports a fixpoint mismatch
 because the code generator changed, the second reaches the fixpoint).
+
+## WebAssembly
+
+`komodo -t wasm file.km` builds the program for WebAssembly (wasm32) with
+Emscripten and runs it under node. There is no separate backend: `wasm` is
+the portable C backend (`-t c`, `modules/backend/backend_c.kmm`) with a flag
+(`CBackend::forWasm`) that only changes diagnostics. The generated C is
+compiled by `emcc` together with the same `stdlib/*.c` runtime and linked
+into `<out>.js` + `<out>.wasm`; `komodo` caches the compiled runtime objects
+and runs the result with `node`. `-S` stops at the generated C (`<file>.km.asm`),
+`-c` builds without running, `-o app` names `app.js` / `app.wasm`.
+
+**64-bit words on a 32-bit target.** A Komodo value is always a 64-bit
+word, but wasm32 has 32-bit pointers and a 32-bit `long`. So the runtime ABI
+is spelled with `int64_t` (`KmArray.len/cap/data[]`, `KmArg.tag/value`, every
+`stdlib` entry point's `argc` and result) instead of `long`; on x86-64 the two
+are the same type, so the x86 target and its assembly are unchanged. A
+pointer moves into a word with `KM_WORD(p)` (`(int64_t)(uintptr_t)p`,
+zero-extended, lossless) and back with `KM_PTR`/`KM_STR`/`KM_ARR`
+(truncation); objects keep their `[type_id | field0 | …]` layout of 8-byte
+slots. Floats are IEEE-754 bit patterns in a word, exactly as natively. The
+backend calls every non-user function through `KM_CALL`, a `_Generic` on the
+callee's declared return type (double / void / pointer / integer, from
+`km_runtime.h`), because a wasm call or indirect call with the wrong
+signature traps; this also replaced the earlier asm-label aliasing.
+
+**Runtime differences.** There is no collector: under `__EMSCRIPTEN__`
+`km_alloc` is zeroed `calloc` and nothing is ever freed (native builds keep
+libgc), and there is no heap ceiling beyond the wasm memory (growth is
+enabled). `throw` / `f(args)?` work through Emscripten's setjmp/longjmp. The
+ELF symbol lookup, stack walker and crash-signal handlers are native-only: a
+trap (integer divide by zero, null access) surfaces as a node `RuntimeError`,
+and an uncaught error omits the ` in <function>` suffix. File access
+(`file::`) uses node's real file system (`NODERAWFS`). `komodo` raises the OS
+stack limit (up to 1 GB) and runs `node --stack-size` at 90 % of it, so deep
+recursion matches the native targets. The program's `args` are node's
+`process.argv` minus the interpreter (`args[0]` is the `.js` file).
+
+**Limits.** `extern fn` / C FFI (including by-value structs, callbacks and
+`link` libraries such as SDL2 and raylib) is not supported and fails at
+compile time with `wasm backend: … not supported yet`; the `ffi_*` examples
+are marked `wasm: skip`. Requires `emcc` and `node` on `PATH`; tested with
+Emscripten 3.1.6 and node 18 (the module is instantiated synchronously, as
+node 18's `fetch` rejects file paths).

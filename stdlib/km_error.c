@@ -25,14 +25,16 @@
 #include <string.h>
 #include <stdint.h>
 #include <signal.h>
-#include <ucontext.h>
 #include <unistd.h>
 #include <fcntl.h>
+#ifndef __EMSCRIPTEN__
+#include <ucontext.h>
 #include <elf.h>
 #include <dlfcn.h>
 #include <unwind.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
+#endif
 #include "km_runtime.h"
 
 /* The registered landing pads, innermost last.  Each points at a
@@ -40,13 +42,13 @@
  * holds them); the array grows with the nesting depth of `f(...)?`
  * calls, so a deep recursion through them never loses a pad. */
 static struct __jmp_buf_tag **km_pads;
-static long        km_pad_n = 0, km_pad_cap = 0;
+static int64_t        km_pad_n = 0, km_pad_cap = 0;
 static const char *km_err_msg = NULL;
 
 void km_try_push(struct __jmp_buf_tag *b)
 {
     if (km_pad_n == km_pad_cap) {
-        long cap = km_pad_cap ? km_pad_cap * 2 : 64;
+        int64_t cap = km_pad_cap ? km_pad_cap * 2 : 64;
         struct __jmp_buf_tag **p = realloc(km_pads, (size_t)cap * sizeof *p);
         if (!p) {
             fputs("Komodo: out of memory - protected calls nested too deeply\n", stderr);
@@ -86,6 +88,8 @@ void km_fail(const char *msg)
     fprintf(stderr, "%s\n", msg ? msg : "");
     exit(1);
 }
+
+#ifndef __EMSCRIPTEN__   /* ELF symbol lookup, stack walking, crash handlers: native only */
 
 /* ── symbols: naming code addresses ────────────────────────────────
  * The executable's own ELF symbol table (/proc/self/exe, mapped on first
@@ -386,20 +390,34 @@ void km_komodo_caller(char *buf, size_t cap)
     }
 }
 
+#else  /* __EMSCRIPTEN__: no ELF image or signals — traps surface as JS errors */
+
+void km_komodo_caller(char *buf, size_t cap)
+{
+    if (cap)
+        buf[0] = '\0';
+}
+
+#endif
+
 /* `arr[i]` with i outside 0 .. #arr-1 (generated code checks inline and
  * calls here).  Thrown like any Komodo error, so `f(...)?` can catch it. */
-void km_index_error(long index, KmArray *a)
+void km_index_error(int64_t index, KmArray *a)
 {
     char where[160] = "";
+#ifndef __EMSCRIPTEN__
     int komodo = 0;
     const char *s = km_exe_symbol((uintptr_t)__builtin_return_address(0) - 1, &komodo);
     if (s && komodo)
         km_pretty(s, where, sizeof where);
+#endif
     char buf[256];
-    snprintf(buf, sizeof buf, "array index %ld out of range (length %ld)%s%s",
+    snprintf(buf, sizeof buf, "array index %" PRId64 " out of range (length %" PRId64 ")%s%s",
              index, a->len, *where ? " in " : "", where);
     km_throw(km_strndup(buf, strlen(buf)));
 }
+
+#ifndef __EMSCRIPTEN__
 
 /* ── crash signals ─────────────────────────────────────────────────
  * One line saying what went wrong and where, then the Komodo call
@@ -427,7 +445,7 @@ static void km_write(const char *s)
 static void km_print_trace(const KmWalk *w)
 {
     KmIter it = { w, 0, 0, 0 };
-    long runs = 0;
+    int64_t runs = 0;
     uintptr_t prev = 0, f;
     while ((f = km_next_frame(&it)) != 0) {
         if (f != prev)
@@ -436,10 +454,10 @@ static void km_print_trace(const KmWalk *w)
     }
     km_write("Komodo call stack (innermost first):\n");
     KmIter jt = { w, 0, 0, 0 };
-    long run = 0;
+    int64_t run = 0;
     uintptr_t cur = km_next_frame(&jt);
     while (cur) {
-        long count = 1;
+        int64_t count = 1;
         uintptr_t nx;
         while ((nx = km_next_frame(&jt)) == cur)
             count++;
@@ -448,13 +466,13 @@ static void km_print_trace(const KmWalk *w)
             int komodo;
             km_describe(cur, name, sizeof name, &komodo);
             if (count > 1)
-                snprintf(line, sizeof line, "    %s   (x %ld, recursive)\n", name, count);
+                snprintf(line, sizeof line, "    %s   (x %" PRId64 ", recursive)\n", name, count);
             else
                 snprintf(line, sizeof line, "    %s\n", name);
             km_write(line);
         } else if (run == KM_TRACE_HEAD) {
             char line[96];
-            snprintf(line, sizeof line, "    ... %ld more ...\n", runs - KM_TRACE_HEAD - KM_TRACE_TAIL);
+            snprintf(line, sizeof line, "    ... %" PRId64 " more ...\n", runs - KM_TRACE_HEAD - KM_TRACE_TAIL);
             km_write(line);
         }
         run++;
@@ -551,3 +569,9 @@ void km_crash_init(void)
     for (size_t i = 0; i < sizeof sigs / sizeof sigs[0]; i++)
         sigaction(sigs[i], &sa, NULL);
 }
+
+#else
+
+void km_crash_init(void) {}
+
+#endif

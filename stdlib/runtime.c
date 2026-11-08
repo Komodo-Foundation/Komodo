@@ -27,6 +27,7 @@
  *
  * Prototypes are declared here, so only the shared library is needed,
  * not its development headers. */
+#ifndef __EMSCRIPTEN__
 extern void   GC_init(void);
 extern void  *GC_malloc(size_t);
 extern void  *GC_malloc_atomic(size_t);
@@ -40,6 +41,7 @@ extern void   GC_set_warn_proc(void (*)(char *, unsigned long));
 extern void   GC_ignore_warn_proc(char *, unsigned long);
 extern size_t GC_get_heap_size(void);
 extern void   GC_set_min_bytes_allocd(size_t);
+#endif
 
 /* The least a program allocates between two collections.  libgc
  * otherwise collects after ~2/3 of the live data's size: a program that
@@ -53,6 +55,15 @@ extern void   GC_set_min_bytes_allocd(size_t);
  * the false-reference checks that make huge blocks slow to place. */
 #define KM_BIG_BLOCK (64 * 1024)
 
+#ifdef __EMSCRIPTEN__
+static void km_out_of_memory(size_t want)
+{
+    (void)want;
+    fflush(NULL);
+    fputs("Komodo: out of memory\n", stderr);
+    _exit(3);
+}
+#else
 /* 0 = no ceiling (KOMODO_MAX_HEAP=0) */
 static size_t km_heap_limit;
 
@@ -83,7 +94,27 @@ static void *km_oom_fn(size_t want)
     km_out_of_memory(want);
     return NULL;
 }
+#endif
 
+#ifdef __EMSCRIPTEN__
+/* WebAssembly has no collector: allocation is plain (dlmalloc) memory that
+ * is never freed.  calloc zeroes it, as km_alloc promises. */
+void *km_alloc(size_t n)
+{
+    void *p = calloc(n ? n : 1, 1);
+    if (!p)
+        km_out_of_memory(n);
+    return p;
+}
+
+void *km_alloc_atomic(size_t n)
+{
+    void *p = malloc(n ? n : 1);
+    if (!p)
+        km_out_of_memory(n);
+    return p;
+}
+#else
 /* Pointer-carrying memory (objects, arrays): zeroed and scanned. */
 void *km_alloc(size_t n)
 {
@@ -101,6 +132,7 @@ void *km_alloc_atomic(size_t n)
         km_out_of_memory(n);
     return p;
 }
+#endif
 
 /* A fresh NUL-terminated copy of the first `n` bytes of `s`. */
 char *km_strndup(const char *s, size_t n)
@@ -121,6 +153,7 @@ void km_fmt_bytes(char *buf, size_t cap, size_t n)
         snprintf(buf, cap, "%.0f MB", (double)n / (1024.0 * 1024.0));
 }
 
+#ifndef __EMSCRIPTEN__
 /* Read a small text file into buf; 0 on failure. */
 static int km_read_text(const char *path, char *buf, size_t cap)
 {
@@ -200,7 +233,7 @@ static size_t km_pick_heap_limit(void)
             return (size_t)v;
         fprintf(stderr, "Komodo: ignoring KOMODO_MAX_HEAP=%s (want bytes or e.g. 2G)\n", env);
     }
-    long pages = sysconf(_SC_PHYS_PAGES), psize = sysconf(_SC_PAGE_SIZE);
+    int64_t pages = sysconf(_SC_PHYS_PAGES), psize = sysconf(_SC_PAGE_SIZE);
     size_t avail = pages > 0 && psize > 0 ? (size_t)pages * (size_t)psize : 0;
     size_t cg = km_cgroup_limit();
     if (cg && (!avail || cg < avail))
@@ -213,7 +246,7 @@ static size_t km_pick_heap_limit(void)
  * marker (the backend emits it) and runs with collection switched off —
  * the old never-free behaviour — which keeps bootstrapping from an
  * older compiler working. */
-extern const long km_abi_gc __attribute__((weak));
+extern const int64_t km_abi_gc __attribute__((weak));
 
 static void km_heap_init(void)
 {
@@ -232,6 +265,9 @@ static void km_heap_init(void)
     if (&km_abi_gc == NULL)
         GC_disable();
 }
+#else
+static void km_heap_init(void) {}
+#endif
 
 /* Render a double the Komodo way: like printf's "%g", but an integral
  * value keeps a ".0" so it still reads as a float ("4.0", not "4").
@@ -251,7 +287,7 @@ void km_fmt_double(char *buf, unsigned long cap, double d)
 }
 
 /* `needle in haystack` for strings — a substring test. */
-long km_in_str(const char *haystack, const char *needle)
+int64_t km_in_str(const char *haystack, const char *needle)
 {
     if (!haystack || !needle)
         return 0;
@@ -261,28 +297,28 @@ long km_in_str(const char *haystack, const char *needle)
 /* `v in arr` — linear membership.  `leaf` is the element's scalar tag:
  * 2 (string) compares with strcmp, anything else a raw 64-bit `==`
  * (ints, bools, chars, and float bit patterns for exact matches). */
-long km_in_array(KmArray *a, long v, long leaf)
+int64_t km_in_array(KmArray *a, int64_t v, int64_t leaf)
 {
     if (!a)
         return 0;
     if (leaf == 2) {
-        const char *needle = (const char *)v;
-        for (long i = 0; i < a->len; i++) {
-            const char *e = (const char *)a->data[i];
+        const char *needle = KM_STR(v);
+        for (int64_t i = 0; i < a->len; i++) {
+            const char *e = KM_STR(a->data[i]);
             if (e == needle || (e && needle && strcmp(e, needle) == 0))
                 return 1;
         }
         return 0;
     }
-    for (long i = 0; i < a->len; i++)
+    for (int64_t i = 0; i < a->len; i++)
         if (a->data[i] == v)
             return 1;
     return 0;
 }
 
-KmArray *km_array_new(long len)
+KmArray *km_array_new(int64_t len)
 {
-    KmArray *a = km_alloc(sizeof(KmArray) + (size_t)len * sizeof(long));
+    KmArray *a = km_alloc(sizeof(KmArray) + (size_t)len * sizeof(int64_t));
     a->len = len;
     a->cap = len;
     return a;
@@ -300,8 +336,8 @@ void km_drop_array(void *handle) { (void)handle; }
 KmArray *km_array_append(KmArray *dst, KmArray *src)
 {
     KmArray *out = km_array_new(dst->len + src->len);
-    memcpy(out->data, dst->data, (size_t)dst->len * sizeof(long));
-    memcpy(out->data + dst->len, src->data, (size_t)src->len * sizeof(long));
+    memcpy(out->data, dst->data, (size_t)dst->len * sizeof(int64_t));
+    memcpy(out->data + dst->len, src->data, (size_t)src->len * sizeof(int64_t));
     return out;
 }
 
@@ -313,17 +349,17 @@ KmArray *km_array_append(KmArray *dst, KmArray *src)
  * so another alias of it stays valid (it just stops seeing appends). */
 KmArray *km_array_grow(KmArray *dst, KmArray *src)
 {
-    long need = dst->len + src->len;
+    int64_t need = dst->len + src->len;
     if (need > dst->cap) {
-        long ncap = dst->cap ? dst->cap * 2 : 4;
+        int64_t ncap = dst->cap ? dst->cap * 2 : 4;
         if (ncap < need)
             ncap = need;
-        KmArray *grown = km_alloc(sizeof(KmArray) + (size_t)ncap * sizeof(long));
-        memcpy(grown, dst, sizeof(KmArray) + (size_t)dst->len * sizeof(long));
+        KmArray *grown = km_alloc(sizeof(KmArray) + (size_t)ncap * sizeof(int64_t));
+        memcpy(grown, dst, sizeof(KmArray) + (size_t)dst->len * sizeof(int64_t));
         dst = grown;
         dst->cap = ncap;
     }
-    memcpy(dst->data + dst->len, src->data, (size_t)src->len * sizeof(long));
+    memcpy(dst->data + dst->len, src->data, (size_t)src->len * sizeof(int64_t));
     dst->len = need;
     return dst;
 }
@@ -331,12 +367,12 @@ KmArray *km_array_grow(KmArray *dst, KmArray *src)
 /* `dst += [v]` — append one element in place, growing like km_array_grow
  * but with no one-element temporary array.  Returns the (maybe moved)
  * handle, which the caller stores back. */
-KmArray *km_array_push(KmArray *dst, long v)
+KmArray *km_array_push(KmArray *dst, int64_t v)
 {
     if (dst->len >= dst->cap) {
-        long ncap = dst->cap ? dst->cap * 2 : 4;
-        KmArray *grown = km_alloc(sizeof(KmArray) + (size_t)ncap * sizeof(long));
-        memcpy(grown, dst, sizeof(KmArray) + (size_t)dst->len * sizeof(long));
+        int64_t ncap = dst->cap ? dst->cap * 2 : 4;
+        KmArray *grown = km_alloc(sizeof(KmArray) + (size_t)ncap * sizeof(int64_t));
+        memcpy(grown, dst, sizeof(KmArray) + (size_t)dst->len * sizeof(int64_t));
         dst = grown;
         dst->cap = ncap;
     }
@@ -355,16 +391,16 @@ const char *km_str_join(KmArray *parts, const char *sep)
         sep = "";
     size_t slen = strlen(sep);
     size_t total = 0;
-    for (long i = 0; i < parts->len; i++) {
-        const char *p = (const char *)parts->data[i];
+    for (int64_t i = 0; i < parts->len; i++) {
+        const char *p = KM_STR(parts->data[i]);
         total += p ? strlen(p) : 0;
         if (i + 1 < parts->len)
             total += slen;
     }
     char *out = km_alloc_atomic(total + 1);
     char *w = out;
-    for (long i = 0; i < parts->len; i++) {
-        const char *p = (const char *)parts->data[i];
+    for (int64_t i = 0; i < parts->len; i++) {
+        const char *p = KM_STR(parts->data[i]);
         if (p) {
             size_t l = strlen(p);
             memcpy(w, p, l);
@@ -381,43 +417,43 @@ const char *km_str_join(KmArray *parts, const char *sep)
 
 /* `arr[start to end]` — a fresh array holding the half-open range.
  * `end < 0` (or past the end) means "to the length"; bounds are clamped. */
-KmArray *km_array_slice(KmArray *a, long start, long end)
+KmArray *km_array_slice(KmArray *a, int64_t start, int64_t end)
 {
-    long n = a->len;
+    int64_t n = a->len;
     if (end < 0 || end > n)
         end = n;
     if (start < 0)
         start = 0;
     if (start > end)
         start = end;
-    long len = end - start;
+    int64_t len = end - start;
     KmArray *out = km_array_new(len);
-    memcpy(out->data, a->data + start, (size_t)len * sizeof(long));
+    memcpy(out->data, a->data + start, (size_t)len * sizeof(int64_t));
     return out;
 }
 
 /* `a * n` — a fresh array holding `a`'s elements repeated `n` times
  * (n <= 0 yields an empty array). */
-KmArray *km_array_repeat(KmArray *a, long n)
+KmArray *km_array_repeat(KmArray *a, int64_t n)
 {
     if (n < 0)
         n = 0;
     KmArray *out = km_array_new(a->len * n);
-    for (long i = 0; i < n; i++)
-        memcpy(out->data + i * a->len, a->data, (size_t)a->len * sizeof(long));
+    for (int64_t i = 0; i < n; i++)
+        memcpy(out->data + i * a->len, a->data, (size_t)a->len * sizeof(int64_t));
     return out;
 }
 
 /* ── string operators ── */
 
 /* `s[start to end]` — a fresh NUL-terminated substring, same clamping. */
-const char *km_str_slice(const char *s, long start, long end)
+const char *km_str_slice(const char *s, int64_t start, int64_t end)
 {
     if (!s) s = "";
-    /* Only measure as far as `end`: a short slice of a long string (a
+    /* Only measure as far as `end`: a short slice of a int64_t string (a
      * lexer cutting tokens out of its source) must not cost a full
      * strlen each time. */
-    long n = end < 0 ? (long)strlen(s) : (long)strnlen(s, (size_t)end);
+    int64_t n = end < 0 ? (int64_t)strlen(s) : (int64_t)strnlen(s, (size_t)end);
     if (end < 0 || end > n)
         end = n;
     if (start < 0)
@@ -440,27 +476,27 @@ const char *km_str_concat(const char *a, const char *b)
 }
 
 /* `s * n` */
-const char *km_str_repeat(const char *s, long n)
+const char *km_str_repeat(const char *s, int64_t n)
 {
     if (n < 0)
         n = 0;
     size_t len = strlen(s);
     char *out = km_alloc_atomic(len * (size_t)n + 1);
     char *p = out;
-    for (long i = 0; i < n; i++, p += len)
+    for (int64_t i = 0; i < n; i++, p += len)
         memcpy(p, s, len);
     *p = '\0';
     return out;
 }
 
 /* `#s` */
-long km_str_len(const char *s)
+int64_t km_str_len(const char *s)
 {
-    return s ? (long)strlen(s) : 0;
+    return s ? (int64_t)strlen(s) : 0;
 }
 
 /* `a == b` */
-long km_str_eq(const char *a, const char *b)
+int64_t km_str_eq(const char *a, const char *b)
 {
     if (a == b) return 1;           /* same pointer (interned literal / char) */
     if (!a || !b) return 0;
@@ -472,7 +508,7 @@ long km_str_eq(const char *a, const char *b)
  * how `leaf`/`depth` were packed into the caller's tag.  `depth > 1`
  * means each element is itself a KmArray*, printed the same way one
  * level shallower; at `depth == 1` elements are read as `leaf`. */
-const char *km_array_to_string(KmArray *a, long leaf, long depth)
+const char *km_array_to_string(KmArray *a, int64_t leaf, int64_t depth)
 {
     if (!a)
         return "[]";
@@ -480,19 +516,19 @@ const char *km_array_to_string(KmArray *a, long leaf, long depth)
     char *buf = NULL;
     FILE *m = open_memstream(&buf, &size);
     fputc('[', m);
-    for (long i = 0; i < a->len; i++) {
+    for (int64_t i = 0; i < a->len; i++) {
         if (i)
             fputs(", ", m);
-        long v = a->data[i];
+        int64_t v = a->data[i];
         if (depth > 1) {
-            fputs(km_array_to_string((KmArray *)v, leaf, depth - 1), m);
+            fputs(km_array_to_string(KM_ARR(v), leaf, depth - 1), m);
         } else if (leaf == KM_TAG_FLOAT) {
             char fb[64];
             km_fmt_double(fb, sizeof fb, km_as_float(v));
             fputs(fb, m);
         } else if (leaf == KM_TAG_STR) {
             fputc('"', m);
-            const char *s = v ? (const char *)v : "";
+            const char *s = v ? KM_STR(v) : "";
             for (const char *p = s; *p; p++) {
                 if (*p == '"' || *p == '\\')
                     fputc('\\', m);
@@ -502,7 +538,7 @@ const char *km_array_to_string(KmArray *a, long leaf, long depth)
         } else if (leaf == KM_TAG_BOOL) {
             fputs(v ? "true" : "false", m);
         } else if (leaf == KM_TAG_INT) {
-            fprintf(m, "%ld", v);
+            fprintf(m, "%" PRId64 "", v);
         } else {
             fputs("<?>", m);
         }
@@ -518,10 +554,10 @@ const char *km_array_to_string(KmArray *a, long leaf, long depth)
 /* `string(x)` — tag is a compile-time constant (0 int / 1 float-bits /
  * 2 string / 3 bool / packed array, see km_runtime.h); value is the raw
  * payload word (an array's KmArray* for the array case). */
-const char *km_to_string(long tag, long value)
+const char *km_to_string(int64_t tag, int64_t value)
 {
     if ((tag & 0xFF) == KM_TAG_ARRAY)
-        return km_array_to_string((KmArray *)value, (tag >> 8) & 0xFF, (tag >> 16) & 0xFF);
+        return km_array_to_string(KM_ARR(value), (tag >> 8) & 0xFF, (tag >> 16) & 0xFF);
     char buf[64];
     switch (tag) {
     case 1: {
@@ -531,11 +567,11 @@ const char *km_to_string(long tag, long value)
         break;
     }
     case 2:
-        return (const char *)value;
+        return KM_STR(value);
     case 3:
         return value ? "true" : "false";
     default:
-        snprintf(buf, sizeof buf, "%ld", value);
+        snprintf(buf, sizeof buf, "%" PRId64 "", value);
         break;
     }
     return km_strndup(buf, strlen(buf));
@@ -546,16 +582,40 @@ const char *km_to_string(long tag, long value)
  * expects its (optional) `args` parameter as a Komodo string array
  * passed through the uniform call ABI.  This shim marshals the C argv
  * into that array and invokes it. */
-long km_program_main(long argc, KmArg *items);
+int64_t km_program_main(int64_t argc, KmArg *items);
 
+#ifdef __EMSCRIPTEN__
+/* emcc 3.1.6 + clang 15 only recognises a prototype-less `main` (a main
+ * taking argc / argv is mangled to __main_argc_argv and then never run),
+ * so the node command line is fetched from JS: argv[0] is the script. */
+#include <emscripten.h>
+EM_JS(int, km_js_argc, (void), { return process.argv.length - 1; });
+EM_JS(char *, km_js_argv, (int i), {
+    var s = process.argv[i + 1];
+    var n = lengthBytesUTF8(s) + 1;
+    var p = _malloc(n);
+    stringToUTF8(s, p, n);
+    return p;
+});
+
+int main()
+{
+    int argc = km_js_argc();
+    char **argv = malloc((size_t)(argc + 1) * sizeof *argv);
+    for (int i = 0; i < argc; i++)
+        argv[i] = km_js_argv(i);
+    argv[argc] = NULL;
+#else
 int main(int argc, char **argv)
 {
+#endif
     km_heap_init();
     km_crash_init();
 
     /* Resolve argv[0] to the executable's real path so a program can
      * locate files that ship next to it (e.g. the compiler's stdlib/)
      * regardless of how it was invoked ("./kmc", bare "kmc" via PATH…). */
+#ifndef __EMSCRIPTEN__
     static char exe[4096];
     ssize_t n = readlink("/proc/self/exe", exe, sizeof(exe) - 1);
     if (n > 0) {
@@ -563,11 +623,12 @@ int main(int argc, char **argv)
         if (argc > 0)
             argv[0] = exe;
     }
+#endif
 
     KmArray *a = km_array_new(argc);
     for (int i = 0; i < argc; i++)
-        a->data[i] = (long)argv[i];
-    KmArg arg = { KM_TAG_INT, (long)a };
+        a->data[i] = KM_WORD(argv[i]);
+    KmArg arg = { KM_TAG_INT, KM_WORD(a) };
     km_program_main(1, &arg);
     return 0;
 }
@@ -579,7 +640,7 @@ int main(int argc, char **argv)
 static char km_char_strs[256][2];
 static int km_char_strs_ready;
 
-const char *km_str_char(const char *s, long i)
+const char *km_str_char(const char *s, int64_t i)
 {
     if (!s) return "";
     if (!km_char_strs_ready) {
@@ -591,7 +652,7 @@ const char *km_str_char(const char *s, long i)
 }
 
 /* `s1 <op> s2` ordering — like C strcmp. */
-long km_str_cmp(const char *a, const char *b)
+int64_t km_str_cmp(const char *a, const char *b)
 {
     if (!a) a = "";
     if (!b) b = "";
@@ -600,28 +661,28 @@ long km_str_cmp(const char *a, const char *b)
 
 /* FNV-1a over the bytes of `s`, masked non-negative — the hash behind
  * the compiler's name indexes (modules/support/strindex.kmm). */
-long km_str_hash(const char *s)
+int64_t km_str_hash(const char *s)
 {
-    unsigned long h = 1469598103934665603UL;
+    uint64_t h = 1469598103934665603ULL;
     if (s)
         for (; *s; s++)
-            h = (h ^ (unsigned char)*s) * 1099511628211UL;
-    return (long)(h & 0x7fffffffffffffffUL);
+            h = (h ^ (unsigned char)*s) * 1099511628211ULL;
+    return (int64_t)(h & 0x7fffffffffffffffULL);
 }
 
 /* Index of the first occurrence of `sub` in `s`, or -1 — the compiler's
  * x86 peephole pass searches its emitted assembly lines with it. */
-long km_str_find(const char *s, const char *sub)
+int64_t km_str_find(const char *s, const char *sub)
 {
     const char *p = strstr(s, sub);
-    return p ? (long)(p - s) : -1;
+    return p ? (int64_t)(p - s) : -1;
 }
 
 /* `s[start to end]` for a caller that already knows `n == #s` — the same
  * clamping as km_str_slice, without re-measuring `s`.  The lexer cuts
  * every token out of a source of hundreds of KB; measuring up to `end`
  * each time made that quadratic. */
-const char *km_str_sub(const char *s, long n, long start, long end)
+const char *km_str_sub(const char *s, int64_t n, int64_t start, int64_t end)
 {
     if (!s) { s = ""; n = 0; }
     if (end < 0 || end > n)

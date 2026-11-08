@@ -74,6 +74,8 @@ it as a symlink on your `PATH` still finds this checkout's `kmc` / `stdlib/`.
 ## Requirements
 
 - `nasm` and `gcc` (for the x86 target — always needed)
+- `emcc` (Emscripten, tested with 3.1.6) and `node` — only for the `wasm`
+  target; the wasm leg of `run-tests.sh` is skipped when they are missing
 - the Boehm garbage collector runtime, `libgc.so.1` (Debian / Ubuntu package
   `libgc1`) — every program links it; see *Memory* in `design.md`
 - Python 3 and the Komodo interpreter (`KomodoPy/main.py`) — only needed
@@ -87,6 +89,21 @@ well-known locations they check:
 
 ```bash
 export KOMODO_MAIN="/path/to/KomodoPy/main.py"
+```
+
+## WebAssembly
+
+`komodo -t wasm file.km` compiles a program to WebAssembly and runs it with
+node (`-c` builds without running, `-S` stops at the generated C, `-o app`
+writes `app.js` + `app.wasm`). The wasm target reuses the portable C output
+(`-t c`) and builds it with `emcc` against the same `stdlib/*.c`; see
+*WebAssembly* in `design.md` for how it works and its limits. Most examples
+run unchanged (30 of 32); programs using the C FFI (`extern fn`, callbacks,
+SDL / raylib) are rejected with `wasm backend: … not supported yet`.
+
+```bash
+./komodo -t wasm examples/oop_demo.km
+./komodo -t wasm -c -o build/app examples/oop_demo.km && node build/app.js
 ```
 
 ## Building a program
@@ -128,7 +145,9 @@ always take effect.
 Each example is compiled + run on the x86 target and its output diffed against
 `examples/<name>.expected`, then also compiled with the `stackvm` target to keep
 the target-independent path honest (an example that needs the native C ABI
-opts out of the stackvm pass with a `stackvm: skip` comment). Both scripts
+opts out of the stackvm pass with a `stackvm: skip` comment). It is also
+built and run through the `c` target and, when `emcc` and `node` are
+installed, through the `wasm` target (opt out with `c: skip` / `wasm: skip`). Both scripts
 drive the native compiler: `run-tests.sh` goes through `./komodo -q`,
 `run-sema-tests.sh` calls `./kmc` directly. Build `./kmc` first with
 `./build-self.sh`.
