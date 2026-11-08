@@ -1,0 +1,18 @@
+// Calling C++ from Komodo: a std::string / std::vector based class driven
+// through extern "C" wrappers (cxx_counter.cpp), a mangled C++ function,
+// and a C function named like a Komodo keyword — the last two via
+// `extern fn … = "symbol"` aliases (see cxxshim.kmm).
+// (stackvm: skip — needs the native C ABI.)
+// (c: skip — C++ sources are linked by the x86 path only.)
+
+import console
+import cxxshim
+
+void main()
+    let c = cxxshim::counter_new(10)
+    cxxshim::counter_add(c, 5)
+    cxxshim::counter_add(c, 7)
+    console.print(cxxshim::counter_label(c))
+    console.print("triple(14) = " + string(cxxshim::triple(14)))
+    console.print("match(3) = " + string(cxxshim::c_match(3)))
+    cxxshim::counter_free(c)
