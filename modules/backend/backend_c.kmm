@@ -1,0 +1,632 @@
+module km_compiler
+
+// ═══════════════════════════════════════════════════════════════════════
+//  CBackend — a portable C target.
+//
+//  Emits one C translation unit: every Komodo function becomes a C
+//  function `long kf_<name>(long argc, KmArg *items)` (the uniform Komodo
+//  call ABI from stdlib/km_runtime.h), and `main` becomes
+//  `km_program_main`, which stdlib/runtime.c's C `main` calls.  Build with
+//  gcc against stdlib/*.c (the `komodo -t c` driver does this).
+//
+//  Machine model.  Every value is a 64-bit word (`int64_t`): an int as
+//  itself, a float as its IEEE-754 bit pattern, a string / array / object
+//  as its pointer.  The accumulator is the C local `acc`.  The operand
+//  stack the codegen assumes (`pushAcc` … `binaryInt`) is kept at
+//  COMPILE time: `pushAcc` declares a fresh C temporary holding the
+//  accumulator and remembers its name; the matching consumer names that
+//  temporary.  Because Codegen nests its pushes and pops strictly, the
+//  temporaries never outlive the code that reads them.  Call argument
+//  buffers are `KmArg` arrays declared at `callFrameBegin`.  Local slots
+//  live in `lv[]`, indexed by frame offset / 8 - 1.
+//
+//  Float values are bit patterns end to end, so the codegen's
+//  `floatToBits` / `bitsToFloat` are no-ops here.  Stdlib prototypes that
+//  return a C `double` are dispatched through `KM_CALL` (a `_Generic`
+//  selection in the prelude), which converts the result to bits.
+//
+//  Not supported yet (fails with "c backend: … not supported yet"):
+//  `extern fn` / C FFI (including by-value structs), passing a Komodo
+//  function to C as a callback, and in-place `dst += [v]` (the codegen
+//  falls back to the generic append, which is correct).
+// ═══════════════════════════════════════════════════════════════════════
+
+class CBackend : Backend
+private
+    m_lines: [string] = []      // function bodies, in emission order
+    m_globals: [string] = []    // `static` declarations of top-level variables
+    m_defs: [string] = []       // C names of Komodo functions (prototypes)
+    m_vtLines: [string] = []    // one `km_vt_<id>` table per class with slots
+    m_vtIds: [int] = []         // the type ids those tables belong to
+    m_nTypes: int = 0           // size of the type-id space (beginVtables)
+    m_tmps: [string] = []       // compile-time operand stack → C temporaries
+    m_frames: [string] = []     // compile-time stack of KmArg call frames
+    m_counter: int = 0          // unique suffix for temporaries and frames
+    m_forInVi: int = 0          // frame offsets of the current for-in loop
+    m_forInVa: int = 0
+    m_dispEnd: string = ""      // overload dispatch: shared exit label
+    m_dispNext: string = ""     // overload dispatch: current case's skip label
+    m_tryCatch: [string] = []   // protected-call catch labels (nesting stack)
+    m_tryDone: [string] = []    // protected-call done labels (nesting stack)
+    m_externs: [string] = []    // runtime / stdlib callees reached by asm alias
+
+// ── text helpers ───────────────────────────────────────────────────
+
+void CBackend::line(text: string)
+    m_lines += [text]
+
+void CBackend::stmt(text: string)
+    m_lines += ["    " + text]
+
+// A label name from Backend.newLabel (".L12") as a C identifier ("L12").
+fn CBackend::cl(name: string): string
+    return "L" + name[2 to name.length]
+
+// A C identifier for a Komodo name: anything outside [A-Za-z0-9_] → "_".
+fn CBackend::cname(s: string): string
+    let out = ""
+    let i = 0
+    while i < s.length do
+        let c = s[i]
+        if c in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_" then
+            out = out + c
+        else
+            out = out + "_"
+        i += 1
+    return out
+
+// `{1, 2, 3}` — the element list of a type-id compound literal.
+fn CBackend::idList(ids: [int]): string
+    let lst = ""
+    for id in ids do
+        if lst == "" then
+            lst = string(id)
+        else
+            lst = lst + ", " + string(id)
+    return lst
+
+// ── compile-time operand stack and temporaries ─────────────────────
+
+mut CBackend::newTmp(): string
+    m_counter += 1
+    return "t" + string(m_counter)
+
+void CBackend::pushTmp(t: string)
+    m_tmps += [t]
+
+mut CBackend::popTmp(): string
+    let n = #m_tmps
+    let t = m_tmps[n - 1]
+    m_tmps = m_tmps[0 to (n - 1)]
+    return t
+
+mut CBackend::topTmp(): string
+    return m_tmps[#m_tmps - 1]
+
+mut CBackend::newFrame(): string
+    m_counter += 1
+    return "f" + string(m_counter)
+
+void CBackend::pushFrame(f: string)
+    m_frames += [f]
+
+mut CBackend::topFrame(): string
+    return m_frames[#m_frames - 1]
+
+mut CBackend::popFrame(): string
+    let n = #m_frames
+    let f = m_frames[n - 1]
+    m_frames = m_frames[0 to (n - 1)]
+    return f
+
+// The C expression for a call of `name` with `n` arguments in frame `f`.
+// A function defined in this program is called directly.  A stdlib /
+// runtime function that returns a C `double` (the math_* helpers and the
+// algorithm sum/max/min of floats) is called through KM_CALL, which
+// converts the result to bits.  Any other runtime function is reached
+// through an asm-label alias declared in finish(): every such function
+// takes the uniform (long, KmArg*) arguments and yields its result in rax,
+// so declaring it `long`-returning is correct whatever its C prototype.
+mut CBackend::callExpr(name: string, n: int, f: string): string
+    let m = mangle(name)
+    if isLocalFn(m) then
+        return "kf_" + cname(m) + "(" + string(n) + ", " + f + ")"
+    if isDoubleFn(m) then
+        return "KM_CALL(" + cname(m) + ", " + string(n) + ", " + f + ")"
+    if not (m in m_externs) then
+        m_externs += [m]
+    return "km_c_wl((void *)&km_x_" + cname(m) + ", " + string(n) + ", " + f + ")"
+
+// Runtime functions whose C return type is double (see stdlib/km_runtime.h).
+fn CBackend::isDoubleFn(m: string): bool
+    if #m > 5 and m[0 to 5] == "math_" then
+        return true
+    return m == "km_algo_sumf" or m == "km_algo_maxf" or m == "km_algo_minf"
+
+// ── lifecycle ──────────────────────────────────────────────────────
+
+void CBackend::begin()
+    m_lines = []
+
+mut CBackend::finish(): string
+    let head = preludeLines()
+    for e in m_externs do
+        head += ["extern char km_x_" + cname(e) + " __asm__(\"" + e + "\");"]
+    for g in m_globals do
+        head += [g]
+    for p in m_defs do
+        head += ["static long " + p + "(long argc, KmArg *items);"]
+    for v in m_vtLines do
+        head += [v]
+    let tab = "static KmFn *km_vtab[" + string(m_nTypes + 1) + "] = {"
+    for id in m_vtIds do
+        tab = tab + " [" + string(id) + "] = km_vt_" + string(id) + ","
+    if #m_vtIds == 0 then
+        tab = tab + " 0"
+    head += [tab + " };"]
+    return join(head, "\n") + "\n" + join(m_lines, "\n") + "\n"
+
+// The fixed part of every generated file: includes, the value helpers
+// and the call shim that lets one `KM_CALL` reach any stdlib function.
+fn CBackend::preludeLines(): [string]
+    let p: [string] = []
+    p += ["/* generated by the Komodo compiler: portable C target */"]
+    p += ["#include <stdint.h>", "#include <stdlib.h>", "#include <math.h>", "#include <setjmp.h>", "#include \"km_runtime.h\""]
+    p += ["#define AP(x) ((KmArray *)(intptr_t)(x))"]
+    p += ["#define SP(x) ((const char *)(intptr_t)(x))"]
+    p += ["#define IP(x) ((int64_t)(intptr_t)(x))"]
+    p += ["#define KF(x) km_as_float((long)(x))"]
+    p += ["typedef long (*KmFn)(long, KmArg *);"]
+    p += ["static inline int64_t km_c_idx(int64_t h, int64_t i) { KmArray *a = AP(h); if (i < 0 || i >= a->len) km_index_error(i, a); return a->data[i]; }"]
+    p += ["static inline void km_c_setidx(int64_t h, int64_t i, int64_t v) { KmArray *a = AP(h); if (i < 0 || i >= a->len) km_index_error(i, a); a->data[i] = v; }"]
+    p += ["static inline int64_t km_c_is(int64_t h, int n, const int64_t *ids) { if (!h) return 0; int64_t t = ((int64_t *)(intptr_t)h)[0]; for (int i = 0; i < n; i++) if (t == ids[i]) return 1; return 0; }"]
+    p += ["static inline long km_c_wd(void *f, long n, KmArg *a) { return km_from_float(((double (*)(long, KmArg *))f)(n, a)); }"]
+    p += ["static inline long km_c_wv(void *f, long n, KmArg *a) { ((void (*)(long, KmArg *))f)(n, a); return 0; }"]
+    p += ["static inline long km_c_wl(void *f, long n, KmArg *a) { return ((long (*)(long, KmArg *))f)(n, a); }"]
+    p += ["#define KM_CALL(f, n, a) _Generic((f), double (*)(long, KmArg *): km_c_wd, void (*)(long, KmArg *): km_c_wv, default: km_c_wl)((void *)(f), (n), (a))"]
+    return p
+
+mut CBackend::beginFunction(name: string, frame: int, paramOffsets: [int], isMain: bool)
+    let n = frame / 8 + 1
+    if isMain then
+        line("long km_program_main(long argc, KmArg *items) {")
+    else
+        let sym = "kf_" + cname(name)
+        m_defs += [sym]
+        line("static long " + sym + "(long argc, KmArg *items) {")
+    line("    int64_t acc = 0;")
+    line("    int64_t lv[" + string(n) + "] = {0};")
+    let i = 0
+    while i < #paramOffsets do
+        line("    lv[" + string(paramOffsets[i] / 8 - 1) + "] = items[" + string(i) + "].value;")
+        i += 1
+
+void CBackend::endFunction()
+    line("    acc = 0;")
+    line("    return acc;")
+    line("}")
+    line("")
+
+void CBackend::epilogue()
+    line("    return acc;")
+
+// ── constants ──────────────────────────────────────────────────────
+
+void CBackend::loadIntLit(text: string)
+    stmt("acc = (int64_t)(" + text + ");")
+
+void CBackend::loadBoolLit(value: bool)
+    if value then
+        stmt("acc = 1;")
+    else
+        stmt("acc = 0;")
+
+void CBackend::loadFloatLit(literal: string)
+    stmt("acc = IP(km_from_float(" + literal + "));")
+
+// The literal keeps its surrounding quotes and Komodo escapes, which are
+// valid C string syntax.
+void CBackend::loadStrLit(literal: string)
+    stmt("acc = IP(" + literal + ");")
+
+// ── locals and globals ─────────────────────────────────────────────
+
+void CBackend::loadLocal(off: int, ty: string)
+    stmt("acc = lv[" + string(off / 8 - 1) + "];")
+
+void CBackend::storeLocal(off: int, ty: string)
+    stmt("lv[" + string(off / 8 - 1) + "] = acc;")
+
+void CBackend::declareGlobal(name: string, ty: string)
+    m_globals += ["static int64_t G_" + cname(name) + " = 0;"]
+
+void CBackend::loadGlobal(name: string, ty: string)
+    stmt("acc = G_" + cname(name) + ";")
+
+void CBackend::storeGlobal(name: string, ty: string)
+    stmt("G_" + cname(name) + " = acc;")
+
+// ── operand stack ──────────────────────────────────────────────────
+
+mut CBackend::pushAcc()
+    let t = newTmp()
+    stmt("int64_t " + t + " = acc;")
+    pushTmp(t)
+
+mut CBackend::pushAccFloat()
+    pushAcc()
+
+// ── integer / bool ─────────────────────────────────────────────────
+
+mut CBackend::binaryInt(op_: string)
+    let a = popTmp()
+    let o = op_
+    if op_ == "xor" then
+        o = "^"
+    stmt("acc = " + a + " " + o + " acc;")
+
+mut CBackend::compareInt(op_: string)
+    let a = popTmp()
+    stmt("acc = (" + a + " " + op_ + " acc);")
+
+void CBackend::negInt()
+    stmt("acc = -acc;")
+
+void CBackend::notBool()
+    stmt("acc = !acc;")
+
+// ── float (bit patterns; see the header) ───────────────────────────
+
+mut CBackend::binaryFloat(op_: string)
+    let a = popTmp()
+    if op_ == "%" then
+        stmt("acc = IP(km_from_float(fmod(KF(" + a + "), KF(acc))));")
+    else
+        stmt("acc = IP(km_from_float(KF(" + a + ") " + op_ + " KF(acc)));")
+
+mut CBackend::compareFloat(op_: string)
+    let a = popTmp()
+    stmt("acc = (KF(" + a + ") " + op_ + " KF(acc));")
+
+void CBackend::negFloat()
+    stmt("acc = IP(km_from_float(-KF(acc)));")
+
+void CBackend::cvtIntToFloat()
+    stmt("acc = IP(km_from_float((double)acc));")
+
+void CBackend::cvtFloatToInt()
+    stmt("acc = (int64_t)KF(acc);")
+
+void CBackend::floatToBits()
+    return
+
+void CBackend::bitsToFloat()
+    return
+
+// ── strings ────────────────────────────────────────────────────────
+
+mut CBackend::strBinOp(helper: string)
+    let a = popTmp()
+    if helper == "km_str_concat" then
+        stmt("acc = IP(km_str_concat(SP(" + a + "), SP(acc)));")
+    else if helper == "km_str_repeat" then
+        stmt("acc = IP(km_str_repeat(SP(" + a + "), acc));")
+    else if helper == "km_str_join" then
+        stmt("acc = IP(km_str_join(AP(" + a + "), SP(acc)));")
+    else
+        throw ("c backend: string helper '" + helper + "' not supported yet")
+
+mut CBackend::strEquals(negate: bool)
+    let a = popTmp()
+    if negate then
+        stmt("acc = !km_str_eq(SP(" + a + "), SP(acc));")
+    else
+        stmt("acc = km_str_eq(SP(" + a + "), SP(acc)) != 0;")
+
+mut CBackend::strIndexAcc()
+    let s = popTmp()
+    stmt("acc = IP(km_str_char(SP(" + s + "), acc));")
+
+mut CBackend::strCompare(op_: string)
+    let a = popTmp()
+    stmt("acc = (km_str_cmp(SP(" + a + "), SP(acc)) " + op_ + " 0);")
+
+void CBackend::strLen()
+    stmt("acc = km_str_len(SP(acc));")
+
+mut CBackend::strIn()
+    let h = popTmp()
+    stmt("acc = km_in_str(SP(" + h + "), SP(acc));")
+
+// ── arrays: [ len | cap | elem0 | … ] handles ──────────────────────
+
+void CBackend::indexAcc()
+    let a = popTmp()
+    stmt("acc = km_c_idx(" + a + ", acc);")
+
+mut CBackend::indexAssign()
+    let i = popTmp()
+    let a = popTmp()
+    stmt("km_c_setidx(" + a + ", " + i + ", acc);")
+
+void CBackend::arrayLenField()
+    stmt("acc = AP(acc)->len;")
+
+void CBackend::arrayDataPtr()
+    stmt("acc = IP(AP(acc)->data);")
+
+mut CBackend::arrayBegin(n: int)
+    let t = newTmp()
+    stmt("int64_t " + t + " = IP(km_alloc(" + string(16 + 8 * n) + "));")
+    stmt("AP(" + t + ")->len = " + string(n) + ";")
+    stmt("AP(" + t + ")->cap = " + string(n) + ";")
+    pushTmp(t)
+
+mut CBackend::arrayStoreElem(i: int)
+    stmt("AP(" + topTmp() + ")->data[" + string(i) + "] = acc;")
+
+mut CBackend::arrayEnd()
+    let t = popTmp()
+    stmt("acc = " + t + ";")
+
+// `dst += src` — dst is local `off`; the runtime grows it (and may move it).
+void CBackend::arrayAppendTo(off: int)
+    let k = string(off / 8 - 1)
+    stmt("lv[" + k + "] = IP(km_array_grow(AP(lv[" + k + "]), AP(acc)));")
+
+// `self.field += src` — receiver spilled by pushAcc().
+mut CBackend::arrayAppendToField(idx: int)
+    let o = popTmp()
+    let slot = "((int64_t *)(intptr_t)" + o + ")[" + string(idx + 1) + "]"
+    stmt(slot + " = IP(km_array_grow(AP(" + slot + "), AP(acc)));")
+
+// `a + b` for arrays — left operand spilled by pushAcc().
+mut CBackend::arrayAppendAcc()
+    let a = popTmp()
+    stmt("acc = IP(km_array_append(AP(" + a + "), AP(acc)));")
+
+// `g += elem` for an array global — the element is spilled by pushAcc().
+mut CBackend::arrayGrowAcc()
+    let v = popTmp()
+    stmt("acc = IP(km_array_grow(AP(acc), AP(" + v + ")));")
+
+mut CBackend::arrayRepeat()
+    let a = popTmp()
+    stmt("acc = IP(km_array_repeat(AP(" + a + "), acc));")
+
+mut CBackend::arrayIn(leaf: int)
+    let a = popTmp()
+    stmt("acc = km_in_array(AP(" + a + "), acc, " + string(leaf) + ");")
+
+mut CBackend::sliceStr()
+    let s = popTmp()
+    let o = popTmp()
+    stmt("acc = IP(km_str_slice(SP(" + o + "), " + s + ", acc));")
+
+mut CBackend::sliceArray()
+    let s = popTmp()
+    let o = popTmp()
+    stmt("acc = IP(km_array_slice(AP(" + o + "), " + s + ", acc));")
+
+void CBackend::subFromLocal(off: int)
+    stmt("lv[" + string(off / 8 - 1) + "] -= acc;")
+
+void CBackend::toStringOf(tag: int)
+    stmt("acc = IP(km_to_string(" + string(tag) + ", acc));")
+
+// ── objects (structs + classes): [ type_id | field0 | field1 | … ] ───
+
+mut CBackend::objNew(typeId: int, nFields: int)
+    let t = newTmp()
+    stmt("int64_t " + t + " = IP(km_alloc(" + string(8 * (nFields + 1)) + "));")
+    stmt("((int64_t *)(intptr_t)" + t + ")[0] = " + string(typeId) + ";")
+    pushTmp(t)
+
+// value in acc, handle is the top of the operand stack (left there)
+mut CBackend::objSetField(idx: int)
+    stmt("((int64_t *)(intptr_t)" + topTmp() + ")[" + string(idx + 1) + "] = acc;")
+
+void CBackend::objTypeId()
+    stmt("acc = ((int64_t *)(intptr_t)acc)[0];")
+
+mut CBackend::isTypeCheck(ids: [int])
+    stmt("acc = km_c_is(acc, " + string(#ids) + ", (const int64_t[]){" + idList(ids) + "});")
+
+// constructor frame: argument 0 ← the handle on top of the operand stack
+mut CBackend::objInitArg0(total: int)
+    let f = topFrame()
+    stmt(f + "[0].tag = 0;")
+    stmt(f + "[0].value = " + topTmp() + ";")
+
+mut CBackend::objFinishNew()
+    let t = popTmp()
+    stmt("acc = " + t + ";")
+
+void CBackend::loadField(idx: int)
+    stmt("acc = ((int64_t *)(intptr_t)acc)[" + string(idx + 1) + "];")
+
+mut CBackend::storeField(idx: int)
+    let o = popTmp()
+    stmt("((int64_t *)(intptr_t)" + o + ")[" + string(idx + 1) + "] = acc;")
+
+// ── control flow ───────────────────────────────────────────────────
+
+void CBackend::label(name: string)
+    line(cl(name) + ": ;")
+
+void CBackend::jump(name: string)
+    stmt("goto " + cl(name) + ";")
+
+void CBackend::branchIfZero(name: string)
+    stmt("if (!acc) goto " + cl(name) + ";")
+
+void CBackend::branchIfNonzero(name: string)
+    stmt("if (acc) goto " + cl(name) + ";")
+
+// The short-circuit forms keep the tested value in acc, which C does anyway.
+void CBackend::branchIfZeroKeep(name: string)
+    stmt("if (!acc) goto " + cl(name) + ";")
+
+void CBackend::branchIfNonzeroKeep(name: string)
+    stmt("if (acc) goto " + cl(name) + ";")
+
+// `for i = a to b`: the loop variable was pushed, the bound is in acc.
+// Exit once the variable is past the bound.
+mut CBackend::forCompareExit(endL: string, descending: bool, inclusive: bool)
+    let v = popTmp()
+    let o = ">="
+    if descending then
+        if inclusive then
+            o = "<"
+        else
+            o = "<="
+    else
+        if inclusive then
+            o = ">"
+        else
+            o = ">="
+    stmt("if (" + v + " " + o + " acc) goto " + cl(endL) + ";")
+
+void CBackend::stepLocal(off: int, desc: bool)
+    let s = "++"
+    if desc then
+        s = "--"
+    stmt("lv[" + string(off / 8 - 1) + "]" + s + ";")
+
+void CBackend::forInInit(viOff: int, vaOff: int)
+    stmt("lv[" + string(vaOff / 8 - 1) + "] = acc;")
+    stmt("lv[" + string(viOff / 8 - 1) + "] = 0;")
+
+void CBackend::forInHead(viOff: int, vaOff: int, endL: string)
+    m_forInVi = viOff
+    m_forInVa = vaOff
+    let vi = string(viOff / 8 - 1)
+    let va = string(vaOff / 8 - 1)
+    stmt("if (lv[" + vi + "] >= AP(lv[" + va + "])->len) goto " + cl(endL) + ";")
+
+void CBackend::forInElem(xOff: int)
+    let vi = string(m_forInVi / 8 - 1)
+    let va = string(m_forInVa / 8 - 1)
+    stmt("lv[" + string(xOff / 8 - 1) + "] = AP(lv[" + va + "])->data[lv[" + vi + "]];")
+
+void CBackend::forInStep(viOff: int)
+    stmt("lv[" + string(viOff / 8 - 1) + "]++;")
+
+// ── calls: the (tag, value)[] frame is a KmArg array per call site ──
+
+void CBackend::call0(name: string)
+    stmt("acc = " + callExpr(name, 0, "NULL") + ";")
+
+mut CBackend::callFrameBegin(n: int)
+    let f = newFrame()
+    line("    KmArg " + f + "[" + string(n) + "];")
+    pushFrame(f)
+
+mut CBackend::callArgTag(j: int, tag: int)
+    stmt(topFrame() + "[" + string(j) + "].tag = " + string(tag) + ";")
+
+mut CBackend::callArgStore(j: int)
+    stmt(topFrame() + "[" + string(j) + "].value = acc;")
+
+mut CBackend::callFrameEnd(name: string, n: int)
+    let f = popFrame()
+    stmt("acc = " + callExpr(name, n, f) + ";")
+
+// ── overload dispatch: the argument frame is already built ─────────
+
+mut CBackend::dispatchBegin()
+    m_dispEnd = newLabel()
+
+mut CBackend::dispatchCaseBegin()
+    m_dispNext = newLabel()
+
+void CBackend::dispatchTestTag(j: int, tag: int)
+    stmt("if (" + topFrame() + "[" + string(j) + "].tag != " + string(tag) + ") goto " + cl(m_dispNext) + ";")
+
+mut CBackend::dispatchTestType(j: int, ids: [int])
+    stmt("if (!km_c_is(" + topFrame() + "[" + string(j) + "].value, " + string(#ids) + ", (const int64_t[]){" + idList(ids) + "})) goto " + cl(m_dispNext) + ";")
+
+void CBackend::dispatchCall(sym: string, n: int)
+    stmt("acc = " + callExpr(sym, n, topFrame()) + ";")
+    stmt("goto " + cl(m_dispEnd) + ";")
+
+void CBackend::dispatchCaseEnd()
+    line(cl(m_dispNext) + ": ;")
+
+mut CBackend::dispatchEnd(n: int)
+    stmt("abort();")
+    line(cl(m_dispEnd) + ": ;")
+    popFrame()
+
+// ── virtual dispatch: one KmFn table per class, indexed by type id ──
+
+mut CBackend::beginVtables(nTypes: int)
+    m_nTypes = nTypes
+
+mut CBackend::setVtable(typeId: int, labels: [string])
+    let s = "static KmFn km_vt_" + string(typeId) + "[] = {"
+    for l in labels do
+        s = s + " (KmFn)kf_" + cname(l) + ","
+    m_vtLines += [s + " };"]
+    m_vtIds += [typeId]
+
+mut CBackend::vcall(slot: int, n: int)
+    let f = popFrame()
+    stmt("acc = km_vtab[((int64_t *)(intptr_t)" + f + "[0].value)[0]][" + string(slot) + "](" + string(n) + ", " + f + ");")
+
+// ── C FFI and callbacks: not yet ──────────────────────────────────
+
+void CBackend::cCallBegin(n: int)
+    throw "c backend: extern fn (C FFI call) not supported yet"
+
+void CBackend::cCallArg(i: int, cls: string)
+    throw "c backend: extern fn (C FFI call) not supported yet"
+
+void CBackend::cCallEnd(name: string, classes: [string])
+    throw "c backend: extern fn (C FFI call) not supported yet"
+
+void CBackend::ffiStructMarshal(totalSize: int, slots: [int], coffs: [int], sizes: [int], flts: [int])
+    throw "c backend: by-value struct arguments (C FFI) not supported yet"
+
+void CBackend::ffiStructLoadWord(off: int, cls: string)
+    throw "c backend: by-value struct arguments (C FFI) not supported yet"
+
+void CBackend::cvtF32ToDouble()
+    throw "c backend: f32 C FFI values not supported yet"
+
+void CBackend::ffiStructRet(typeId: int, nFields: int, slots: [int], coffs: [int], sizes: [int], flts: [int], usig: [int], ebClasses: [string])
+    throw "c backend: by-value struct return (C FFI) not supported yet"
+
+void CBackend::loadFnPtr(sym: string)
+    throw "c backend: passing a Komodo function to C as a callback is not supported yet"
+
+mut CBackend::emitTrampoline(sym: string, argc: int)
+    throw "c backend: C callbacks (trampolines) not supported yet"
+
+// ── errors ────────────────────────────────────────────────────────
+
+void CBackend::throwErr()
+    stmt("km_throw(SP(acc));")
+
+// `f(args)?` — the call sits between tryBegin and tryEnd; a thrown error
+// longjmps back here (the runtime pops the landing pad) and leaves acc 0.
+mut CBackend::tryBegin()
+    let catchL = newLabel()
+    let doneL = newLabel()
+    m_tryCatch += [catchL]
+    m_tryDone += [doneL]
+    let jb = newTmp()
+    stmt("jmp_buf " + jb + ";")
+    stmt("km_try_push(" + jb + ");")
+    stmt("if (_setjmp(" + jb + ")) goto " + cl(catchL) + ";")
+
+mut CBackend::tryEnd()
+    let catchL = m_tryCatch[#m_tryCatch - 1]
+    let doneL = m_tryDone[#m_tryDone - 1]
+    m_tryCatch = m_tryCatch[0 to (#m_tryCatch - 1)]
+    m_tryDone = m_tryDone[0 to (#m_tryDone - 1)]
+    stmt("km_try_pop();")
+    stmt("goto " + cl(doneL) + ";")
+    line(cl(catchL) + ": ;")
+    stmt("acc = 0;")
+    line(cl(doneL) + ": ;")
