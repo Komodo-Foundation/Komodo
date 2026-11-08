@@ -397,6 +397,29 @@ mut Codegen::fillDefaults(e: CallExpr, fd: FunctionDecl)
         i += 1
 
 void Codegen::genCall(e: CallExpr)
+    // `assert(cond, "message")` — lowered to `if not cond then throw
+    // "<site>assertion failed: message"`, so it needs no runtime support
+    // and works in statement and expression position alike.  The message
+    // expression is only evaluated when the assertion fails.
+    if e.name == "assert" then
+        // StringLiteral.value keeps its quotes (loadStrLit strips them)
+        let text: Expression = new StringLiteral("\"" + e.site + "assertion failed\"")
+        if #e.args == 2 then
+            let detail = new CallExpr("string", [e.args[1]])
+            detail.resolvedType = "string"
+            let head = new StringLiteral("\"" + e.site + "assertion failed: \"")
+            let joined = new BinaryOp("+", head, detail)
+            joined.resolvedType = "string"
+            text = joined
+        let thr = new ThrowStmt()
+        thr.message = text
+        let chk = new IfStmt()
+        chk.cond = new UnaryOp("not", e.args[0])
+        chk.thenBody = [thr]
+        genStmt(chk)
+        m_backend.loadIntLit("0")
+        return
+
     // `data(arr)` — the element pointer of a Komodo array (handle + 16),
     // for handing a writable buffer to an `extern fn` (out-params, event
     // structs, …).  Read results back with ordinary `arr[i]`.

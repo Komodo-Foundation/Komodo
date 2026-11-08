@@ -159,6 +159,7 @@ Also: interpolated strings (`` `n = {n + 1}` ``), hex literals (`0xFF`),
 `_` digit separators and binary literals (`1_000_000`, `0b1010`),
 default parameter values on free functions (`fn f(a: int, b: int = 1)`;
 an overloaded name cannot take defaults — see `design.md`),
+a built-in `assert(cond, "message")` that throws `file:line: assertion failed: message`,
 `int(x)` float→int truncation, `f32` and by-value C structs (`copy(x)` to an
 `extern fn`, e.g. raylib's `Vector3` — see `stdlib/raylib.kmm`).
 

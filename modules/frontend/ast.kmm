@@ -78,6 +78,9 @@ struct CallExpr : Expression
     // does not re-run method-owner resolution.  null for a plain call.
     resolvedSym: string? = null
     isMethod: bool = false
+    // For the built-in `assert`: the `file:line: ` prefix of its failure
+    // message, filled in by the semantic analyser (codegen has no file map).
+    site: string = ""
 
 // `receiver.method(args)`
 struct MethodCallExpr : Expression

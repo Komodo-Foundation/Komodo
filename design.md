@@ -466,6 +466,9 @@ A handful of names the compiler lowers directly (no `import`, no library):
   `f32` is truncated toward zero (`cvttsd2si`), an integer-class value
   passes through unchanged. This is the sanctioned float→int conversion;
   a plain assignment / return stays width-checked and rejects it.
+- `assert(cond)` / `assert(cond, "message")` — when `cond` is false, throws
+  `file:line: assertion failed: message` (an ordinary error: catchable with `f(...)?`,
+  otherwise `Uncaught error: …`). The message is evaluated only on failure. No value.
 - `join(parts, sep)` — concatenate a `[string]` with `sep` between, in
   one pass (avoids the O(n²) churn of repeated `s = s + line`).
 - `data(arr)` — an array's element pointer, for handing a buffer to C.
