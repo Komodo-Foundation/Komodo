@@ -5,14 +5,30 @@
 #ifndef KM_RUNTIME_H
 #define KM_RUNTIME_H
 
+#include <stdint.h>
+#include <inttypes.h>
+
+/*
+ * Word size.  A Komodo value is always a 64-bit word (an int as itself, a
+ * float as its IEEE-754 bits, a string / array / object as a pointer), and
+ * every layout below is spelled with int64_t so it holds on targets where
+ * C `long` is not 64 bits (WebAssembly's wasm32).  A pointer stored in a
+ * word is zero-extended (KM_WORD) and recovered by truncation (KM_PTR);
+ * on x86-64 both are the identity.
+ */
+#define KM_WORD(p)    ((int64_t)(uintptr_t)(p))
+#define KM_PTR(T, w)  ((T)(uintptr_t)(w))
+#define KM_STR(w)     KM_PTR(const char *, w)
+#define KM_ARR(w)     KM_PTR(KmArray *, w)
+
 /*
  * Every Komodo array value is a pointer to this header followed by
  * `cap` contiguous 64-bit slots.  `len` slots are live.
  */
 typedef struct KmArray {
-    long len;
-    long cap;
-    long data[];
+    int64_t len;
+    int64_t cap;
+    int64_t data[];
 } KmArray;
 
 /*
@@ -32,8 +48,8 @@ typedef struct KmArray {
  * `items` by index; the compiler is responsible for the tags.
  */
 typedef struct KmArg {
-    long tag;
-    long value;
+    int64_t tag;
+    int64_t value;
 } KmArg;
 
 enum {
@@ -58,15 +74,15 @@ enum {
  */
 
 /* Reinterpret a raw argument word as a double / from a double. */
-static inline double km_as_float(long bits)
+static inline double km_as_float(int64_t bits)
 {
     double d;
     __builtin_memcpy(&d, &bits, sizeof d);
     return d;
 }
-static inline long km_from_float(double d)
+static inline int64_t km_from_float(double d)
 {
-    long bits;
+    int64_t bits;
     __builtin_memcpy(&bits, &d, sizeof bits);
     return bits;
 }
@@ -103,17 +119,17 @@ void km_drop_array(void *handle);
  * out-of-range `arr[i]` lands: it throws a Komodo error. */
 void km_crash_init(void);
 void km_komodo_caller(char *buf, size_t cap);
-void km_index_error(long index, KmArray *a);
+void km_index_error(int64_t index, KmArray *a);
 
 /* ── compiler-internal runtime (operator lowerings, not Komodo calls) ── */
-KmArray *km_array_new(long len);
+KmArray *km_array_new(int64_t len);
 KmArray *km_array_append(KmArray *dst, KmArray *src);
 KmArray *km_array_grow(KmArray *dst, KmArray *src);
-KmArray *km_array_push(KmArray *dst, long v);
-KmArray *km_array_repeat(KmArray *a, long n);
+KmArray *km_array_push(KmArray *dst, int64_t v);
+KmArray *km_array_repeat(KmArray *a, int64_t n);
 const char *km_str_join(KmArray *parts, const char *sep);
-KmArray *km_array_slice(KmArray *a, long start, long end);
-const char *km_array_to_string(KmArray *a, long leaf, long depth);
+KmArray *km_array_slice(KmArray *a, int64_t start, int64_t end);
+const char *km_array_to_string(KmArray *a, int64_t leaf, int64_t depth);
 
 /* error handling — `throw msg` and the `f(args)?` protected-call guard.
  * `km_try_push` registers a jmp_buf reserved on the caller's stack;
@@ -128,96 +144,105 @@ const char *km_error_message(void);
 
 /* string operators:  a + b   #s   s * n   a == b */
 const char *km_str_concat(const char *a, const char *b);
-const char *km_str_repeat(const char *s, long n);
-long        km_str_len(const char *s);
-long        km_str_eq(const char *a, const char *b);
-const char *km_str_slice(const char *s, long start, long end);
-const char *km_str_char(const char *s, long i);
-long        km_str_cmp(const char *a, const char *b);
-long        km_str_hash(const char *s);
-long        km_str_find(const char *s, const char *sub);
-const char *km_str_sub(const char *s, long n, long start, long end);
+const char *km_str_repeat(const char *s, int64_t n);
+int64_t        km_str_len(const char *s);
+int64_t        km_str_eq(const char *a, const char *b);
+const char *km_str_slice(const char *s, int64_t start, int64_t end);
+const char *km_str_char(const char *s, int64_t i);
+int64_t        km_str_cmp(const char *a, const char *b);
+int64_t        km_str_hash(const char *s);
+int64_t        km_str_find(const char *s, const char *sub);
+const char *km_str_sub(const char *s, int64_t n, int64_t start, int64_t end);
 /* `x in coll` membership — 1 / 0 */
-long        km_in_str(const char *haystack, const char *needle);
-long        km_in_array(KmArray *a, long v, long leaf);
-const char *km_to_string(long tag, long value);
+int64_t        km_in_str(const char *haystack, const char *needle);
+int64_t        km_in_array(KmArray *a, int64_t v, int64_t leaf);
+const char *km_to_string(int64_t tag, int64_t value);
 /* "%g" for a double, but integral values keep a ".0" (Komodo float text) */
 void        km_fmt_double(char *buf, unsigned long cap, double d);
 
 /* ── module: console ── */
-void console_print(long argc, KmArg *items);
-void console_write(long argc, KmArg *items);
-void console_error(long argc, KmArg *items);
+void console_print(int64_t argc, KmArg *items);
+void console_write(int64_t argc, KmArg *items);
+void console_error(int64_t argc, KmArg *items);
 
 /* ── module: algorithm (C primitives; public overloads live in the .kmm) ── */
-void   km_algo_sort(long argc, KmArg *items);
-void   km_algo_reverse(long argc, KmArg *items);
-long   km_algo_sum(long argc, KmArg *items);
-long   km_algo_max(long argc, KmArg *items);
-long   km_algo_min(long argc, KmArg *items);
-long   km_algo_contains(long argc, KmArg *items);
-long   km_algo_index_of(long argc, KmArg *items);
-void   km_algo_fill(long argc, KmArg *items);
-void   km_algo_sortf(long argc, KmArg *items);
-double km_algo_sumf(long argc, KmArg *items);
-double km_algo_maxf(long argc, KmArg *items);
-double km_algo_minf(long argc, KmArg *items);
-void   km_algo_reversef(long argc, KmArg *items);
-void   km_algo_fillf(long argc, KmArg *items);
-long   km_algo_index_off(long argc, KmArg *items);
-long   km_algo_containsf(long argc, KmArg *items);
+void   km_algo_sort(int64_t argc, KmArg *items);
+void   km_algo_reverse(int64_t argc, KmArg *items);
+int64_t   km_algo_sum(int64_t argc, KmArg *items);
+int64_t   km_algo_max(int64_t argc, KmArg *items);
+int64_t   km_algo_min(int64_t argc, KmArg *items);
+int64_t   km_algo_contains(int64_t argc, KmArg *items);
+int64_t   km_algo_index_of(int64_t argc, KmArg *items);
+void   km_algo_fill(int64_t argc, KmArg *items);
+void   km_algo_sortf(int64_t argc, KmArg *items);
+double km_algo_sumf(int64_t argc, KmArg *items);
+double km_algo_maxf(int64_t argc, KmArg *items);
+double km_algo_minf(int64_t argc, KmArg *items);
+void   km_algo_reversef(int64_t argc, KmArg *items);
+void   km_algo_fillf(int64_t argc, KmArg *items);
+int64_t   km_algo_index_off(int64_t argc, KmArg *items);
+int64_t   km_algo_containsf(int64_t argc, KmArg *items);
 
 /* ── module: math ── */
-long   math_abs(long argc, KmArg *items);
-long   math_min(long argc, KmArg *items);
-long   math_max(long argc, KmArg *items);
-long   math_pow(long argc, KmArg *items);
-long   math_gcd(long argc, KmArg *items);
-long   math_clamp(long argc, KmArg *items);
-long   math_sign(long argc, KmArg *items);
-double math_sqrt(long argc, KmArg *items);
-double math_floor(long argc, KmArg *items);
-double math_ceil(long argc, KmArg *items);
-double math_round(long argc, KmArg *items);
-double math_trunc(long argc, KmArg *items);
-double math_fabs(long argc, KmArg *items);
-double math_sin(long argc, KmArg *items);
-double math_cos(long argc, KmArg *items);
-double math_tan(long argc, KmArg *items);
-double math_atan(long argc, KmArg *items);
-double math_atan2(long argc, KmArg *items);
-double math_exp(long argc, KmArg *items);
-double math_log(long argc, KmArg *items);
-double math_log2(long argc, KmArg *items);
-double math_log10(long argc, KmArg *items);
-double math_powf(long argc, KmArg *items);
-double math_hypot(long argc, KmArg *items);
-double math_pi(long argc, KmArg *items);
-double math_e(long argc, KmArg *items);
+int64_t   math_abs(int64_t argc, KmArg *items);
+int64_t   math_min(int64_t argc, KmArg *items);
+int64_t   math_max(int64_t argc, KmArg *items);
+int64_t   math_pow(int64_t argc, KmArg *items);
+int64_t   math_gcd(int64_t argc, KmArg *items);
+int64_t   math_clamp(int64_t argc, KmArg *items);
+int64_t   math_sign(int64_t argc, KmArg *items);
+double math_sqrt(int64_t argc, KmArg *items);
+double math_floor(int64_t argc, KmArg *items);
+double math_ceil(int64_t argc, KmArg *items);
+double math_round(int64_t argc, KmArg *items);
+double math_trunc(int64_t argc, KmArg *items);
+double math_fabs(int64_t argc, KmArg *items);
+double math_sin(int64_t argc, KmArg *items);
+double math_cos(int64_t argc, KmArg *items);
+double math_tan(int64_t argc, KmArg *items);
+double math_atan(int64_t argc, KmArg *items);
+double math_atan2(int64_t argc, KmArg *items);
+double math_exp(int64_t argc, KmArg *items);
+double math_log(int64_t argc, KmArg *items);
+double math_log2(int64_t argc, KmArg *items);
+double math_log10(int64_t argc, KmArg *items);
+double math_powf(int64_t argc, KmArg *items);
+double math_hypot(int64_t argc, KmArg *items);
+double math_pi(int64_t argc, KmArg *items);
+double math_e(int64_t argc, KmArg *items);
 
-/* ── module: file (extra) ── */
-long      is_dir(long argc, KmArg *items);
-void      append_all(long argc, KmArg *items);
-KmArray  *read_lines(long argc, KmArg *items);
+/* ── module: file ── */
+int64_t      exists(int64_t argc, KmArg *items);
+int64_t      is_dir(int64_t argc, KmArg *items);
+const char  *read_all(int64_t argc, KmArg *items);
+void         write_all(int64_t argc, KmArg *items);
+void      append_all(int64_t argc, KmArg *items);
+KmArray  *read_lines(int64_t argc, KmArg *items);
+KmArray  *list_dir(int64_t argc, KmArg *items);
+const char  *find(int64_t argc, KmArg *items);
+void         km_fail(const char *msg);
+
+/* bare print(...) — alias of console.print */
+void print(int64_t argc, KmArg *items);
 
 /* ── module: string ── */
-long        string_length(long argc, KmArg *items);
-KmArray    *string_split(long argc, KmArg *items);
-const char *string_join(long argc, KmArg *items);
-const char *string_trim(long argc, KmArg *items);
-const char *string_trim_start(long argc, KmArg *items);
-const char *string_trim_end(long argc, KmArg *items);
-const char *string_replace(long argc, KmArg *items);
-long        string_index_of(long argc, KmArg *items);
-long        string_contains(long argc, KmArg *items);
-long        string_starts_with(long argc, KmArg *items);
-long        string_ends_with(long argc, KmArg *items);
-const char *string_to_upper(long argc, KmArg *items);
-const char *string_to_lower(long argc, KmArg *items);
-const char *string_repeat(long argc, KmArg *items);
-const char *string_reverse(long argc, KmArg *items);
-const char *string_substring(long argc, KmArg *items);
-const char *string_pad_start(long argc, KmArg *items);
-const char *string_pad_end(long argc, KmArg *items);
+int64_t        string_length(int64_t argc, KmArg *items);
+KmArray    *string_split(int64_t argc, KmArg *items);
+const char *string_join(int64_t argc, KmArg *items);
+const char *string_trim(int64_t argc, KmArg *items);
+const char *string_trim_start(int64_t argc, KmArg *items);
+const char *string_trim_end(int64_t argc, KmArg *items);
+const char *string_replace(int64_t argc, KmArg *items);
+int64_t        string_index_of(int64_t argc, KmArg *items);
+int64_t        string_contains(int64_t argc, KmArg *items);
+int64_t        string_starts_with(int64_t argc, KmArg *items);
+int64_t        string_ends_with(int64_t argc, KmArg *items);
+const char *string_to_upper(int64_t argc, KmArg *items);
+const char *string_to_lower(int64_t argc, KmArg *items);
+const char *string_repeat(int64_t argc, KmArg *items);
+const char *string_reverse(int64_t argc, KmArg *items);
+const char *string_substring(int64_t argc, KmArg *items);
+const char *string_pad_start(int64_t argc, KmArg *items);
+const char *string_pad_end(int64_t argc, KmArg *items);
 
 #endif /* KM_RUNTIME_H */

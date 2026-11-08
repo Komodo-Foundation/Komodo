@@ -122,9 +122,13 @@ fn selectBackend(target: string): Backend
         return new StackVMBackend()
     if target == "c" then
         return new CBackend()
+    if target == "wasm" then
+        let w = new CBackend()
+        w.forWasm()
+        return w
     if target == "x86" or target == "" then
         return new X86Backend()
-    throw ("unknown target '" + target + "' (known: x86, stackvm, c)")
+    throw ("unknown target '" + target + "' (known: x86, stackvm, c, wasm)")
 
 void save(asm: string, path: string)
     file::write_all(path, asm)

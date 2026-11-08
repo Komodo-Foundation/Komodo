@@ -22,7 +22,7 @@ void main(args)
         km_fail("error: file not found: " + fileName)
 
     // Trailing arguments, in any order:
-    //   x86 | stackvm | c        code-generation target      (default x86)
+    //   x86 | stackvm | c | wasm  code-generation target      (default x86)
     //   strict                   analyser lint-level checks   (default off)
     //   none | low | medium | max   optimisation level        (default none)
     let target = "x86"
@@ -31,7 +31,7 @@ void main(args)
     let ai = 2
     while ai < #args do
         let a = args[ai]
-        if a == "x86" or a == "stackvm" or a == "c" then
+        if a == "x86" or a == "stackvm" or a == "c" or a == "wasm" then
             target = a
         else if a == "strict" then
             strict = true

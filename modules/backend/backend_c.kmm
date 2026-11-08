@@ -4,10 +4,17 @@ module km_compiler
 //  CBackend — a portable C target.
 //
 //  Emits one C translation unit: every Komodo function becomes a C
-//  function `long kf_<name>(long argc, KmArg *items)` (the uniform Komodo
-//  call ABI from stdlib/km_runtime.h), and `main` becomes
+//  function `int64_t kf_<name>(int64_t argc, KmArg *items)` (the uniform
+//  Komodo call ABI from stdlib/km_runtime.h), and `main` becomes
 //  `km_program_main`, which stdlib/runtime.c's C `main` calls.  Build with
 //  gcc against stdlib/*.c (the `komodo -t c` driver does this).
+//
+//  The same unit also serves the `wasm` target (forWasm()): `komodo -t
+//  wasm` builds it with emcc and runs it under node.  Nothing in the
+//  emitted C depends on the word size of the C compiler — values are
+//  int64_t, and a pointer is moved in and out of a word through
+//  uintptr_t (zero-extended, so lossless on 32-bit wasm32).  Only the
+//  "not supported" diagnostics differ by name.
 //
 //  Machine model.  Every value is a 64-bit word (`int64_t`): an int as
 //  itself, a float as its IEEE-754 bit pattern, a string / array / object
@@ -21,11 +28,14 @@ module km_compiler
 //  live in `lv[]`, indexed by frame offset / 8 - 1.
 //
 //  Float values are bit patterns end to end, so the codegen's
-//  `floatToBits` / `bitsToFloat` are no-ops here.  Stdlib prototypes that
-//  return a C `double` are dispatched through `KM_CALL` (a `_Generic`
-//  selection in the prelude), which converts the result to bits.
+//  `floatToBits` / `bitsToFloat` are no-ops here.  Every stdlib / runtime
+//  function is called through `KM_CALL` (a `_Generic` selection in the
+//  prelude on the function's declared return type - double, void, a
+//  pointer or an integer - declared in stdlib/km_runtime.h), which widens
+//  the result to a 64-bit word.
 //
-//  Not supported yet (fails with "c backend: … not supported yet"):
+//  Not supported yet (fails with "c backend: … not supported yet", or
+//  "wasm backend: …" for the wasm target):
 //  `extern fn` / C FFI (including by-value structs), passing a Komodo
 //  function to C as a callback, and in-place `dst += [v]` (the codegen
 //  falls back to the generic append, which is correct).
@@ -48,7 +58,7 @@ private
     m_dispNext: string = ""     // overload dispatch: current case's skip label
     m_tryCatch: [string] = []   // protected-call catch labels (nesting stack)
     m_tryDone: [string] = []    // protected-call done labels (nesting stack)
-    m_externs: [string] = []    // runtime / stdlib callees reached by asm alias
+    m_wasm: bool = false        // targeting WebAssembly (diagnostics only)
 
 // ── text helpers ───────────────────────────────────────────────────
 
@@ -120,28 +130,25 @@ mut CBackend::popFrame(): string
     return f
 
 // The C expression for a call of `name` with `n` arguments in frame `f`.
-// A function defined in this program is called directly.  A stdlib /
-// runtime function that returns a C `double` (the math_* helpers and the
-// algorithm sum/max/min of floats) is called through KM_CALL, which
-// converts the result to bits.  Any other runtime function is reached
-// through an asm-label alias declared in finish(): every such function
-// takes the uniform (long, KmArg*) arguments and yields its result in rax,
-// so declaring it `long`-returning is correct whatever its C prototype.
+// A function defined in this program is called directly.  Any other
+// callee is a stdlib / runtime function (declared in stdlib/km_runtime.h
+// with the uniform (int64_t, KmArg*) arguments); KM_CALL picks the right
+// wrapper from its declared return type and yields the result as a word.
 mut CBackend::callExpr(name: string, n: int, f: string): string
     let m = mangle(name)
     if isLocalFn(m) then
         return "kf_" + cname(m) + "(" + string(n) + ", " + f + ")"
-    if isDoubleFn(m) then
-        return "KM_CALL(" + cname(m) + ", " + string(n) + ", " + f + ")"
-    if not (m in m_externs) then
-        m_externs += [m]
-    return "km_c_wl((void *)&km_x_" + cname(m) + ", " + string(n) + ", " + f + ")"
+    return "KM_CALL(" + cname(m) + ", " + string(n) + ", " + f + ")"
 
-// Runtime functions whose C return type is double (see stdlib/km_runtime.h).
-fn CBackend::isDoubleFn(m: string): bool
-    if #m > 5 and m[0 to 5] == "math_" then
-        return true
-    return m == "km_algo_sumf" or m == "km_algo_maxf" or m == "km_algo_minf"
+// "c backend" / "wasm backend" - the prefix of every unsupported-construct error.
+fn CBackend::tag(): string
+    if m_wasm then
+        return "wasm backend"
+    return "c backend"
+
+// Target the WebAssembly build of this C output (see the header).
+void CBackend::forWasm()
+    m_wasm = true
 
 // ── lifecycle ──────────────────────────────────────────────────────
 
@@ -150,12 +157,10 @@ void CBackend::begin()
 
 mut CBackend::finish(): string
     let head = preludeLines()
-    for e in m_externs do
-        head += ["extern char km_x_" + cname(e) + " __asm__(\"" + e + "\");"]
     for g in m_globals do
         head += [g]
     for p in m_defs do
-        head += ["static long " + p + "(long argc, KmArg *items);"]
+        head += ["static int64_t " + p + "(int64_t argc, KmArg *items);"]
     for v in m_vtLines do
         head += [v]
     let tab = "static KmFn *km_vtab[" + string(m_nTypes + 1) + "] = {"
@@ -172,28 +177,30 @@ fn CBackend::preludeLines(): [string]
     let p: [string] = []
     p += ["/* generated by the Komodo compiler: portable C target */"]
     p += ["#include <stdint.h>", "#include <stdlib.h>", "#include <math.h>", "#include <setjmp.h>", "#include \"km_runtime.h\""]
-    p += ["#define AP(x) ((KmArray *)(intptr_t)(x))"]
-    p += ["#define SP(x) ((const char *)(intptr_t)(x))"]
-    p += ["#define IP(x) ((int64_t)(intptr_t)(x))"]
-    p += ["#define KF(x) km_as_float((long)(x))"]
-    p += ["typedef long (*KmFn)(long, KmArg *);"]
+    p += ["#define AP(x) KM_ARR(x)"]
+    p += ["#define SP(x) KM_STR(x)"]
+    p += ["#define IP(x) KM_WORD(x)"]
+    p += ["#define KF(x) km_as_float((int64_t)(x))"]
+    p += ["typedef int64_t (*KmFn)(int64_t, KmArg *);"]
     p += ["static inline int64_t km_c_idx(int64_t h, int64_t i) { KmArray *a = AP(h); if (i < 0 || i >= a->len) km_index_error(i, a); return a->data[i]; }"]
     p += ["static inline void km_c_setidx(int64_t h, int64_t i, int64_t v) { KmArray *a = AP(h); if (i < 0 || i >= a->len) km_index_error(i, a); a->data[i] = v; }"]
-    p += ["static inline int64_t km_c_is(int64_t h, int n, const int64_t *ids) { if (!h) return 0; int64_t t = ((int64_t *)(intptr_t)h)[0]; for (int i = 0; i < n; i++) if (t == ids[i]) return 1; return 0; }"]
-    p += ["static inline long km_c_wd(void *f, long n, KmArg *a) { return km_from_float(((double (*)(long, KmArg *))f)(n, a)); }"]
-    p += ["static inline long km_c_wv(void *f, long n, KmArg *a) { ((void (*)(long, KmArg *))f)(n, a); return 0; }"]
-    p += ["static inline long km_c_wl(void *f, long n, KmArg *a) { return ((long (*)(long, KmArg *))f)(n, a); }"]
-    p += ["#define KM_CALL(f, n, a) _Generic((f), double (*)(long, KmArg *): km_c_wd, void (*)(long, KmArg *): km_c_wv, default: km_c_wl)((void *)(f), (n), (a))"]
+    p += ["static inline int64_t km_c_is(int64_t h, int n, const int64_t *ids) { if (!h) return 0; int64_t t = KM_PTR(int64_t *, h)[0]; for (int i = 0; i < n; i++) if (t == ids[i]) return 1; return 0; }"]
+    p += ["static inline int64_t km_c_wd(void *f, int64_t n, KmArg *a) { return km_from_float(((double (*)(int64_t, KmArg *))f)(n, a)); }"]
+    p += ["static inline int64_t km_c_wv(void *f, int64_t n, KmArg *a) { ((void (*)(int64_t, KmArg *))f)(n, a); return 0; }"]
+    p += ["static inline int64_t km_c_wp(void *f, int64_t n, KmArg *a) { return KM_WORD(((const char *(*)(int64_t, KmArg *))f)(n, a)); }"]
+    p += ["static inline int64_t km_c_wa(void *f, int64_t n, KmArg *a) { return KM_WORD(((KmArray *(*)(int64_t, KmArg *))f)(n, a)); }"]
+    p += ["static inline int64_t km_c_wl(void *f, int64_t n, KmArg *a) { return ((int64_t (*)(int64_t, KmArg *))f)(n, a); }"]
+    p += ["#define KM_CALL(f, n, a) _Generic((f), double (*)(int64_t, KmArg *): km_c_wd, void (*)(int64_t, KmArg *): km_c_wv, const char *(*)(int64_t, KmArg *): km_c_wp, KmArray *(*)(int64_t, KmArg *): km_c_wa, default: km_c_wl)((void *)(f), (n), (a))"]
     return p
 
 mut CBackend::beginFunction(name: string, frame: int, paramOffsets: [int], isMain: bool)
     let n = frame / 8 + 1
     if isMain then
-        line("long km_program_main(long argc, KmArg *items) {")
+        line("int64_t km_program_main(int64_t argc, KmArg *items) {")
     else
         let sym = "kf_" + cname(name)
         m_defs += [sym]
-        line("static long " + sym + "(long argc, KmArg *items) {")
+        line("static int64_t " + sym + "(int64_t argc, KmArg *items) {")
     line("    int64_t acc = 0;")
     line("    int64_t lv[" + string(n) + "] = {0};")
     let i = 0
@@ -222,7 +229,7 @@ void CBackend::loadBoolLit(value: bool)
         stmt("acc = 0;")
 
 void CBackend::loadFloatLit(literal: string)
-    stmt("acc = IP(km_from_float(" + literal + "));")
+    stmt("acc = km_from_float(" + literal + ");")
 
 // The literal keeps its surrounding quotes and Komodo escapes, which are
 // valid C string syntax.
@@ -280,19 +287,19 @@ void CBackend::notBool()
 mut CBackend::binaryFloat(op_: string)
     let a = popTmp()
     if op_ == "%" then
-        stmt("acc = IP(km_from_float(fmod(KF(" + a + "), KF(acc))));")
+        stmt("acc = km_from_float(fmod(KF(" + a + "), KF(acc)));")
     else
-        stmt("acc = IP(km_from_float(KF(" + a + ") " + op_ + " KF(acc)));")
+        stmt("acc = km_from_float(KF(" + a + ") " + op_ + " KF(acc));")
 
 mut CBackend::compareFloat(op_: string)
     let a = popTmp()
     stmt("acc = (KF(" + a + ") " + op_ + " KF(acc));")
 
 void CBackend::negFloat()
-    stmt("acc = IP(km_from_float(-KF(acc)));")
+    stmt("acc = km_from_float(-KF(acc));")
 
 void CBackend::cvtIntToFloat()
-    stmt("acc = IP(km_from_float((double)acc));")
+    stmt("acc = km_from_float((double)acc);")
 
 void CBackend::cvtFloatToInt()
     stmt("acc = (int64_t)KF(acc);")
@@ -314,7 +321,7 @@ mut CBackend::strBinOp(helper: string)
     else if helper == "km_str_join" then
         stmt("acc = IP(km_str_join(AP(" + a + "), SP(acc)));")
     else
-        throw ("c backend: string helper '" + helper + "' not supported yet")
+        throw (tag() + ": string helper '" + helper + "' not supported yet")
 
 mut CBackend::strEquals(negate: bool)
     let a = popTmp()
@@ -377,7 +384,7 @@ void CBackend::arrayAppendTo(off: int)
 // `self.field += src` — receiver spilled by pushAcc().
 mut CBackend::arrayAppendToField(idx: int)
     let o = popTmp()
-    let slot = "((int64_t *)(intptr_t)" + o + ")[" + string(idx + 1) + "]"
+    let slot = "((int64_t *)(uintptr_t)" + o + ")[" + string(idx + 1) + "]"
     stmt(slot + " = IP(km_array_grow(AP(" + slot + "), AP(acc)));")
 
 // `a + b` for arrays — left operand spilled by pushAcc().
@@ -419,15 +426,15 @@ void CBackend::toStringOf(tag: int)
 mut CBackend::objNew(typeId: int, nFields: int)
     let t = newTmp()
     stmt("int64_t " + t + " = IP(km_alloc(" + string(8 * (nFields + 1)) + "));")
-    stmt("((int64_t *)(intptr_t)" + t + ")[0] = " + string(typeId) + ";")
+    stmt("((int64_t *)(uintptr_t)" + t + ")[0] = " + string(typeId) + ";")
     pushTmp(t)
 
 // value in acc, handle is the top of the operand stack (left there)
 mut CBackend::objSetField(idx: int)
-    stmt("((int64_t *)(intptr_t)" + topTmp() + ")[" + string(idx + 1) + "] = acc;")
+    stmt("((int64_t *)(uintptr_t)" + topTmp() + ")[" + string(idx + 1) + "] = acc;")
 
 void CBackend::objTypeId()
-    stmt("acc = ((int64_t *)(intptr_t)acc)[0];")
+    stmt("acc = ((int64_t *)(uintptr_t)acc)[0];")
 
 mut CBackend::isTypeCheck(ids: [int])
     stmt("acc = km_c_is(acc, " + string(#ids) + ", (const int64_t[]){" + idList(ids) + "});")
@@ -443,11 +450,11 @@ mut CBackend::objFinishNew()
     stmt("acc = " + t + ";")
 
 void CBackend::loadField(idx: int)
-    stmt("acc = ((int64_t *)(intptr_t)acc)[" + string(idx + 1) + "];")
+    stmt("acc = ((int64_t *)(uintptr_t)acc)[" + string(idx + 1) + "];")
 
 mut CBackend::storeField(idx: int)
     let o = popTmp()
-    stmt("((int64_t *)(intptr_t)" + o + ")[" + string(idx + 1) + "] = acc;")
+    stmt("((int64_t *)(uintptr_t)" + o + ")[" + string(idx + 1) + "] = acc;")
 
 // ── control flow ───────────────────────────────────────────────────
 
@@ -572,36 +579,36 @@ mut CBackend::setVtable(typeId: int, labels: [string])
 
 mut CBackend::vcall(slot: int, n: int)
     let f = popFrame()
-    stmt("acc = km_vtab[((int64_t *)(intptr_t)" + f + "[0].value)[0]][" + string(slot) + "](" + string(n) + ", " + f + ");")
+    stmt("acc = km_vtab[((int64_t *)(uintptr_t)" + f + "[0].value)[0]][" + string(slot) + "](" + string(n) + ", " + f + ");")
 
 // ── C FFI and callbacks: not yet ──────────────────────────────────
 
 void CBackend::cCallBegin(n: int)
-    throw "c backend: extern fn (C FFI call) not supported yet"
+    throw (tag() + ": extern fn (C FFI call) not supported yet")
 
 void CBackend::cCallArg(i: int, cls: string)
-    throw "c backend: extern fn (C FFI call) not supported yet"
+    throw (tag() + ": extern fn (C FFI call) not supported yet")
 
 void CBackend::cCallEnd(name: string, classes: [string])
-    throw "c backend: extern fn (C FFI call) not supported yet"
+    throw (tag() + ": extern fn (C FFI call) not supported yet")
 
 void CBackend::ffiStructMarshal(totalSize: int, slots: [int], coffs: [int], sizes: [int], flts: [int])
-    throw "c backend: by-value struct arguments (C FFI) not supported yet"
+    throw (tag() + ": by-value struct arguments (C FFI) not supported yet")
 
 void CBackend::ffiStructLoadWord(off: int, cls: string)
-    throw "c backend: by-value struct arguments (C FFI) not supported yet"
+    throw (tag() + ": by-value struct arguments (C FFI) not supported yet")
 
 void CBackend::cvtF32ToDouble()
-    throw "c backend: f32 C FFI values not supported yet"
+    throw (tag() + ": f32 C FFI values not supported yet")
 
 void CBackend::ffiStructRet(typeId: int, nFields: int, slots: [int], coffs: [int], sizes: [int], flts: [int], usig: [int], ebClasses: [string])
-    throw "c backend: by-value struct return (C FFI) not supported yet"
+    throw (tag() + ": by-value struct return (C FFI) not supported yet")
 
 void CBackend::loadFnPtr(sym: string)
-    throw "c backend: passing a Komodo function to C as a callback is not supported yet"
+    throw (tag() + ": passing a Komodo function to C as a callback is not supported yet")
 
 mut CBackend::emitTrampoline(sym: string, argc: int)
-    throw "c backend: C callbacks (trampolines) not supported yet"
+    throw (tag() + ": C callbacks (trampolines) not supported yet")
 
 // ── errors ────────────────────────────────────────────────────────
 
