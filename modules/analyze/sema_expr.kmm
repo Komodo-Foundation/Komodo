@@ -414,6 +414,9 @@ mut Analyzer::inferCall(e: CallExpr): Type
             e.isMethod = true
             e.resolvedSym = sym
             return parseTypeStr(fnRetType(sym))
+    // `module::name(...)` must name a declared function of that module.
+    if e.qualifier != "" and not hasFn(e.name) then
+        err(e, "undefined function '" + e.qualifier + "::" + e.name + "'")
     // an unresolved free symbol — a library not on the search path, say.
     // Leave it unchecked rather than guessing.
     return tAny
