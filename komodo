@@ -736,8 +736,11 @@ fi
 # CONTENT HASH of the source and of every file kmc read last time. Any
 # difference — an edit, even a same-size one within the same second — makes
 # the entry stale and kmc reruns.
+# a library build asks kmc for position-independent x86 (see the lib block)
+kmc_target="$target"
+[[ "$mode" == "lib" && "$target" == "x86" ]] && kmc_target="x86pic"
 kmc_fp="$(stat -c '%y:%s' -- "$kmc" 2>/dev/null || echo '?')"
-fe_key="$(sha_str "$src_abs|cwd=$PWD|$target|$opt|$strict|kmc=$kmc_fp")"
+fe_key="$(sha_str "$src_abs|cwd=$PWD|$kmc_target|$opt|$strict|kmc=$kmc_fp")"
 fe_asm="$cache/fe/$fe_key.asm"
 fe_links="$cache/fe/$fe_key.links"
 fe_deps="$cache/fe/$fe_key.deps"
@@ -771,13 +774,13 @@ if fe_is_fresh; then
     report "front end" "$t" "cached"
 else
     slog "compiling $src  (target: $target, -O$opt${strict:+, strict})"
-    vlog "$kmc" "$src" "$target" $strict $opt
+    vlog "$kmc" "$src" "$kmc_target" $strict $opt
     rm -f "$src.asm" "$src.deps" "$src.links"
     kmc_err="$wd/kmc.err"
     # kmc's stdout is a "wrote <file>.asm" progress line plus analyser
     # warnings; keep stdout clean (just the program's output) by sending
     # the warnings to stderr and dropping the progress line.
-    "$kmc" "$src" "$target" $strict $opt 2>"$kmc_err" | { grep -v '^wrote ' || true; } 1>&2
+    "$kmc" "$src" "$kmc_target" $strict $opt 2>"$kmc_err" | { grep -v '^wrote ' || true; } 1>&2
     kmc_rc=${PIPESTATUS[0]}
     cat "$kmc_err" >&2
     if [[ $kmc_rc -ne 0 ]]; then
@@ -857,6 +860,7 @@ for nd in ${native_dirs[@]+"${native_dirs[@]}"}; do cc_flags+=( -I"$nd" ); done
 for tok in ${extra_cc[@]+"${extra_cc[@]}"} ${auto_cc[@]+"${auto_cc[@]}"}; do
     case "$tok" in -I*|-D*|-std=*) cc_flags+=( "$tok" ) ;; esac
 done
+[[ "$mode" == "lib" ]] && cc_flags+=( -fPIC )   # C members of a shared library
 # prep_extras <array-name> <all-c: 0|1>: rewrite that array, compiling C++
 # sources (and, when all-c=1 or in --lib mode, C sources) to objects.
 prep_extras() {
@@ -1051,17 +1055,40 @@ if [[ "$mode" == "lib" ]]; then
     libdir="$(dirname "$out")"
     cp -f "$obj" "$out.o" || die "cannot write $out.o"
     members=()
-    for tok in ${extra_cc[@]+"${extra_cc[@]}"}; do
-        [[ -f "$tok" && "$tok" == *.o ]] && members+=( "$tok" )
+    for tok in ${extra_cc[@]+"${extra_cc[@]}"} ${auto_cc[@]+"${auto_cc[@]}"}; do
+        # native/ and `link "file.c"` objects (once each, the list can repeat one)
+        [[ -f "$tok" && "$tok" == *.o && " ${members[*]:-} " != *" $tok "* ]] && members+=( "$tok" )
     done
     rm -f "$libdir/lib$libname.a"
     vlog ar rcsD "$libdir/lib$libname.a" "$out.o" "${stdlib_inputs[@]}" ${members[@]+"${members[@]}"}
     ar rcsD "$libdir/lib$libname.a" "$out.o" "${stdlib_inputs[@]}" ${members[@]+"${members[@]}"} || exit 1
+    # lib<name>.so: the same position-independent object, the runtime
+    # compiled -fPIC (cached like the plain stdlib objects), one -shared link
+    so_inputs=()
+    od="$(objdir)"
+    for c in "$here"/stdlib/*.c; do
+        oh="$(sha_str "stdlib-obj-pic-v1|$tool_id|stdlib=$stdlib_sig|$(sha_file "$c")")"
+        oo="$od/$oh.o"
+        if [[ ! -f "$oo" ]]; then
+            vlog gcc -fPIC -I"$here/stdlib" -c "$c" -o "$oo"
+            gcc -fPIC -I"$here/stdlib" -c "$c" -o "$oo.tmp.$$" || exit 1
+            if [[ "$(basename "$c")" == "runtime.c" ]]; then
+                objcopy --redefine-sym main=km_rt_main_unused --weaken-symbol=km_program_main "$oo.tmp.$$" || exit 1
+            fi
+            mv -f "$oo.tmp.$$" "$oo"
+        fi
+        so_inputs+=( "$oo" )
+    done
+    so_flags=()                     # the objects are already in members
+    for tok in ${auto_cc[@]+"${auto_cc[@]}"}; do [[ "$tok" == *.o ]] || so_flags+=( "$tok" ); done
+    rm -f "$libdir/lib$libname.so"
+    vlog gcc -shared -o "$libdir/lib$libname.so" "$out.o" "${so_inputs[@]}" ${members[@]+"${members[@]}"} ${so_flags[@]+"${so_flags[@]}"} -l:libgc.so.1 -lm
+    gcc -shared -o "$libdir/lib$libname.so" "$out.o" "${so_inputs[@]}" ${members[@]+"${members[@]}"} ${so_flags[@]+"${so_flags[@]}"} -l:libgc.so.1 -lm || exit 1
     report "lib" "$t"
-    record_output "$out.o"; record_output "$libdir/lib$libname.a"; [[ -n "$emit_header" ]] && record_output "$emit_header"
-    log "built $out.o and $libdir/lib$libname.a${emit_header:+ and $emit_header}"
+    record_output "$out.o"; record_output "$libdir/lib$libname.a"; record_output "$libdir/lib$libname.so"; [[ -n "$emit_header" ]] && record_output "$emit_header"
+    log "built $out.o, $libdir/lib$libname.a, $libdir/lib$libname.so${emit_header:+ and $emit_header}"
     log "link with: gcc -no-pie main.c -L$libdir -l$libname ${auto_cc[*]:+${auto_cc[*]} }-l:libgc.so.1 -lm$([[ $have_cxx -eq 1 ]] && echo ' -lstdc++')"
-    log "(no shared library: the generated code is not position-independent — link the static archive)"
+    log "or the shared library: gcc main.c -L$libdir -l$libname -Wl,-rpath,$libdir -l:libgc.so.1 -lm (see docs/interop.md)"
     exit 0
 fi
 

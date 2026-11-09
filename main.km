@@ -31,7 +31,7 @@ void main(args)
     let ai = 2
     while ai < #args do
         let a = args[ai]
-        if a == "x86" or a == "stackvm" or a == "c" or a == "wasm" then
+        if a == "x86" or a == "x86pic" or a == "stackvm" or a == "c" or a == "wasm" then
             target = a
         else if a == "header" then
             target = a              // C header for the `export fn`s -> <file>.h

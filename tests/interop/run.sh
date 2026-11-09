@@ -7,8 +7,9 @@
 #   // interop: extras a.c b.cpp   build with `komodo <name>.km -- a.c b.cpp`
 #                                  (.cpp via g++) and run; stdout must equal
 #                                  <name>.expected
-#   // interop: lib main.c         build `komodo --lib` (object + static
-#                                  archive), link main.c against it, run
+#   // interop: lib main.c         build `komodo --lib` (object, static archive
+#                                  and shared object), link main.c against
+#                                  each, run
 #
 # Any program containing `export fn` also gets its header generated
 # (`--emit-header`) into a scratch dir, put on the include path, and
@@ -59,12 +60,22 @@ for name in "${names[@]}"; do
                 echo "FAIL     interop/$name  (--lib build)"; sed 's/^/           /' "$work/err"
                 fail=$((fail+1)); continue
             fi
-            if ! gcc -no-pie -I"$work" "${files[0]}" -L"$work" -l"$name" -l:libgc.so.1 -lm \
+            if ! gcc -no-pie -I"$work" "${files[0]}" "$work/lib$name.a" -l:libgc.so.1 -lm \
                     -o "$work/$name.bin" 2>"$work/err"; then
                 echo "FAIL     interop/$name  (link against lib$name.a)"; sed 's/^/           /' "$work/err"
                 fail=$((fail+1)); continue
             fi
-            got="$("$work/$name.bin" 2>"$work/err")" ;;
+            got="$("$work/$name.bin" 2>"$work/err")"
+            # the shared object built alongside it, found through an rpath
+            if ! gcc -I"$work" "${files[0]}" -L"$work" -l"$name" -Wl,-rpath,"$work" -l:libgc.so.1 -lm \
+                    -o "$work/$name.so.bin" 2>"$work/err"; then
+                echo "FAIL     interop/$name  (link against lib$name.so)"; sed 's/^/           /' "$work/err"
+                fail=$((fail+1)); continue
+            fi
+            got2="$("$work/$name.so.bin" 2>"$work/err")"
+            if [[ "$got" != "$got2" ]]; then
+                echo "FAIL     interop/$name  (lib$name.a and lib$name.so disagree)"; fail=$((fail+1)); continue
+            fi ;;
         *)
             echo "FAIL     interop/$name  (no '// interop:' directive)"; fail=$((fail+1)); continue ;;
     esac

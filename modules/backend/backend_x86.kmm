@@ -54,6 +54,7 @@ private
     m_xgTypes: [string] = []
     m_usesExportInit: bool = false  // reserve the once-flag in .bss
     m_keepJumps: [string] = []      // targets of `and`/`or` branches whose rax is read at the join
+    m_pic: bool = false             // position-independent output (shared libraries only)
 
 // ── line buffer ────────────────────────────────────────────────────
 
@@ -73,8 +74,29 @@ void X86Backend::label(name: string)
 void X86Backend::emitCall(sym: string)
     ins("mov rbx, rsp")
     ins("and rsp, -16")
-    ins("call " + sym)
+    ins("call " + callTarget(sym))
     ins("mov rsp, rbx")
+
+// Position-independent output for a shared library (`komodo lib`, the
+// `x86pic` target).  Calls go through the PLT, C globals are reached via
+// the GOT, and vtables move to .data.rel.ro.  The default output has none
+// of this: m_pic stays false and every line is emitted as before.
+void X86Backend::forPic()
+    m_pic = true
+
+// The operand of a `call`: `wrt ..plt` in PIC output, else the bare symbol.
+fn X86Backend::callTarget(sym: string): string
+    if m_pic then
+        return sym + " wrt ..plt"
+    return sym
+
+// Operand for a link-time C global (`extern let`).  Executables address it
+// RIP-relative; PIC output loads its address from the GOT into r11 first.
+mut X86Backend::externGlobalRef(sym: string): string
+    if not m_pic then
+        return "[rel " + asmSym(sym) + "]"
+    ins("mov r11, [rel " + asmSym(sym) + " wrt ..got]")
+    return "[r11]"
 
 // ── .rodata interning ──────────────────────────────────────────────
 
@@ -192,7 +214,7 @@ void X86Backend::endFunction()
         ins("mov rdi, rcx")
         ins("mov rsi, rax")
         ins("and rsp, -16")
-        ins("call km_index_error")
+        ins("call " + callTarget("km_index_error"))
     emit("")
 
 void X86Backend::epilogue()
@@ -266,8 +288,8 @@ fn X86Backend::xgIndex(name: string): int
 
 // The C global `xi` → accumulator (rax, or xmm0 for a float), widening
 // from the declared C width.
-void X86Backend::loadExternGlobal(xi: int)
-    let ref = "[rel " + asmSym(m_xgSyms[xi]) + "]"
+mut X86Backend::loadExternGlobal(xi: int)
+    let ref = externGlobalRef(m_xgSyms[xi])
     let t = m_xgTypes[xi]
     if t == "float" then
         ins("movsd xmm0, " + ref)
@@ -289,8 +311,8 @@ void X86Backend::loadExternGlobal(xi: int)
     else
         ins("mov rax, " + ref)
 
-void X86Backend::storeExternGlobal(xi: int)
-    let ref = "[rel " + asmSym(m_xgSyms[xi]) + "]"
+mut X86Backend::storeExternGlobal(xi: int)
+    let ref = externGlobalRef(m_xgSyms[xi])
     let t = m_xgTypes[xi]
     if t == "float" then
         ins("movsd " + ref + ", xmm0")
@@ -988,7 +1010,7 @@ mut X86Backend::cCallEnd(name: string, classes: [string])
 
     // al = number of vector registers used (harmless for non-variadic).
     ins("mov eax, " + string(xmm))
-    ins("call " + sym)
+    ins("call " + callTarget(sym))
     // Unwind the outgoing block and the scratch in one move.
     ins("mov rsp, rbx")
     ins("add rsp, " + string(n * 8))
@@ -1150,7 +1172,7 @@ mut X86Backend::emitTrampoline(sym: string, argc: int)
         i += 1
     ins("mov rdi, " + string(n))
     ins("mov rsi, rsp")
-    ins("call " + asmSym(sym))
+    ins("call " + callTarget(asmSym(sym)))
     ins("mov rsp, rbp")
     ins("pop rbp")
     ins("ret")
@@ -1243,14 +1265,14 @@ mut X86Backend::cAbiEntry(entry: string, target: string, cls: [string], tags: [i
         ins("jne " + ready)
         ins("mov byte [rel km_export_ready], 1")
         addExtern(asmSym("GC_init"))
-        ins("call $GC_init")
+        ins("call " + callTarget("$GC_init"))
         ins("xor edi, edi")
         ins("xor esi, esi")
-        ins("call " + asmSym(initFn))
+        ins("call " + callTarget(asmSym(initFn)))
         label(ready)
     ins("mov rdi, " + string(n))
     ins("mov rsi, rsp")
-    ins("call " + target)
+    ins("call " + callTarget(target))
     if ret == "f32" then
         ins("cvtsd2ss xmm0, xmm0")
     ins("mov rsp, rbp")
@@ -1541,8 +1563,32 @@ mut X86Backend::peephole()
 
 // ── final assembly ─────────────────────────────────────────────────
 
+// PIC output sends every call through the PLT, but NASM rejects `wrt
+// ..plt` on a symbol defined in this object.  Once the whole body is
+// known, a call to a label defined here becomes a plain rel32 call again.
+mut X86Backend::unPltLocalCalls()
+    let defs = new StrIndex()
+    let n = #m_lines
+    let i = 0
+    while i < n do
+        let l = m_lines[i]
+        if l.length > 1 and l[0] != " " and l[l.length - 1] == ":" then
+            defs.add(l[0 to l.length - 1], 1)
+        i += 1
+    i = 0
+    while i < n do
+        let l = m_lines[i]
+        let k = l.length
+        if k > 19 and l[0 to 9] == "    call " and l[k - 10 to k] == " wrt ..plt" then
+            let name = l[9 to k - 10]
+            if defs.first(name) >= 0 then
+                m_lines[i] = "    call " + name
+        i += 1
+
 mut X86Backend::finish(): string
     peephole()
+    if m_pic then
+        unPltLocalCalls()
     return header() + join(m_lines, "\n") + "\n" + footer()
 
 mut X86Backend::header(): string
@@ -1594,6 +1640,10 @@ fn X86Backend::footer(): string
         r = r + "\nsection .bss\nkm_export_ready: resb 8\n"
     r = r + "\nsection .rodata\nkm_abi_gc: dq 1\n" + join(m_rodata, "")
     if m_vtabCount > 0 then
+        // vtables hold absolute function addresses: in PIC output they
+        // belong in a relocated (writable at load time) section
+        if m_pic then
+            r = r + "\nsection .data.rel.ro\n"
         r = r + join(m_vtblText, "")
         r = r + "__km_vtab: dq "
         let i = 0
