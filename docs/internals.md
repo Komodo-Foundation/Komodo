@@ -88,8 +88,7 @@ Line counts are from `wc -l` on this checkout. Every `.kmm` file is
 | [`build-self.sh`](../build-self.sh) | 159 | Bootstrap and fixpoint check for `./kmc` |
 | [`run-tests.sh`](../run-tests.sh) | 105 | Example suite across x86, stackvm, c and wasm |
 | [`run-sema-tests.sh`](../run-sema-tests.sh) | 89 | Analyzer diagnostic tests |
-| [`komodo`](../komodo) | 517 | User CLI: front end via `kmc`, then `nasm` / `gcc` / `emcc` |
-| [`Makefile`](../Makefile) | 29 | `make`, `make test`, `make seed` shortcuts |
+| [`komodo`](../komodo) | ~1100 | User CLI: front end via `kmc`, then `nasm` / `gcc` / `emcc` |
 | [`bootstrap/main.km.asm.gz`](../bootstrap/main.km.asm.gz) | binary | Checked-in seed: assembly of the compiler |
 
 Subfolders group the stages: `frontend/`, `analyze/`, `optimize/`,
@@ -363,7 +362,7 @@ Other behaviour:
 - `--fast` skips the fixpoint check. `--update-seed` rewrites the seed after a
   successful build.
 
-**`make seed`** runs `./build-self.sh --force --update-seed`. Commit the
+**`komodo self seed`** runs `./build-self.sh --force --update-seed`. Commit the
 refreshed `bootstrap/main.km.asm.gz` with the source change that caused it.
 
 **When to refresh the seed.** The seed is the compiler as it was when the
@@ -376,7 +375,7 @@ change. Refreshing it is what lets a fresh clone build with only `nasm` and
 **Rule: never use new syntax in the compiler sources until the seed supports
 it.** Build order matters here. If `modules/` uses a feature that the seed
 does not know, a clone without `./kmc` fails at the bootstrap stage. Land the
-compiler change, run `make seed`, commit the seed, and only then write the
+compiler change, run `komodo self seed`, commit the seed, and only then write the
 feature into `modules/`. A developer with an existing `./kmc` will not see
 this, which is why it is easy to miss.
 
@@ -456,7 +455,7 @@ backend work, and so it works on every target at once.
 ## 12. Tests
 
 Two suites, both driven by the native compiler. Build `./kmc` first with
-`./build-self.sh` (or `make`).
+`./build-self.sh` (or `komodo self build`; plain `komodo` also builds it on demand).
 
 **Examples: `./run-tests.sh [name ...]`.** Each `examples/<name>.km` is run
 through the `komodo` script, so the front end, `nasm`, and `gcc` are all

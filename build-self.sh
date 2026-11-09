@@ -6,6 +6,10 @@
 #     ──nasm──▶ .o ──gcc + stdlib/*.c──▶  ./kmc
 #     ──kmc recompiles main.km──▶  byte-identical main.km.asm   (fixpoint)
 #
+# You rarely run this by hand: `komodo` calls it on demand (first run, or
+# when the compiler sources are newer than ./kmc), and `komodo self build`
+# is the explicit form.  There is no Makefile.
+#
 #   ./build-self.sh               build ./kmc (no-op when nothing changed)
 #   ./build-self.sh --force       rebuild even if the sources are unchanged
 #   ./build-self.sh --fast        skip the fixpoint re-check (~0.5s faster)
@@ -41,7 +45,7 @@ for a in "$@"; do
         --force) force=1 ;;
         --fast) fast=1 ;;
         --update-seed) update_seed=1 ;;
-        -h|--help) sed -n 2,31p "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h|--help) sed -n 2,35p "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) echo "build-self.sh: unknown option '$a'" >&2; exit 2 ;;
     esac
 done

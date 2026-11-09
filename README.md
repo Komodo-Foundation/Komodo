@@ -13,27 +13,33 @@ doesn't have one yet, or for working on the compiler's own sources.
 
 For the language itself — syntax, types, semantics — see [`design.md`](design.md).
 
+**Documentation:** see [docs/](docs/README.md) — getting started, language guide, C/C++ interop, compiler internals.
+
 ## Installing
 
 ```bash
-./install.sh                 # builds ./kmc if needed, symlinks it as `komodo`
-komodo --version
+./install.sh                 # symlinks it as `komodo`; the first run builds ./kmc
+komodo doctor                # checks nasm, gcc, libgc
 ```
 
-See [Requirements](#requirements) below for what `install.sh` needs the first
-time (it bootstraps `kmc` through the interpreter, once).
+See [Requirements](#requirements) below. There is no separate build step: the
+first `komodo` run builds `kmc` from the checked-in seed (about 2 seconds).
 
 ## The `komodo` CLI
 
 ```bash
-komodo file.km                    # compile, link, run  (default)
-komodo -O max -o app src/main.km  # optimize, name the output binary
-komodo -c file.km                  # compile + link only, don't run
-komodo -S file.km                  # emit file.km.asm only
-komodo file.km -- -lSDL2           # extra linker flags / objects
-komodo file.km -- util.cpp         # C++ sources are compiled with g++ and linked in
-komodo --lib --emit-header f.h f.km   # `export fn`s -> f.o, libf.a and a C/C++ header
-komodo -h                          # full flag list
+komodo                    # build (incrementally) and run the project here
+komodo file.km [args]     # build and run one file; args go to the program
+komodo build              # write ./<name>  (--release to optimise, -o to name it)
+komodo test               # run *_test.km files
+komodo watch              # rebuild and rerun on every change
+komodo new demo           # start a project
+komodo lib                # object + static lib + header for C / C++ / Rust / Python
+komodo doctor             # check the toolchain
+komodo -h                 # all commands and options
+
+# C / C++: put .c / .cpp files in native/ and call them with `extern fn`;
+# `extern "pkg:sdl2"` links via pkg-config; `import zlib` binds a system library.
 ```
 
 C and C++ interoperate in both directions: `extern fn` calls into them

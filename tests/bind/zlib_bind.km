@@ -1,0 +1,8 @@
+// bind: zlib.h -p zlib -m c_zlib -o c_zlib.kmm
+import c_zlib
+
+void main()
+    print(c_zlib::zlibVersion() != null)
+    print(c_zlib::crc32(0, "hello", 5))
+    print(c_zlib::Z_OK)
+    print(c_zlib::Z_BEST_COMPRESSION)

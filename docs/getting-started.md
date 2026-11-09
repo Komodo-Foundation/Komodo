@@ -33,18 +33,19 @@ sudo apt install nasm gcc libgc1
 From the repository root:
 
 ```bash
-make            # builds ./kmc (incremental; the first build takes a while)
 ./install.sh    # symlinks komodo into ~/.local/bin
-komodo --version
+komodo doctor   # checks nasm, gcc, libgc (and the optional tools)
 ```
 
-`make install` does both steps. If `~/.local/bin` is not on your `PATH`,
+That is the whole install. There is no compiler build step: the first
+`komodo` run builds `./kmc` itself (about 2 seconds) and rebuilds it whenever
+its sources change. If `~/.local/bin` is not on your `PATH`,
 `install.sh` prints the line to add to your shell's rc file. Pass a different
 directory as an argument to `install.sh` to install elsewhere. The installed
 `komodo` is a symlink, so it always uses this checkout's `kmc` and `stdlib/`.
 
-For every build option (`make fast`, `make test`, `./build-self.sh --force`,
-and others) see [docs/cli.md](cli.md#build-commands).
+For compiler work (`komodo self build|test|seed`, `./build-self.sh --force`)
+see [docs/cli.md](cli.md#working-on-the-compiler).
 
 ## Hello, world
 
@@ -65,18 +66,22 @@ komodo hello.km
 Hello, world!
 ```
 
-`komodo hello.km` compiles, links and runs the program. Each `komodo` run
-writes the executable next to the source as `hello`. To build without running:
+`komodo hello.km` compiles, links and runs the program; build products go to
+a `.komodo/` directory beside it (git-ignored automatically). To build an
+executable instead of running:
 
 ```bash
-komodo -c -o hello hello.km
+komodo build hello.km     # writes ./hello
 ./hello
 ```
 
-To look at the generated assembly, use `-S`:
+Better still, make a project and let `komodo` find the entry file:
 
 ```bash
-komodo -S hello.km        # writes hello.km.asm and stops
+komodo new demo && cd demo
+komodo                    # builds (incrementally) and runs main.km
+komodo test               # runs tests/*_test.km
+komodo watch              # rerun on every save
 ```
 
 `print` is a built-in and needs no import. Other library functions come from
@@ -84,12 +89,16 @@ modules brought in with `import`, for example `import math`.
 
 ## Running a program
 
-- `komodo file.km` compiles, links and runs.
-- `komodo -c file.km` compiles and links only.
-- `komodo -S file.km` writes `file.km.asm` only.
-- `komodo -o name file.km` names the output.
-- `komodo -t c file.km` and `komodo -t wasm file.km` build through the C and
-  WebAssembly targets.
+- `komodo` (no arguments) runs the project in this directory.
+- `komodo file.km [args...]` compiles, links and runs; the args go to your
+  program.
+- `komodo build [-o name]` compiles and links only.
+- `komodo --release` optimises.
+- `komodo -t c` and `komodo -t wasm` build through the C and WebAssembly
+  targets.
+- C code in a `native/` directory is compiled and linked automatically;
+  `import zlib` finds a system library by itself (see
+  [Using libraries](cli.md#using-libraries)).
 
 The full flag list, with examples, is in [docs/cli.md](cli.md).
 

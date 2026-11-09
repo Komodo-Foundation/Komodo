@@ -1,0 +1,214 @@
+#!/usr/bin/env bash
+#
+# km-bind -- turn a C header into a Komodo binding module (.kmm).
+#
+#   km-bind <header.h> [-l lib] [-p pkg-config-name] [-I dir]... [-D macro]...
+#                      [-m module] [-o out.kmm] [--prefix str] [--also substr]
+#                      [--cflag flag] [-v]
+#   km-bind --auto <name> [-o out.kmm] [-v]     resolve a library by name only
+#
+# Needs only bash, awk and gcc (`gcc -E`). See docs/interop.md.
+#
+# Exit codes: 0 ok, 1 error, 2 usage, 3 --auto found no header.
+set -uo pipefail
+
+self="${BASH_SOURCE[0]}"
+while [[ -L "$self" ]]; do
+    dest="$(readlink "$self")"
+    case "$dest" in /*) self="$dest" ;; *) self="$(dirname "$self")/$dest" ;; esac
+done
+here="$(cd "$(dirname "$self")" && pwd)"
+root="$(cd "$here/.." && pwd)"
+awkprog="$here/km-bind.awk"
+cc="${CC:-gcc}"
+
+usage() {
+    cat <<'EOF'
+usage: km-bind <header.h> [options]
+       km-bind --auto <name> [-o out.kmm] [-v]
+
+  -l <lib>            link the library: emits `link <lib>` (-l<lib>)
+  -p <pkg>            use pkg-config <pkg>: emits `link "pkg:<pkg>"` and adds its --cflags
+  -I <dir>            extra include directory (repeatable)
+  -D <macro[=val]>    define a macro for the preprocessor (repeatable)
+  -m <module>         module name (default: -o file stem, else header stem)
+  -o <out.kmm>        write here (default: stdout)
+  --prefix <str>      only bind functions/constants/types whose name starts with <str>
+  --also <substr>     also bind declarations from included files whose path contains <substr>
+  --cflag <flag>      pass a raw flag to the C preprocessor (repeatable)
+  --auto <name>       find the header + library for <name> (pkg-config, alias table,
+                      /usr/include, ...) and bind it as module <name>
+  -v                  verbose: print the resolved header and library on stderr
+EOF
+}
+
+die() { echo "km-bind: $*" >&2; exit "${2:-1}"; }
+
+hdr="" lib="" pkg="" modname="" out="" prefix="" auto="" verbose=0
+incs=() defs=() cflags=() also=""
+args_orig=("$@")
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -h|--help) usage; exit 0 ;;
+        -l) lib="${2:?-l needs a value}"; shift 2 ;;
+        -l?*) lib="${1#-l}"; shift ;;
+        -p) pkg="${2:?-p needs a value}"; shift 2 ;;
+        -I) incs+=("${2:?-I needs a value}"); shift 2 ;;
+        -I?*) incs+=("${1#-I}"); shift ;;
+        -D) defs+=("${2:?-D needs a value}"); shift 2 ;;
+        -D?*) defs+=("${1#-D}"); shift ;;
+        -m) modname="${2:?-m needs a value}"; shift 2 ;;
+        -o) out="${2:?-o needs a value}"; shift 2 ;;
+        --prefix) prefix="${2:?--prefix needs a value}"; shift 2 ;;
+        --also) also="$also:${2:?--also needs a value}"; shift 2 ;;
+        --cflag) cflags+=("${2:?--cflag needs a value}"); shift 2 ;;
+        --auto) auto="${2:?--auto needs a name}"; shift 2 ;;
+        -v|--verbose) verbose=1; shift ;;
+        -*) usage >&2; die "unknown option: $1" 2 ;;
+        *) [[ -z "$hdr" ]] || die "more than one header given" 2; hdr="$1"; shift ;;
+    esac
+done
+vlog() { [[ $verbose -eq 1 ]] && echo "km-bind: $*" >&2; return 0; }
+
+[[ -n "$hdr" || -n "$auto" ]] || { usage >&2; exit 2; }
+command -v "$cc" >/dev/null 2>&1 || die "need a C compiler ($cc) for the preprocessor"
+[[ -f "$awkprog" ]] || die "missing helper $awkprog"
+
+sanitize() {
+    local s="${1//[^A-Za-z0-9_]/_}"
+    [[ "$s" =~ ^[0-9] ]] && s="c_$s"
+    printf '%s' "$s"
+}
+
+# ── gcc's own system include directories ─────────────────────────────
+sysdirs=()
+while IFS= read -r d; do
+    d="${d#"${d%%[![:space:]]*}"}"
+    [[ -d "$d" ]] && sysdirs+=("$(cd "$d" && pwd -P)")
+done < <("$cc" -E -x c -v /dev/null 2>&1 | sed -n '/#include <...> search starts here:/,/End of search list/p' | sed '1d;$d')
+
+# ── --auto: resolve a library name to a header, pkg-config name, link ─
+if [[ -n "$auto" ]]; then
+    name="$auto"
+    cands=() pkgcands=() autolib="" libc=0
+    case "$name" in
+        sdl2|SDL2)   cands=(SDL2/SDL.h); pkgcands=(sdl2) ;;
+        zlib|z)      cands=(zlib.h); pkgcands=(zlib); autolib=z ;;
+        m|math)      cands=(math.h); libc=1 ;;
+        curl)        cands=(curl/curl.h); pkgcands=(libcurl); autolib=curl ;;
+        sqlite3)     cands=(sqlite3.h); pkgcands=(sqlite3); autolib=sqlite3 ;;
+        png)         cands=(png.h libpng/png.h); pkgcands=(libpng libpng16); autolib=png ;;
+        openssl|ssl) cands=(openssl/ssl.h); pkgcands=(openssl); autolib=ssl ;;
+        readline)    cands=(readline/readline.h); pkgcands=(readline); autolib=readline ;;
+        gl|GL)       cands=(GL/gl.h); pkgcands=(gl); autolib=GL ;;
+        ncurses)     cands=(ncurses.h); pkgcands=(ncurses); autolib=ncurses ;;
+        pthread)     cands=(pthread.h); libc=1 ;;
+        string|ctype|stdlib|stdio|time|unistd|errno|signal|stdint|assert|locale|setjmp|wchar|wctype|dirent|fcntl|termios|inttypes|limits|float|stddef|stdbool|complex|fenv|regex|getopt|dlfcn|poll|netdb|libgen|strings|utime|sched|semaphore|syslog)
+                     cands=("$name.h"); libc=1 ;;
+        *)           cands=("$name.h" "$name/$name.h" "lib$name.h"); pkgcands=("$name" "lib$name"); autolib="$name" ;;
+    esac
+    # pkg-config
+    foundpkg=""
+    if command -v pkg-config >/dev/null 2>&1; then
+        for pc in "${pkgcands[@]}"; do
+            if pkg-config --exists "$pc" 2>/dev/null; then foundpkg="$pc"; break; fi
+        done
+    fi
+    searchdirs=()
+    if [[ -n "$foundpkg" ]]; then
+        for f in $(pkg-config --cflags-only-I "$foundpkg" 2>/dev/null); do
+            [[ "$f" == -I* ]] && { incs+=("${f#-I}"); searchdirs+=("${f#-I}"); }
+        done
+        id="$(pkg-config --variable=includedir "$foundpkg" 2>/dev/null)"
+        [[ -n "$id" ]] && searchdirs+=("$id")
+    fi
+    searchdirs+=("${sysdirs[@]}" /usr/include /usr/include/x86_64-linux-gnu /usr/local/include)
+    hdr=""
+    for c in "${cands[@]}"; do
+        for d in "${searchdirs[@]}"; do
+            if [[ -f "$d/$c" ]]; then hdr="$d/$c"; hdrname="$c"; break 2; fi
+        done
+    done
+    if [[ -z "$hdr" ]]; then
+        echo "km-bind: no header for '$name': install lib$name-dev or write a binding" >&2
+        exit 3
+    fi
+    if [[ -n "$foundpkg" ]]; then pkg="$foundpkg"
+    elif [[ $libc -eq 0 && -n "$autolib" ]]; then lib="$autolib"
+    fi
+    modname="$(sanitize "$name")"
+    cmdline="km-bind --auto $name"
+    vlog "header: $hdr"
+    vlog "library: ${pkg:+pkg:$pkg}${lib:+-l$lib}$([[ -z "$pkg$lib" ]] && echo '(libc, nothing to link)')"
+else
+    hdrname="$hdr"
+    # find the header: as given, else in -I dirs / pkg-config / system dirs
+    if [[ ! -f "$hdr" ]]; then
+        searchdirs=("${incs[@]}")
+        if [[ -n "$pkg" ]] && command -v pkg-config >/dev/null 2>&1; then
+            for f in $(pkg-config --cflags-only-I "$pkg" 2>/dev/null); do
+                [[ "$f" == -I* ]] && searchdirs+=("${f#-I}")
+            done
+        fi
+        searchdirs+=("${sysdirs[@]}")
+        found=""
+        for d in "${searchdirs[@]}"; do [[ -f "$d/$hdr" ]] && { found="$d/$hdr"; break; }; done
+        [[ -n "$found" ]] || die "cannot find header '$hdr'"
+        hdr="$found"
+    fi
+    cmdline="km-bind ${args_orig[*]}"
+    # keep the command line free of machine-specific absolute temp paths
+    vlog "header: $hdr"
+fi
+
+if [[ -n "$pkg" ]] && command -v pkg-config >/dev/null 2>&1 && pkg-config --exists "$pkg" 2>/dev/null; then
+    for f in $(pkg-config --cflags "$pkg" 2>/dev/null); do cflags+=("$f"); done
+fi
+
+# ── module name ───────────────────────────────────────────────────────
+reserved=" $(for f in "$root"/stdlib/*.kmm; do [[ -f "$f" ]] && basename "$f" .kmm; done | tr '\n' ' ')"
+if [[ -z "$modname" ]]; then
+    if [[ -n "$out" ]]; then
+        modname="$(sanitize "$(basename "${out%.*}")")"
+    else
+        b="$(basename "$hdr")"; modname="$(sanitize "${b%.*}")"
+        [[ "$reserved" == *" $modname "* ]] && modname="c_$modname"
+    fi
+else
+    modname="$(sanitize "$modname")"
+fi
+
+# ── absolute header path, include dirs ────────────────────────────────
+habs="$(cd "$(dirname "$hdr")" && pwd)/$(basename "$hdr")"
+tdir="$(dirname "$habs")"
+systarget=0
+for d in "${sysdirs[@]}"; do [[ "$d" == "$tdir" ]] && systarget=1; done
+stem="$(basename "$habs")"; stem="${stem%.*}"
+stem_re="$(printf '%s' "$stem" | sed 's/[^A-Za-z0-9_-]/\\&/g')"
+
+ccargs=()
+for d in "${incs[@]}"; do ccargs+=("-I$d"); done
+for d in "${defs[@]}"; do ccargs+=("-D$d"); done
+ccargs+=("${cflags[@]}")
+
+tmp="$(mktemp)"
+trap 'rm -f "$tmp"' EXIT
+if ! "$cc" -E -dD -x c "${ccargs[@]}" "$habs" >"$tmp" 2>"$tmp.err"; then
+    echo "km-bind: the C preprocessor failed on $hdr:" >&2
+    sed 's/^/  /' "$tmp.err" >&2; rm -f "$tmp.err"; exit 1
+fi
+rm -f "$tmp.err"
+
+gen() {
+    awk -f "$awkprog" \
+        -v "TARGET=$habs" -v "TDIR=$tdir" -v "SYSTARGET=$systarget" -v "STEM=$stem_re" \
+        -v "ALSO=${also#:}" -v "PREFIX=$prefix" -v "MODNAME=$modname" \
+        -v "LIBNAME=$lib" -v "PKGNAME=$pkg" -v "HDR=$hdrname" -v "CMD=$cmdline" \
+        "$tmp"
+}
+if [[ -n "$out" ]]; then
+    gen >"$out.tmp.$$" && mv -f "$out.tmp.$$" "$out" || { rm -f "$out.tmp.$$"; die "generation failed"; }
+    vlog "wrote $out"
+else
+    gen || die "generation failed"
+fi

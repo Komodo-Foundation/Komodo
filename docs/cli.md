@@ -5,115 +5,164 @@ the build commands and the test scripts. For a first run see
 [getting-started.md](getting-started.md).
 
 ```bash
-komodo [options] <file.km> [-- <extra linker args>]
-komodo repl [-O level]
+komodo                          # build and run the project in this directory
+komodo file.km [args...]        # build and run one file; args go to the program
+komodo <command> [options]
 ```
 
 `komodo` is a bash driver. It runs `kmc` for the front end, then `nasm` and
 `gcc` (or `emcc`) for assembly, linking and the wasm target, and runs the
 program. It finds its own checkout through symlinks, so the copy installed in
-`~/.local/bin` uses this checkout's `kmc` and `stdlib/`.
+`~/.local/bin` uses this checkout's `kmc` and `stdlib/`. There is no separate
+compiler build step: when `./kmc` is missing or older than its sources, the
+next `komodo` run builds it (`first run: building the compiler (~2s)`).
 
-Examples in this page use `hello.km` for a file containing:
+## The project
+
+With no file argument, `komodo` looks in the current directory for the entry
+file, in this order: `main.km`, `src/main.km`, `<directory name>.km`, and
+finally the only `.km` file there (not counting `*_test.km`). If none
+qualifies it prints the candidates and what to do. `komodo <dir>` does the
+same for another directory.
+
+The **project root** is the entry file's directory (its parent, when that is
+named `src` or `tests`). Build products of `komodo` / `komodo run` go to
+`<root>/.komodo/`, which gets a `.gitignore` of `*` automatically, so the
+source tree stays clean. Only `komodo build`, `komodo lib` and explicit `-o`
+write anything elsewhere.
+
+Everything after the file is passed to your program:
+`komodo main.km --verbose 3` runs it with `--verbose 3`.
+
+## Commands
+
+| Command | What it does |
+|---|---|
+| `komodo [run] [file]` | Build incrementally and run. The default. |
+| `komodo build [file]` | Build an executable: `./<project name>` (or the file name without `.km`), or `-o <path>`. Does not run it. |
+| `komodo test [path...]` | Build and run every `*_test.km` file, plus every `.km` under a `tests/` directory that defines `void main()`. Exit status 0 means pass. Prints one `ok` / `FAIL` line per file (output shown for failures) and a summary; exits 1 if any failed. Paths may be files or directories (default `.`). |
+| `komodo repl` | The interactive prompt, see [REPL](#repl). |
+| `komodo new <name>` | Create `<name>/` with `main.km`, `tests/smoke_test.km` and a `.gitignore`. |
+| `komodo bind ...` | Generate Komodo `extern` bindings from a C header (`tools/km-bind`). Arguments go to that tool. |
+| `komodo watch [file]` | Run, then rebuild and rerun whenever a `.km`, `.kmm` or native source under the project root changes (polled every 0.4 s). Ctrl-C stops. |
+| `komodo lib [file]` | Build a library for C, C++, Rust or Python callers: `<name>.o`, `lib<name>.a` and the header `<name>.h` generated from the program's `export fn`s. `-o <path>` sets the output prefix. |
+| `komodo clean [dir]` | Delete `.komodo/` and the files `komodo build` / `lib` recorded. `--cache` also empties the shared cache. |
+| `komodo doctor` | Check for `nasm`, `gcc`, libgc, and the optional `g++`, `pkg-config`, `emcc`, `node`, `km-bind`; prints a fix hint for anything missing. |
+| `komodo self build\|test\|seed` | For compiler contributors, see [Working on the compiler](#working-on-the-compiler). |
+
+A mistyped command gets a suggestion (`komodo biuld` -> `did you mean 'build'?`).
+
+## Options
+
+| Option | Meaning |
+|---|---|
+| `--release` | Optimise: the highest optimizer level (see [Optimization](#optimization)). Slower to build, faster to run. |
+| `-t, --target <x86\|c\|wasm\|stackvm>` | Code-generation target, see [Targets](#targets). `wasm` builds with `emcc` and runs with `node`. |
+| `-o <path>` | Where `build` writes its executable, or the output prefix for `lib`. The directory must exist. |
+| `-q, --quiet` | Only the program's own output (plus diagnostics and errors). |
+| `-v, --verbose` | Show the steps and every `nasm` / `gcc` command. |
+| `-h, --help`, `-V, --version` | Help and version. |
+
+Errors are one line with a hint, for example
+`komodo: nasm not found — install it (Debian/Ubuntu: sudo apt install nasm ...)`.
+Run `komodo doctor` when something is missing.
+
+## Native code and libraries
+
+### Using libraries
+
+Import the name; that is all.
 
 ```km
+import zlib
+
 void main()
-    print("Hello, world!")
+    print(zlib::zlibVersion())
 ```
 
-## Flags
+For an `import NAME` that is neither a module of your project (a `NAME.km` or
+`NAME.kmm` below the entry file's directory) nor a standard-library module,
+`komodo` asks `tools/km-bind --auto NAME` to find the C library (via
+pkg-config, then the system headers) and write a binding module to
+`komodo_bindings/NAME.kmm` next to your entry file. The binding carries the
+link line (`pkg:NAME` or `-lNAME`). Existing bindings are reused, so repeated
+runs are instant; delete the directory to regenerate. `komodo_bindings/` is
+generated, so `komodo new` ignores it in git. (It cannot live inside
+`.komodo/`: the compiler's module search skips directories whose name begins
+with a dot.) If no library is found the compiler's error is followed by
+`no C library 'NAME' found (try: sudo apt install libNAME-dev, or write a
+binding with komodo bind)`. For a header you want to bind yourself, run
+`komodo bind`.
 
-### `-o, --output <path>`
+### native/
 
-Names the output executable. Default: the source path without `.km`. For
-the wasm target, `<path>` gives `<path>.js` and `<path>.wasm`.
+If a `native/` directory sits next to the entry file (or at the project root),
+every `.c`, `.cpp`, `.cc`, `.cxx`, `.o` and `.a` directly inside it is built
+and linked automatically. Sources are compiled once and cached by content
+(`.cpp` with `g++`, which adds `-lstdc++`); `native/` is also an include path,
+and editing a header there rebuilds what includes it.
 
-```bash
-mkdir -p build && komodo -c -o build/hello hello.km    # writes build/hello
+```km
+// main.km                      native/hello.c: long hello_add(long a, long b) {...}
+extern fn hello_add(a: int, b: int): int
 ```
 
-The output directory must already exist. `komodo` does not create it.
+### Linking names
 
-### `-t, --target <name>`
+`link` directives and `extern "lib"` headers (see [ffi.md](ffi.md)) accept:
 
-Selects the code-generation target: `x86` (default), `stackvm`, `c` or `wasm`.
-See [Targets](#targets).
+- a bare name, `-lname`, or flags: passed to the linker. If `pkg-config` has a
+  package of that name, its flags are used instead (so private dependencies and
+  `-I` come along);
+- `pkg:name` (for example `extern "pkg:sdl2"` or `link "pkg:sdl2"`): expands to
+  `pkg-config --cflags --libs name`; an unknown package is an error with an
+  install hint;
+- a path to a `.c`, `.cpp`, `.cc`, `.cxx`, `.o` or `.a`.
+
+### Shared libraries
+
+`komodo lib` produces a static archive and an object, not a `.so`. Linking a
+shared library fails because the generated assembly is not position-independent
+(calls into the C runtime and libgc are not routed through the PLT), so a
+shared build is not currently possible.
+
+## Working on the compiler
 
 ```bash
-komodo -t c -c -o hello-c hello.km
+komodo self build     # ./build-self.sh: build ./kmc (no-op when up to date)
+komodo self test      # ./run-tests.sh, then ./run-sema-tests.sh
+komodo self seed      # ./build-self.sh --force --update-seed
 ```
 
-### `-O <level>`
+`self build` accepts `build-self.sh`'s own options (`--force`, `--fast`).
+Ordinary use never needs it: `komodo` builds the compiler on demand.
 
-Sets the optimization level: `none`, `low`, `medium` or `max`, or `0` to `3`.
-Default: `none`. `-O<level>` (for example `-Omax`) and `--opt=<level>` also work.
-See [Optimization](#optimization).
+## Legacy flags
+
+These keep working (the test scripts use them) but are hidden from `--help`.
+
+| Flag | Equivalent / meaning |
+|---|---|
+| `-O <level>`, `-O<level>`, `--opt=<level>` | Optimization level `none`, `low`, `medium`, `max` or `0`-`3`; `--release` is `-O max`. |
+| `-S`, `--emit-asm` | Stop after writing `<file>.asm` next to the source. |
+| `-c`, `--compile` | Build but do not run; the binary goes to `-o` or the file name without `.km`. |
+| `-k`, `--kmc <path>` | Use another `kmc` (as `$KMC`); disables the automatic compiler build. |
+| `--strict` | Make analyser warnings fatal, and enable extra checks, see [Strict mode](#strict-mode). |
+| `--no-cache` | Ignore the build cache for this run. |
+| `--clean` | Delete the shared cache and, given a file, its `.asm/.o/.links/.deps`; exit. |
+| `--time` | Print per-phase timings to stderr. |
+| `--lib`, `--emit-header <h>` | What `komodo lib` does; `--emit-header` alone writes only the header. |
+| `file.km -- <args>` | Everything after a literal `--` following the file goes to the linker: `.c` / `.o` / `.a` files, `-l`, `-L`, `-I`. `$KM_CC_INPUTS` is read the same way. Prefer `native/`. |
 
 ```bash
-komodo -O max -c -o hello hello.km
-```
-
-### `--strict`
-
-Turns analyser warnings into errors, and enables extra checks. See
-[Strict mode](#strict-mode).
-
-```bash
+komodo -O max -c -o app src/main.km
 komodo --strict hello.km
-```
-
-### `-S, --emit-asm`
-
-Stops after writing `<file>.asm` (the generated NASM, C or bytecode text,
-depending on the target). Nothing is assembled, linked or run.
-
-```bash
-komodo -S hello.km                   # writes hello.km.asm
-```
-
-### `-c, --compile`
-
-Assembles and links, but does not run the program.
-
-```bash
-komodo -c -o hello hello.km && ./hello
-```
-
-### `-k, --kmc <path>`
-
-Uses a different `kmc` binary. The default is the `kmc` next to `komodo`.
-`$KMC` has the same effect.
-
-```bash
-REPO=~/Komodo                       # your checkout
-komodo -k "$REPO/kmc" -c hello.km
-```
-
-### `--no-cache`
-
-Ignores the build cache for this run. The run still refills it. See
-[Caching](#caching).
-
-```bash
-komodo --no-cache hello.km
-```
-
-### `--clean`
-
-Deletes the build cache and exits. With a file argument, it also deletes that
-file's `.asm`, `.o`, `.links` and `.deps`.
-
-```bash
-komodo --clean hello.km
-```
-
-### `--time`
-
-Prints how long each phase took to stderr.
-
-```bash
+komodo -S hello.km                    # writes hello.km.asm
 komodo --time -q hello.km
+komodo hello.km -- util.cpp           # same as putting util.cpp in native/
 ```
+
+`--time` output looks like:
 
 ```text
   front end      13 ms  cached
@@ -121,43 +170,6 @@ komodo --time -q hello.km
   link            7 ms  cached
 Hello, world!
   run             4 ms
-```
-
-Phases served from the cache are marked `cached`. Timings vary from run to run.
-
-### `-v, --verbose`
-
-Prints each command (`kmc`, `nasm`, `gcc`) before it runs.
-
-```bash
-komodo -v -c hello.km
-```
-
-### `-q, --quiet`
-
-Hides progress lines. Only the program's own output, analyser diagnostics and
-errors are shown.
-
-```bash
-komodo -q hello.km
-```
-
-### `-h, --help`, `-V, --version`
-
-```bash
-komodo --help
-komodo --version
-```
-
-### `--` (extra linker arguments)
-
-Everything after a literal `--` goes to the linker: `.c`, `.o` and `.a` files,
-`-l`, `-L` and `-I` flags. Use it for a library that has no `link` declaration
-of its own. Libraries that declare themselves are linked automatically.
-`$KM_CC_INPUTS` is read the same way.
-
-```bash
-komodo hello.km -- -lm
 ```
 
 ## Targets
@@ -172,7 +184,8 @@ komodo hello.km -- -lm
 ```bash
 komodo hello.km                            # x86, compile + run
 komodo -t c hello.km                       # C, compile + run
-komodo -t wasm -c -o hello hello.km && node hello.js   # wasm
+komodo -t wasm hello.km                    # wasm: emcc, then run with node
+komodo -t wasm build -o hello && node hello.js
 komodo -t stackvm hello.km                 # writes hello.km.asm and stops
 ```
 
@@ -196,7 +209,7 @@ Details are in [`design.md`](../design.md#webassembly).
 
 ## Optimization
 
-`-O` selects the optimizer pass, which runs on the AST after analysis.
+`--release` (legacy `-O max`) and `-O <level>` select the optimizer pass, which runs on the AST after analysis.
 The levels are defined in [`modules/optimize/optimize.kmm`](../modules/optimize/optimize.kmm):
 
 | Level | What it does |
@@ -221,8 +234,8 @@ void main()
 ```
 
 ```bash
-komodo -q -O none opt.km        # prints: 7 14
-komodo -q -O max  opt.km        # prints: 7 14
+komodo -q opt.km        # prints: 7 14
+komodo -q --release opt.km        # prints: 7 14
 ```
 
 Generated assembly for this file is 72 lines at `-O none` and 42 lines at
@@ -267,13 +280,16 @@ to `${XDG_CACHE_HOME:-~/.cache}/komodo`. It has three parts:
 - `fe/`: front-end output (the `.asm`, `.links` and `.deps` files), keyed on the
   source path, the target, the optimization level, the strict flag and the `kmc`
   binary. A hit skips `kmc`.
-- `obj/`: each `stdlib/*.c` file, compiled once per content and toolchain.
+- `obj/`: each `stdlib/*.c` file and each `native/` source, compiled once per content and toolchain.
 - `bin/`: the finished executable, keyed on the assembly and the link inputs.
   A hit skips `nasm` and `gcc`.
 
-The cache holds only derived data, so it is safe to delete. Use `--no-cache`
-to bypass it for one run, and `--clean` to remove it. If the output looks stale
-after an edit, rerun with `--no-cache`.
+The front-end entry is valid only while the SHA-256 of the source and of every
+file it read last time is unchanged, so an edit is always noticed, even one
+that keeps the file size and lands in the same second.
+
+The cache holds only derived data, so it is safe to delete:
+`komodo clean --cache` removes it. `--no-cache` bypasses it for one run.
 
 ## `kmc`: the compiler by itself
 
@@ -304,7 +320,7 @@ the automatic `link` libraries and the cache, which this example skips.
 
 ```bash
 komodo repl            # or ./kmrepl from the checkout
-komodo repl -O max     # optimize each entry
+komodo repl --release  # optimize each entry
 komodo repl -k /path/to/kmc
 ```
 
@@ -313,22 +329,21 @@ Commands: `:help`, `:show` (prints the program the session has built so far),
 A session is replayed from source on each entry. See
 [getting-started.md](getting-started.md#the-repl) for an example.
 
-## Build commands
+## Installing
 
-Run these from the repository root.
+```bash
+./install.sh            # symlinks ~/.local/bin/komodo to this checkout
+./install.sh <dir>      # symlinks <dir>/komodo instead
+```
 
-| Command | What it does |
-|---|---|
-| `make` | Runs `./build-self.sh`. Builds `./kmc`, or does nothing if the sources have not changed. |
-| `make fast` | Runs `./build-self.sh --fast`. Builds without the fixpoint re-check. |
-| `make test` | Builds, then runs `./run-tests.sh` and `./run-sema-tests.sh`. |
-| `make install` | Builds, then runs `./install.sh`. |
-| `make seed` | Runs `./build-self.sh --force --update-seed`. Rewrites `bootstrap/main.km.asm.gz`. Commit it with the source change. |
-| `make clean` | Removes `.build`, `kmc`, `main.km.asm`, `main.km.stage.asm` and `build.kmc.o`. |
+It only creates the symlink (and refuses to overwrite a regular file at the
+target path). Nothing is built until the first `komodo` run, which builds
+`./kmc` on its own.
 
 ### `./build-self.sh`
 
-Builds the compiler with itself. Options:
+`komodo` and `komodo self build` call this; you rarely need it directly.
+It builds the compiler with itself. Options:
 
 - `--force`: rebuilds even if the sources are unchanged.
 - `--fast`: skips the fixpoint re-check, which saves about half a second.
@@ -341,16 +356,6 @@ The bootstrap compiler is chosen in this order: `$KMC`, then an existing
 used only when the others are missing. After the first build, `build-self.sh`
 checks that `kmc` reproduces its own assembly byte for byte. The script
 rechecks a second stage if the first differs.
-
-### `./install.sh`
-
-```bash
-./install.sh            # symlinks ~/.local/bin/komodo to this checkout
-./install.sh <dir>      # symlinks <dir>/komodo instead
-```
-
-It builds `./kmc` first if needed. It refuses to overwrite a regular file at
-the target path.
 
 ## Test scripts
 

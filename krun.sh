@@ -15,8 +15,8 @@
 # Example:  ./krun.sh demos/sdl_window.km ./sdl_window -lSDL2
 #
 # Uses the `kmc` already present next to this script (build it first with
-# `make kmc`).  It must sit beside stdlib/ so it can locate the standard-
-# library modules — the repo root, where `make kmc` puts it.  Point $KMC
+# `komodo self build`).  It must sit beside stdlib/ so it can locate the standard-
+# library modules — the repo root, where `komodo self build` puts it.  Point $KMC
 # at a kmc elsewhere to override.
 #
 # $KM_OPT selects the optimisation level (none | low | medium | max).
@@ -34,7 +34,7 @@ obj="$src.o"
 kmc="${KMC:-$here/kmc}"
 
 [[ -f "$src" ]] || { echo "krun: no such file: $src" >&2; exit 1; }
-[[ -x "$kmc" ]] || { echo "krun: no native compiler at $kmc — build it with 'make kmc' (or set \$KMC)" >&2; exit 1; }
+[[ -x "$kmc" ]] || { echo "krun: no native compiler at $kmc — build it with 'komodo self build' (or set \$KMC)" >&2; exit 1; }
 
 # 1. Komodo front end + codegen  →  NASM assembly (written next to <src>)
 echo "compiling $src  (native kmc${KM_OPT:+, -O$KM_OPT})"

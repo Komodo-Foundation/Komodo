@@ -26,7 +26,7 @@ prog="$(basename "$0")"
 
 usage() {
     cat <<EOF
-usage: $prog [-O level] [-k kmc]
+usage: $prog [--release] [-k kmc]       (also: komodo repl)
 
 Commands:  :help  :show  :reset  :undo  :quit   (Ctrl-D also quits)
   :show   print the program the session has built so far
@@ -40,6 +40,7 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         -h|--help) usage; exit 0 ;;
         -O) komodo_args+=(-O "$2"); shift 2 ;;
+        --release) komodo_args+=(--release); shift ;;
         -k) komodo_args+=(-k "$2"); shift 2 ;;
         *) echo "$prog: unknown option '$1'" >&2; exit 2 ;;
     esac
@@ -142,7 +143,10 @@ while true; do
 
     # 1. as an expression: print its value (not kept in the session)
     assign_re='^[A-Za-z_][][A-Za-z0-9_. ]*[-+*/%]?=([^=]|$)'
-    if [[ "$entry" != *$'\n'* && ! "$entry" =~ ^let[[:space:]] && ! "$entry" =~ $assign_re ]] \
+    # (a line that already is a print call would print twice: print(print(..)))
+    print_re='^(console\.)?print(ln)?[[:space:]]*\('
+    if [[ "$entry" != *$'\n'* && ! "$entry" =~ ^let[[:space:]] && ! "$entry" =~ $assign_re \
+          && ! "$entry" =~ $print_re ]] \
        && attempt "print($entry)"; then
         show_out
         continue
