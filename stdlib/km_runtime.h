@@ -276,4 +276,8 @@ const char *path_ext(int64_t argc, KmArg *items);
 const char *path_abs(int64_t argc, KmArg *items);
 int64_t     path_exists(int64_t argc, KmArg *items);
 
+/* ── module: process ── */
+int64_t     process_run(int64_t argc, KmArg *items);
+const char *process_output(int64_t argc, KmArg *items);
+
 #endif /* KM_RUNTIME_H */

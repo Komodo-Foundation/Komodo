@@ -1,0 +1,18 @@
+// Exercises the `process` standard library module.  Commands go through the
+// shell; wasm has no subprocesses, so this example is x86 / C only.
+// wasm: skip — no fork/popen under Emscripten (process_run returns -1)
+
+import console
+import process
+
+void main()
+    console.print("before child")
+    console.print("run true:", process.run("true"))
+    console.print("run exit 3:", process.run("exit 3"))
+    console.print("run missing:", process.run("komodo_no_such_command_xyz 2>/dev/null"))
+    console.print("after child")
+
+    let out = process.output("echo hello; echo world")
+    console.write("captured: " + out)
+    console.print("captured bytes:", #out)
+    console.print("output of exit 1:", #process.output("exit 1"))

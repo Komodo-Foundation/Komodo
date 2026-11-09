@@ -1,0 +1,8 @@
+module process
+
+// Linked from stdlib/process.c.  Reached as `process.NAME(...)`, which the
+// compiler mangles to the flat symbol `process_NAME`.  Commands run through
+// `sh -c`.  Not available on the wasm target (no fork / popen there).
+
+fn process_run(cmd: string): int
+fn process_output(cmd: string): string
