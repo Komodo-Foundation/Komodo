@@ -996,7 +996,7 @@ if [[ "$target" == "wasm" ]]; then
     cp -p "$asm" "$wc_src"
     wflags=( -std=gnu11 -O1 -w -I"$here/stdlib" )
     for nd in ${native_dirs[@]+"${native_dirs[@]}"}; do wflags+=( -I"$nd" ); done
-    wlink=( -sENVIRONMENT=node -sWASM_ASYNC_COMPILATION=0 -sNODERAWFS=1 -sEXIT_RUNTIME=1
+    wlink=( -sEXPORTED_RUNTIME_METHODS=lengthBytesUTF8,stringToUTF8 -sENVIRONMENT=node -sWASM_ASYNC_COMPILATION=0 -sNODERAWFS=1 -sEXIT_RUNTIME=1
             -sALLOW_MEMORY_GROWTH=1 -sINITIAL_MEMORY=64MB -sTOTAL_STACK=16MB -lm )
     wtool_id="emcc:$(emcc --version 2>/dev/null | head -1)"
     t=$(now_ms)

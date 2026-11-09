@@ -31,6 +31,7 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 18 }
       - uses: mymindstorm/setup-emsdk@v14
+        with: { version: 3.1.6 }
       - name: Install toolchain
         run: sudo apt-get update && sudo apt-get install -y nasm gcc g++ libgc-dev libgc1 pkg-config zlib1g-dev
       - run: ./build-self.sh
