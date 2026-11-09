@@ -1,0 +1,4 @@
+import console
+void main()
+    let x = 2f
+    console.print(x)
