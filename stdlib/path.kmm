@@ -1,0 +1,12 @@
+module path
+
+// Linked from stdlib/path.c.  Reached as `path.NAME(...)`, which the
+// compiler mangles to the flat symbol `path_NAME`.  The string functions
+// are lexical; nothing is read from disk except by abs and exists.
+
+fn path_join(a: string, b: string): string
+fn path_dirname(p: string): string
+fn path_basename(p: string): string
+fn path_ext(p: string): string
+fn path_abs(p: string): string
+fn path_exists(p: string): int

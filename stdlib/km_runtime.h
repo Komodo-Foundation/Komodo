@@ -268,4 +268,12 @@ int64_t     random_int(int64_t argc, KmArg *items);
 double      random_float(int64_t argc, KmArg *items);
 void        random_shuffle(int64_t argc, KmArg *items);
 
+/* ── module: path ── */
+const char *path_join(int64_t argc, KmArg *items);
+const char *path_dirname(int64_t argc, KmArg *items);
+const char *path_basename(int64_t argc, KmArg *items);
+const char *path_ext(int64_t argc, KmArg *items);
+const char *path_abs(int64_t argc, KmArg *items);
+int64_t     path_exists(int64_t argc, KmArg *items);
+
 #endif /* KM_RUNTIME_H */
