@@ -1,0 +1,9 @@
+module time
+
+// Linked from stdlib/time.c.  Reached as `time.NAME(...)`, which the
+// compiler mangles to the flat symbol `time_NAME`.
+
+fn time_now(): int
+fn time_millis(): int
+void time_sleep_ms(ms: int)
+fn time_format(secs: int, fmt: string): string

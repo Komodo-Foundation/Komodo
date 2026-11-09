@@ -256,4 +256,16 @@ const char *os_cwd(int64_t argc, KmArg *items);
 int64_t     os_pid(int64_t argc, KmArg *items);
 const char *os_platform(int64_t argc, KmArg *items);
 
+/* ── module: time ── */
+int64_t     time_now(int64_t argc, KmArg *items);
+int64_t     time_millis(int64_t argc, KmArg *items);
+void        time_sleep_ms(int64_t argc, KmArg *items);
+const char *time_format(int64_t argc, KmArg *items);
+
+/* ── module: random ── */
+void        random_seed(int64_t argc, KmArg *items);
+int64_t     random_int(int64_t argc, KmArg *items);
+double      random_float(int64_t argc, KmArg *items);
+void        random_shuffle(int64_t argc, KmArg *items);
+
 #endif /* KM_RUNTIME_H */
