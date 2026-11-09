@@ -1,0 +1,36 @@
+// Exercises the `random` standard library module.  The generator is
+// splitmix64, so a fixed seed prints the same numbers on every platform.
+
+import console
+import random
+import algorithm
+
+void main()
+    random.seed(42)
+    let rolls: [int] = []
+    let i = 0
+    while i < 5 do
+        rolls += [random.int(1, 6)]
+        i += 1
+    console.print("dice after seed 42:", rolls)
+
+    random.seed(7)
+    let inside = true
+    i = 0
+    while i < 1000 do
+        let f = random.float()
+        if f < 0.0 or f >= 1.0 then
+            inside = false
+        i += 1
+    console.print("floats in [0,1):", inside)
+
+    random.seed(7)
+    let deck: [int] = [1, 2, 3, 4, 5, 6, 7, 8]
+    random.shuffle(deck)
+    console.print("shuffled:", deck)
+    console.print("still a permutation:", algorithm.sum(deck), #deck)
+
+    random.seed(7)
+    let again = random.int(0, 1000000)
+    random.seed(7)
+    console.print("repeatable:", again == random.int(0, 1000000))

@@ -1,0 +1,10 @@
+module random
+
+// Linked from stdlib/random.c.  Reached as `random.NAME(...)`, which the
+// compiler mangles to the flat symbol `random_NAME`.  The generator is
+// splitmix64: the same seed gives the same sequence on every platform.
+
+void random_seed(n: int)
+fn random_int(lo: int, hi: int): int
+fn random_float(): float
+void random_shuffle(xs: [int])

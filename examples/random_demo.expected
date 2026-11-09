@@ -1,0 +1,5 @@
+dice after seed 42: [2, 2, 1, 1, 5]
+floats in [0,1): 1
+shuffled: [2, 5, 6, 3, 7, 1, 4, 8]
+still a permutation: 36 8
+repeatable: 1
