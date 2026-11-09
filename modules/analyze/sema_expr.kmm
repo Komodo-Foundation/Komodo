@@ -383,6 +383,12 @@ mut Analyzer::inferCall(e: CallExpr): Type
         // was imported (stdlib/*.kmm, or any library), type-check against
         // it, otherwise leave the call unchecked.
         let sym = mangleDotted(e.name)
+        // `mod.fn(...)` on a user module is the same call as `mod::fn(...)`:
+        // rewrite it and resolve through the plain-name path below.
+        if not hasFn(sym) and hasFn(meth) and fnModOf(meth) == recv then
+            e.name = meth
+            e.qualifier = recv
+            return inferCall(e)
         // `Module.member` where `member` sits in a `private` section of a
         // *different* module — reject it.
         if hasFn(sym) and fnVisOf(sym) == "private" then

@@ -1,0 +1,7 @@
+// `module.fn(...)` is the same call as `module::fn(...)`.
+import console
+import greet
+
+void main()
+    console.print(greet.hello("world"))
+    console.print(greet::loud("Komodo"))
