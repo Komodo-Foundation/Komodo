@@ -784,6 +784,11 @@ module's functions are declared in `stdlib/<name>.kmm` and implemented in
 | `string` | `length`, `split`, `join`, `trim`, `trim_start`, `trim_end`, `replace`, `index_of`, `contains`, `starts_with`, `ends_with`, `to_upper`, `to_lower`, `repeat`, `reverse`, `substring`, `pad_start`, `pad_end` |
 | `algorithm` | `sort`, `reverse`, `sum`, `max`, `min`, `index_of`, `contains`, `fill`. Each works on `[int]` and on `[float]` |
 | `file` | `exists`, `is_dir`, `read_all`, `read_lines`, `write_all`, `append_all`, `find`, `list_dir` |
+| `os` | `args(): [string]` (argv, argv[0] included), `getenv(name): string?` (null when unset), `setenv(name, value)`, `exit(code)`, `cwd(): string`, `pid(): int`, `platform(): string` (`linux`, `darwin`, `windows`, `wasm`) |
+| `time` | `now(): int` (unix seconds), `millis(): int` (monotonic milliseconds), `sleep_ms(ms)`, `format(secs: int, fmt: string): string` (strftime, UTC) |
+| `random` | `seed(n)`, `int(lo, hi): int` (inclusive), `float(): float` in [0, 1), `shuffle(xs: [int])` in place. splitmix64: a seed gives the same sequence on every platform |
+| `path` | `join(a, b)`, `dirname(p)`, `basename(p)`, `ext(p)` (with the dot), `abs(p)` (lexical, against the cwd), `exists(p): int` (any file or directory) |
+| `process` | `run(cmd): int` (exit status, stdio inherited; 128+n for a signal, -1 if it cannot start), `output(cmd): string` (captured stdout). Run through `sh -c`; no-ops on wasm (`-1` and `""`) |
 | `sdl2`, `raylib` | C library bindings; see `stdlib/sdl2.kmm` and `stdlib/raylib.kmm` |
 
 Calls to `math`, `string` and `algorithm` use a dot, as in `math.abs(x)`,
