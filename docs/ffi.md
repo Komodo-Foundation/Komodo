@@ -70,21 +70,20 @@ PATH is set
 Calls must pass exactly as many arguments as the prototype declares, except for
 a variadic prototype (`...`). A variadic call passes its fixed arguments first and
 any number of extra arguments after them; see [Variadic calls](#variadic-calls).
-Here is a fixed-arity call:
+A fixed-arity prototype rejects extra arguments:
 
 ```km
-extern fn printf(fmt: string, ...): int
+extern fn puts(s: string): int
 
 void main()
-    printf("%d\n", 7)
+    puts("a", "b")
 ```
 
 ```text
-error: extern 'printf' takes 1 argument(s), got 2
+error: 'puts' takes 1 argument(s), got 2
 ```
 
-Use `puts` (or a small fixed-arity C helper) instead. A call with no extra
-arguments works, and C's stdio output is interleaved correctly with `print`
+A call to a variadic prototype with no extra arguments works too, and C's stdio output is interleaved correctly with `print`
 because `print` also writes through stdio:
 
 ```km
@@ -179,6 +178,7 @@ To pass a buffer or receive results in an out-parameter, use `data(arr)`, which
 gives the address of the array's elements. Komodo arrays store every element in
 a 64-bit slot, so the C side must use 64-bit element types:
 
+<!-- doc-skip -->
 ```km
 import counter
 
@@ -235,6 +235,7 @@ double vec2_dot(Vec2 a, Vec2 b)
 }
 ```
 
+<!-- doc-skip -->
 ```km
 // geom.kmm
 module geom
@@ -249,6 +250,7 @@ extern fn vec2_scale(v: Vec2, k: float): Vec2
 extern fn vec2_dot(a: Vec2, b: Vec2): float
 ```
 
+<!-- doc-skip -->
 ```km
 import geom
 
@@ -263,6 +265,7 @@ scaled: 3.0, -4.0
 
 Without `copy`, the struct is passed as a pointer, and C reads garbage:
 
+<!-- doc-skip -->
 ```km
 import geom
 
@@ -285,6 +288,7 @@ Pass a bare Komodo function name as an `extern` argument and C receives a
 function pointer. The compiler emits a System V trampoline that converts the C
 integer-register arguments into the Komodo call convention.
 
+<!-- doc-skip -->
 ```km
 import counter
 
@@ -390,6 +394,7 @@ _Bool counter_is_even(int64_t x)
 signature: `int` becomes `int64_t`, and the `Counter` pointer becomes an opaque
 handle.
 
+<!-- doc-skip -->
 ```km
 module counter
 
@@ -411,6 +416,7 @@ prefix is dropped when the linker resolves the symbol.
 
 **Step 3. Use it.** `app.km` (here `02.km`):
 
+<!-- doc-skip -->
 ```km
 import counter
 
@@ -468,6 +474,7 @@ int32_t c_neg32(int32_t x) { return -x; }
 uint8_t c_low_byte(int32_t x) { return (uint8_t)x; }
 ```
 
+<!-- doc-skip -->
 ```km
 // pitfalls.kmm
 module pitfalls
@@ -478,6 +485,7 @@ extern fn c_neg32(x: int): int
 extern fn c_low_byte(x: int): int
 ```
 
+<!-- doc-skip -->
 ```km
 import pitfalls
 
@@ -531,6 +539,7 @@ int64_t sum_i32(const int32_t *xs, int64_t n)
 }
 ```
 
+<!-- doc-skip -->
 ```km
 // i32buf.kmm
 module i32buf
@@ -540,6 +549,7 @@ link "i32buf.c"
 extern fn sum_i32(xs: int, n: int): int
 ```
 
+<!-- doc-skip -->
 ```km
 import i32buf
 
@@ -635,6 +645,7 @@ const char *rt_greet(int64_t argc, KmArg *items)
 }
 ```
 
+<!-- doc-skip -->
 ```km
 // rtdemo.kmm
 module rtdemo
@@ -645,6 +656,7 @@ fn rt_sum(xs: [int]): int
 fn rt_greet(name: string): string
 ```
 
+<!-- doc-skip -->
 ```km
 import rtdemo
 

@@ -644,6 +644,7 @@ The rules are:
 
 - An exact repeat of the parameter types is an error:
 
+  <!-- doc-error -->
   ```km
   import console
 
@@ -663,6 +664,7 @@ The rules are:
 
 - A call that matches no overload is an error:
 
+  <!-- doc-error -->
   ```km
   import console
 
@@ -683,6 +685,7 @@ The rules are:
 - **An overloaded name cannot take default parameter values.** Overloads and
   defaulted arities would compete, so the compiler rejects the combination:
 
+  <!-- doc-error -->
   ```km
   import console
 
@@ -939,6 +942,7 @@ void main()
 - `int(x)` is the explicit float-to-int conversion. It truncates toward zero.
   Plain assignment does not convert floats to ints:
 
+  <!-- doc-error -->
   ```km
   import console
 

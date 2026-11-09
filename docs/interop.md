@@ -92,6 +92,7 @@ A complete example, using the test header `tests/bind/shapes.h` and its C file:
 tools/km-bind tests/bind/shapes.h -l shapes.c -m shapes -o shapes.kmm
 ```
 
+<!-- doc-skip -->
 ```km
 import shapes
 
@@ -186,6 +187,7 @@ Each of these leaves a `// skipped: name (reason)` line in the output.
 
 A function marked `export fn` gets an unmangled C symbol:
 
+<!-- doc-skip -->
 ```km
 export fn add(a: int, b: int): int
     return a + b

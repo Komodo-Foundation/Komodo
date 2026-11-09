@@ -102,6 +102,7 @@ and linked automatically. Sources are compiled once and cached by content
 (`.cpp` with `g++`, which adds `-lstdc++`); `native/` is also an include path,
 and editing a header there rebuilds what includes it.
 
+<!-- doc-skip -->
 ```km
 // main.km                      native/hello.c: long hello_add(long a, long b) {...}
 extern fn hello_add(a: int, b: int): int

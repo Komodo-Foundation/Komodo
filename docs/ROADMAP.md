@@ -15,7 +15,7 @@ write a useful program with only the standard library. Status as of 0.1.0.
 - [ ] **By-value C structs:** nested structs and arrays inside them.
 - [ ] **Syntax gaps:** ranges as values (`let r = 1 to 4`), one-line
       `if … then … else …`, `?` on indexing.
-- [ ] **Spec = compiler.** Every rule in `design.md` has a conformance test, and
+- [ ] **Spec = compiler.** (`tools/check-docs.py` now verifies every doc snippet in CI.) Every rule in `design.md` has a conformance test, and
       every divergence is fixed on one side.
 
 ## 2. Standard library

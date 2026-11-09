@@ -56,6 +56,7 @@ komodo -q hello.km       # run without the compiler's progress lines
 string array: `args[0]` is the program path and `args[1]` is the first user
 argument. `#args` is the count.
 
+<!-- doc-skip -->
 ```km
 void main(args)
     print("program: " + args[0])
@@ -610,6 +611,7 @@ A module file (`.kmm`) begins with `module <name>`. Members are reached with
 sections. A `private` member can be called from inside its own module but
 not from another one.
 
+<!-- doc-skip -->
 ```km
 module greet
 

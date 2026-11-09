@@ -305,6 +305,7 @@ if [[ "$cmd" == "self" ]]; then
             rc=0
             ./run-tests.sh "${rest_args[@]:1}" || rc=1
             ./run-sema-tests.sh || rc=1
+            python3 tools/check-docs.py || rc=1
             exit $rc ;;
         *) die "usage: komodo self build|test|seed" "build = ./build-self.sh, test = run-tests.sh + run-sema-tests.sh, seed = refresh bootstrap/main.km.asm.gz" 2 ;;
     esac

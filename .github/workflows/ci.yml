@@ -19,6 +19,8 @@ jobs:
         run: ./run-tests.sh
       - name: Analyser diagnostics
         run: ./run-sema-tests.sh
+      - name: Documentation snippets compile and print what the docs say
+        run: python3 tools/check-docs.py
       - name: Binding generator
         run: bash tests/bind/run.sh
       - name: The compiler reproduces itself
