@@ -8,4 +8,5 @@
 | [Types and objects](language/types.md) | structs, classes, enums, `match`, generics, errors, ownership |
 | [Using C and C++ libraries](interop.md) | `import zlib`, `native/`, binding generator, exporting Komodo to C/C++ |
 | [C FFI reference](ffi.md) | `extern fn`, handles, callbacks, structs by value, the runtime ABI |
+| [Roadmap to 1.0](ROADMAP.md) | what is left before a stable release |
 | [Compiler internals](internals.md) | pipeline, backends, bootstrap, how to add a feature or target |
