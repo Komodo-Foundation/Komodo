@@ -12,6 +12,7 @@ target. Exporting Komodo functions to C is not covered here (see
 - [Overview](#overview)
 - [Calling C](#calling-c)
   - [`extern fn` and `extern void`](#extern-fn-and-extern-void)
+  - [Variadic calls](#variadic-calls)
   - [Opaque handles: `extern type`](#opaque-handles-extern-type)
   - [`extern "lib"` blocks](#extern-lib-blocks)
   - [How linking is decided](#how-linking-is-decided)
@@ -66,10 +67,10 @@ PATH is set
 
 `getenv` can return `NULL`, so it is declared `string?` and checked with `== null`.
 
-Calls must pass exactly as many arguments as the prototype declares. A trailing
-`...` is accepted in the prototype, but in this checkout the compiler still checks
-the argument count at each call, so variadic C functions cannot be called with
-extra arguments:
+Calls must pass exactly as many arguments as the prototype declares, except for
+a variadic prototype (`...`). A variadic call passes its fixed arguments first and
+any number of extra arguments after them; see [Variadic calls](#variadic-calls).
+Here is a fixed-arity call:
 
 ```km
 extern fn printf(fmt: string, ...): int
@@ -209,8 +210,8 @@ according to the System V AMD64 rules:
 - Larger than 16 bytes (up to 192): passed in memory on the stack.
 - A struct returned by an `extern fn` (up to 16 bytes) is unpacked from
   `rax:rdx` or `xmm0:xmm1` into a fresh Komodo object.
-- Nested structs, arrays inside structs, and memory-class returns are not
-  supported.
+- Nested structs and arrays inside a by-value struct are not supported (the
+  compiler reports the field).
 
 The mirror struct must match the C struct field for field. Here is a complete
 example with a C `struct { double x; double y; }`:
@@ -567,14 +568,32 @@ error: operator '+' is not defined for the opaque handle type 'Counter'
 error: cannot construct `extern type Counter` — it is an opaque C handle; obtain one from a C function
 ```
 
-**6. Block header paths are relative to the current directory.** An
-`extern "counter.c"` block works only when `komodo` runs from the directory that
-holds `counter.c`. Run from `/`, the same program fails with `cc1: fatal error:
-counter.c: No such file or directory`. Use `link "counter.c"` inside a module
-instead, which resolves relative to the module and works from any directory.
+**6. Block paths resolve against the module.** A quoted path in an
+`extern "counter.c"` block is resolved against the directory of the file that
+names it, the same as `link "counter.c"`, so the program builds from any working
+directory. When no file exists there, the path is used as given, relative to the working
+directory.
 
-**7. Variadic calls** are not supported; see
-[Calling C](#extern-fn-and-extern-void).
+**7. Variadic calls** are supported; see [Variadic calls](#variadic-calls).
+
+## Variadic calls
+
+A prototype ending in `...` takes its fixed parameters, then any number of
+extra arguments:
+
+```km
+extern fn printf(fmt: string, ...)
+
+void main()
+    printf("%d %s %.2f\n", 7, "hi", 3.5)
+```
+
+The extra arguments follow the System V rules: integers, pointers and strings go
+in integer registers and then the stack, `float` values in `xmm` registers and
+then the stack. Komodo's `float` is a double, which is what C's default argument
+promotion produces. Nothing checks the extra arguments against the format, so
+they must match it. Fewer arguments than the fixed parameters is a compile error.
+Full example: `examples/ffi_variadic.km`.
 
 ## Runtime ABI for runtime C files
 
@@ -659,5 +678,5 @@ target for FFI.
 
 ## Planned
 
-Exporting Komodo functions to C and C++ (`export fn`, generated headers) and
-linking C++ are in development and are not available in this version.
+Nested structs and arrays inside by-value structs are not implemented; they
+need a recursive marshalling pass in codegen and the backend.

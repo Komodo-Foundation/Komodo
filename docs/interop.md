@@ -159,7 +159,8 @@ trailing `_`; the C symbol is kept with `= "symbol"`.
 
 Each of these leaves a `// skipped: name (reason)` line in the output.
 
-- variadic functions (`printf`); declare a fixed-arity wrapper in C instead;
+- variadic functions are bound by their fixed prefix with `...` kept, so `printf`
+  becomes `printf(format: string, ...)`; a function with no fixed parameter is skipped;
 - `long double`, `__int128`, `_Complex`, `va_list`, and `_Float128`;
 - unions and nested structs, arrays, bit-fields or pointers inside a struct that
   would be passed by value, and structs over 192 bytes;
@@ -171,7 +172,7 @@ Each of these leaves a `// skipped: name (reason)` line in the output.
 
 | Topic | Behaviour |
 | --- | --- |
-| Variadic C functions | Not callable with extra arguments (the argument count is checked). Wrap in C. |
+| Variadic C functions | Callable with any number of extra arguments after the fixed ones. Integers, pointers and strings go in integer registers, `float` values in SSE registers (C's default promotion applies). Extra arguments are not type-checked, so the format string must match them. |
 | Struct arguments | By value only with `copy(x)`; scalar fields only; up to 192 bytes. |
 | Struct returns | Scalar-field structs, including over 16 bytes. The result is a fresh Komodo object. |
 | `int` returns narrower than 64 bits | The upper register bits are not defined, so a negative C `int` result can read as `2^32 + n`. The binding carries a note on such functions. |
@@ -194,11 +195,12 @@ export fn greet(name: string): string
 ```
 
 `komodo lib mathx.km` writes the object `mathx.o`, the static archive
-`libmathx.a` and a header `mathx.h`:
+`libmathx.a`, the shared object `libmathx.so` and a header `mathx.h`:
 
 ```text
-built mathx.o and ./libmathx.a and mathx.h
-link with: gcc -no-pie main.c -L. -lmathx -l:libgc.so.1 -lm
+built mathx.o, ./libmathx.a, ./libmathx.so and mathx.h
+link with: gcc -no-pie main.c ./libmathx.a -l:libgc.so.1 -lm
+or with the shared library: gcc main.c -L. -lmathx -Wl,-rpath,. -l:libgc.so.1 -lm
 ```
 
 ```c
@@ -211,7 +213,7 @@ int main(void) {
 ```
 
 ```bash
-gcc -no-pie main.c -L. -lmathx -l:libgc.so.1 -lm -o app && ./app
+gcc -no-pie main.c ./libmathx.a -l:libgc.so.1 -lm -o app && ./app
 ```
 
 ```text
@@ -222,17 +224,64 @@ C++ is the same with `g++`; the header already has the `extern "C"` guard. A
 returned `string` points into the Komodo heap: copy it before calling back into
 Komodo.
 
-Only static output (`.o` and `.a`) exists in this checkout. A shared `.so` is
-not available because the generated code is not position-independent, and `-no-pie`
-is required. That matters for the other languages:
+`-lmathx` alone picks the shared object, which is the one to use when the
+program has to load it at run time:
 
-- **Rust**: link the archive from a build script or with
-  `-C link-arg` options: the archive, `-l:libgc.so.1`, `-lm`, and a non-PIE
-  executable. The `extern "C"` declarations match the generated header
-  (`i64`, `f64`, `*const c_char`). This was not run here, because `rustc` is not
-  installed on the machine where this guide was written.
-- **Python**: `ctypes` and `cffi` load shared objects, so they cannot load a
-  Komodo library until `.so` output exists. Not available.
+```bash
+gcc main.c -L. -lmathx -Wl,-rpath,. -l:libgc.so.1 -lm -o app && ./app
+```
+
+The shared object is built from the same code, compiled position-independent:
+`komodo lib` selects the `x86pic` target for it, and the default output is
+unchanged. Calls go through the PLT and C globals through the GOT, which is what
+lets the `.so` be loaded at any address. The snippets below were run against
+`mathx.km` above.
+
+**C, with `dlopen`** (no link step; build with `gcc dl.c -ldl`):
+
+```c
+#include <dlfcn.h>
+#include <stdint.h>
+#include <stdio.h>
+
+int main(void) {
+    void *h = dlopen("./libmathx.so", RTLD_NOW);
+    if (!h) { fprintf(stderr, "%s\n", dlerror()); return 1; }
+    int64_t (*add)(int64_t, int64_t) = (int64_t (*)(int64_t, int64_t))dlsym(h, "add");
+    printf("%ld\n", (long)add(2, 3));
+    dlclose(h);
+    return 0;
+}
+```
+
+```text
+5
+```
+
+**Python, with `ctypes`** (run it in the directory that holds `libmathx.so`):
+
+```python
+import ctypes
+
+lib = ctypes.CDLL("./libmathx.so")
+lib.add.argtypes = [ctypes.c_int64, ctypes.c_int64]
+lib.add.restype = ctypes.c_int64
+lib.greet.argtypes = [ctypes.c_char_p]
+lib.greet.restype = ctypes.c_char_p
+print(lib.add(2, 3), lib.greet(b"Python").decode())
+```
+
+```text
+5 hello, Python
+```
+
+The Komodo runtime initialises on the first call, so no setup call is needed.
+A string result points into the Komodo heap: copy it (`ctypes` does, for
+`c_char_p`) before calling back into Komodo.
+
+- **Rust**: declare the functions in an `extern "C"` block and link the `.so` or
+  the archive as for C, with `-l:libgc.so.1` and `-lm`. Not run here, because
+  `rustc` is not installed on the machine where this guide was written.
 
 ## Where to look next
 

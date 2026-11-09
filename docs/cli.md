@@ -45,7 +45,7 @@ Everything after the file is passed to your program:
 | `komodo new <name>` | Create `<name>/` with `main.km`, `tests/smoke_test.km` and a `.gitignore`. |
 | `komodo bind ...` | Generate Komodo `extern` bindings from a C header (`tools/km-bind`). Arguments go to that tool. |
 | `komodo watch [file]` | Run, then rebuild and rerun whenever a `.km`, `.kmm` or native source under the project root changes (polled every 0.4 s). Ctrl-C stops. |
-| `komodo lib [file]` | Build a library for C, C++, Rust or Python callers: `<name>.o`, `lib<name>.a` and the header `<name>.h` generated from the program's `export fn`s. `-o <path>` sets the output prefix. |
+| `komodo lib [file]` | Build a library for C, C++, Rust or Python callers: `<name>.o`, `lib<name>.a`, `lib<name>.so` and the header `<name>.h` generated from the program's `export fn`s. `-o <path>` sets the output prefix. |
 | `komodo clean [dir]` | Delete `.komodo/` and the files `komodo build` / `lib` recorded. `--cache` also empties the shared cache. |
 | `komodo doctor` | Check for `nasm`, `gcc`, libgc, and the optional `g++`, `pkg-config`, `emcc`, `node`, `km-bind`; prints a fix hint for anything missing. |
 | `komodo self build\|test\|seed` | For compiler contributors, see [Working on the compiler](#working-on-the-compiler). |
@@ -121,10 +121,12 @@ extern fn hello_add(a: int, b: int): int
 
 ### Shared libraries
 
-`komodo lib` produces a static archive and an object, not a `.so`. Linking a
-shared library fails because the generated assembly is not position-independent
-(calls into the C runtime and libgc are not routed through the PLT), so a
-shared build is not currently possible.
+`komodo lib` writes `lib<name>.so` next to `lib<name>.a`. The object it is built
+from is position-independent (the `x86pic` target: calls through the PLT, C
+globals through the GOT), and the runtime is compiled `-fPIC` for the shared
+object. The default `komodo` build and `-t x86` output are unchanged. Use
+`-Wl,-rpath,<dir>` when a program loads the `.so` from a directory that is not on
+the loader path. Examples: [interop.md](interop.md#part-2-using-komodo-from-c-c-rust-and-python).
 
 ## Working on the compiler
 

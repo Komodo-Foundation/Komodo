@@ -1087,8 +1087,8 @@ if [[ "$mode" == "lib" ]]; then
     report "lib" "$t"
     record_output "$out.o"; record_output "$libdir/lib$libname.a"; record_output "$libdir/lib$libname.so"; [[ -n "$emit_header" ]] && record_output "$emit_header"
     log "built $out.o, $libdir/lib$libname.a, $libdir/lib$libname.so${emit_header:+ and $emit_header}"
-    log "link with: gcc -no-pie main.c -L$libdir -l$libname ${auto_cc[*]:+${auto_cc[*]} }-l:libgc.so.1 -lm$([[ $have_cxx -eq 1 ]] && echo ' -lstdc++')"
-    log "or the shared library: gcc main.c -L$libdir -l$libname -Wl,-rpath,$libdir -l:libgc.so.1 -lm (see docs/interop.md)"
+    log "link with: gcc -no-pie main.c $libdir/lib$libname.a ${auto_cc[*]:+${auto_cc[*]} }-l:libgc.so.1 -lm$([[ $have_cxx -eq 1 ]] && echo ' -lstdc++')"
+    log "or with the shared library: gcc main.c -L$libdir -l$libname -Wl,-rpath,$libdir -l:libgc.so.1 -lm"
     exit 0
 fi
 
