@@ -1,0 +1,5 @@
+// A variadic C function still needs its fixed arguments.
+extern fn printf(fmt: string, ...)
+
+void main()
+    printf()

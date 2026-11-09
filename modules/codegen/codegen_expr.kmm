@@ -567,7 +567,10 @@ void Codegen::genCall(e: CallExpr)
     // then spill to the stack; float args fill xmm0..7 then spill; the
     // backend places each one from the class list built here.
     if kind == "extern" then
-        if fnArity(e.name) != #e.args then
+        // A variadic C function (`...` in its prototype) takes its fixed
+        // arguments first and any number of extra ones after them.
+        let vari = m_fnDecls[fnIndexOf(e.name)].variadic
+        if (not vari and fnArity(e.name) != #e.args) or (vari and #e.args < fnArity(e.name)) then
             throw ("extern '" + e.name + "' takes " + string(fnArity(e.name)) + " argument(s), got " + string(#e.args))
         genExternCall(e)
         return

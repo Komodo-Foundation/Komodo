@@ -76,7 +76,9 @@ if [[ $# -eq 0 ]]; then
     "$kmbind" "$here/shapes.h" --prefix canvas_ >"$work/p" 2>/dev/null
     grep -q 'canvas_new' "$work/p" && ! grep -q 'sum_array' "$work/p"; check prefix $?
     "$kmbind" "$here/shapes.h" >"$work/s" 2>/dev/null
-    grep -q 'skipped: shape_log (variadic)' "$work/s" && grep -q 'skipped: sh_twice' "$work/s"; check skips $?
+    # a variadic prototype keeps its fixed prefix and the `...`
+    grep -q 'extern fn shape_log(fmt: string, ...): int' "$work/s" && grep -q 'skipped: sh_twice' "$work/s"; check skips $?
+    "$kmbind" "$here/shapes.h" -o "$work/shapes.kmm" >/dev/null 2>&1; grep -q 'shape_log(fmt: string, ...)' "$work/shapes.kmm" 2>/dev/null; check variadic-prefix $?
 fi
 
 echo "────────────────────────────────"

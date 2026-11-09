@@ -630,7 +630,7 @@ function do_function(m, ok, fdef,   p, q, name, rb, rc, i, j, d, pa, k, nparams,
     if (rt_ == "") { sk_add(name " (return type: " K_why ")"); return }
     narrow = K_narrow
     # params
-    nparams = 0; why = ""; line = ""
+    nparams = 0; why = ""; line = ""; vari = 0
     i = p + 1
     while (i < q) {
         k = 0; d = 0; delete pa
@@ -642,7 +642,7 @@ function do_function(m, ok, fdef,   p, q, name, rb, rc, i, j, d, pa, k, nparams,
         i++
         if (k == 0) continue
         if (k == 1 && pa[1] == "void") continue
-        if (pa[1] == "..." ) { why = "variadic"; break }
+        if (pa[1] == "..." ) { vari = 1; break }
         j = spec(pa, 1, k); pb = S_base; pcc = S_c
         j = declr(pa, j, k)
         pn = X_name
@@ -665,6 +665,10 @@ function do_function(m, ok, fdef,   p, q, name, rb, rc, i, j, d, pa, k, nparams,
         else if (K_kind == "cb") cbs = cbs (cbs == "" ? "" : "; ") pn ": " K_cb
     }
     if (why != "") { sk_add(name " (" why ")"); return }
+    # A variadic prototype keeps its fixed prefix and the `...`; C needs at
+    # least one fixed parameter, so `f(...)` alone is skipped.
+    if (vari && nparams == 0) { sk_add(name " (variadic without fixed parameters)"); return }
+    if (vari) line = line ", ..."
     fdone[name] = 1
     commit_tmp()
     if (rt_ == "void") {
@@ -678,6 +682,7 @@ function do_function(m, ok, fdef,   p, q, name, rb, rc, i, j, d, pa, k, nparams,
     comment = ""
     if (narrow) comment = comment "returns a C " (rb ~ /^td:/ ? "narrow integer" : "int") " (no sign extension: negatives may read as 2^32+n); "
     if (ptrs != "") comment = comment "pointer params " ptrs ": pass data(arr) or a handle (64-bit element slots); "
+    if (vari) comment = comment "variadic: the arguments after the fixed ones go to C unchanged; "
     if (wr != "") comment = comment "non-const char* params " wr ": C may write; Komodo strings are read-only; "
     if (byv != "") comment = comment "struct by value: pass copy(x) for " byv "; "
     if (cbs != "") comment = comment "callback " cbs "; "
