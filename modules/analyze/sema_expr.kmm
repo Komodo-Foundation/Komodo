@@ -656,13 +656,13 @@ mut Analyzer::inferNew(e: NewExpr): Type
     else if not isClassType(e.typeName) then
         if #e.args > fieldCount(e.typeName) then
             err(e, "`new " + e.typeName + "` given more values than it has fields")
-        checkNewFields(e, e.typeName, argTs)
+        checkNewFields(e, e.typeName, argTs, e.args)
     return tObject(e.typeName)
 
 // Positional `new T(a, b, …)` on a struct / constructor-less class binds
 // args to fields in constructor order (required first, then own defaulted,
 // then inherited defaulted — the interpreter's reorder rule).
-mut Analyzer::checkNewFields(node: ASTNode, typeName: string, argTs: [Type])
+mut Analyzer::checkNewFields(node: ASTNode, typeName: string, argTs: [Type], args: [Expression])
     let names = fieldNamesOf(typeName)
     let order = ctorFieldOrder(typeName)
     let i = 0
@@ -672,6 +672,8 @@ mut Analyzer::checkNewFields(node: ASTNode, typeName: string, argTs: [Type])
         let want = fieldReadType(typeName, fname)
         if not isAssignable(want, argTs[i]) then
             err(node, "field '" + fname + "' of '" + typeName + "': type '" + typeToString(argTs[i]) + "' is not assignable to '" + typeToString(want) + "'")
+        // storing into a field moves a `unique` argument, as `hold.h = a` does
+        consumeMove(args[i], argTs[i])
         i += 1
 
 // Field-slot indices in positional-constructor order (mirrors
