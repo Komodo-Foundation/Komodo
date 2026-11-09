@@ -1,0 +1,12 @@
+module os
+
+// Linked from stdlib/os.c.  Reached as `os.NAME(...)`, which the compiler
+// mangles to the flat symbol `os_NAME`.
+
+fn os_args(): [string]
+fn os_getenv(name: string): string?
+void os_setenv(name: string, value: string)
+void os_exit(code: int)
+fn os_cwd(): string
+fn os_pid(): int
+fn os_platform(): string

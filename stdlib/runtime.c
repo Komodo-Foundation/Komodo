@@ -584,6 +584,10 @@ const char *km_to_string(int64_t tag, int64_t value)
  * into that array and invokes it. */
 int64_t km_program_main(int64_t argc, KmArg *items);
 
+/* The process's argv, recorded by main() for the `os` module. */
+int km_main_argc;
+char **km_main_argv;
+
 #ifdef __EMSCRIPTEN__
 /* emcc 3.1.6 + clang 15 only recognises a prototype-less `main` (a main
  * taking argc / argv is mangled to __main_argc_argv and then never run),
@@ -624,6 +628,10 @@ int main(int argc, char **argv)
             argv[0] = exe;
     }
 #endif
+
+    /* Kept for the `os` module (os.args / os.exe); argv outlives main. */
+    km_main_argc = argc;
+    km_main_argv = argv;
 
     KmArray *a = km_array_new(argc);
     for (int i = 0; i < argc; i++)

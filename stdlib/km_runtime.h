@@ -245,4 +245,15 @@ const char *string_substring(int64_t argc, KmArg *items);
 const char *string_pad_start(int64_t argc, KmArg *items);
 const char *string_pad_end(int64_t argc, KmArg *items);
 
+/* ── module: os ── */
+extern int km_main_argc;
+extern char **km_main_argv;
+KmArray    *os_args(int64_t argc, KmArg *items);
+const char *os_getenv(int64_t argc, KmArg *items);
+void        os_setenv(int64_t argc, KmArg *items);
+void        os_exit(int64_t argc, KmArg *items);
+const char *os_cwd(int64_t argc, KmArg *items);
+int64_t     os_pid(int64_t argc, KmArg *items);
+const char *os_platform(int64_t argc, KmArg *items);
+
 #endif /* KM_RUNTIME_H */
