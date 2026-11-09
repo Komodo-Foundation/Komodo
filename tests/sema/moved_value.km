@@ -8,5 +8,5 @@ unique struct Handle
 void main()
     let a = new Handle(1)
     let b = a                       // ownership moves a -> b
-    console.print("b = " + b.id)
-    console.print("a = " + a.id)    // error: `a` was moved away
+    console.print("b = " + string(b.id))
+    console.print("a = " + string(a.id))    // error: `a` was moved away

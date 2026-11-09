@@ -567,7 +567,7 @@ const char *km_to_string(int64_t tag, int64_t value)
         break;
     }
     case 2:
-        return KM_STR(value);
+        return value ? KM_STR(value) : "null";
     case 3:
         return value ? "true" : "false";
     default:

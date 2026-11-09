@@ -391,6 +391,8 @@ private
         return false
 
     mut parseFunction(): FunctionDecl
+        let fnLine = peek().line
+        let fnCol = peek().column
         // one or two leading keywords: `fn` / `void` / `mut`, and the
         // combination `mut void` (a mutating procedure).
         let isVoid = false
@@ -442,6 +444,8 @@ private
                 eat()
 
         let decl = new FunctionDecl(name)
+        decl.line = fnLine
+        decl.column = fnCol
         decl.params = trimVariadic(params)
         decl.variadic = paramsAreVariadic(params)
         decl.body = body
@@ -487,6 +491,8 @@ private
                 skipNewlines()
                 if at(TokenType::DEDENT) or at(TokenType::EOF) then
                     break
+                if at(TokenType::FN) or at(TokenType::MUT) or at(TokenType::VOID) or at(TokenType::CONSTRUCTOR) then
+                    throw "struct bodies hold fields only; use a class for methods"
                 let memberName = peek().lexeme
                 eat()
                 if at(TokenType::COLON) then
@@ -723,7 +729,11 @@ private
                 stmts += [stmt]
             skipNewlines()
             if m_pos == before then
-                throw ("parseStatements stuck at " + string(peek().lexeme) + " type " + string(peek().type))
+                if at(TokenType::TO) or at(TokenType::UNTIL) then
+                    throw "a range `a to b` is only valid in a `for` loop or a slice, not as a value"
+                if at(TokenType::ELSE) then
+                    throw "unexpected 'else': a one-line `if c then X else Y` is not supported; write the branches on separate indented lines"
+                throw ("unexpected '" + string(peek().lexeme) + "'")
         return stmts
 
     mut parseStatement(): Statement?

@@ -1,1 +1,1 @@
-'dead' is declared but never used
+4:5: error: 'dead' is declared but never used

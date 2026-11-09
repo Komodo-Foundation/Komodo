@@ -1,0 +1,6 @@
+import console
+fn add(a, b)
+    return a + b
+void main()
+    console.print(add(1, 2))
+    console.print(add(1, "x"))

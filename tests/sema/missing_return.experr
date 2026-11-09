@@ -1,1 +1,1 @@
-must return a value on every path
+2:1: error: function 'pick' must return a value

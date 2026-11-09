@@ -211,6 +211,12 @@ mut Analyzer::inferBinary(e: BinaryOp): Type
     let ls = legacyOf(lt) == "string"
     let rs = legacyOf(rt) == "string"
     if e.op == "+" and (ls or rs) then
+        let other = lt
+        if ls then
+            other = rt
+        let ol = legacyOf(other)
+        if ol == "int" or ol == "float" or ol == "bool" then
+            err(e, "cannot add '" + typeToString(lt) + "' and '" + typeToString(rt) + "' (use string(x) or an interpolated string)")
         return tPrim("string")
     if e.op == "*" and ls then
         return tPrim("string")
@@ -266,6 +272,29 @@ mut Analyzer::inferUnary(e: UnaryOp): Type
 // ── calls: free fn / method / stdlib / extern / builtin ─────────────
 
 mut Analyzer::inferCall(e: CallExpr): Type
+    // `expr.method(args)` on a non-name receiver (`obj.inner.method(9)`,
+    // `xs[0].m()`, `f().m()`): the method resolves on the receiver's type.
+    if e.receiver != null then
+        let rct = inferExpr(e.receiver)
+        if isNullable(rct) then
+            err(e, "receiver is possibly null — narrow it before calling '" + e.name[1 to e.name.length] + "'")
+        let rtn = typeToString(stripNull(rct))
+        let rmeth = e.name[1 to e.name.length]
+        let rowner = methodOwner(rtn, rmeth)
+        if rowner == "" then
+            err(e, "type '" + rtn + "' has no method '" + rmeth + "'" + methodHint(rtn, rmeth))
+        let rsym = rowner + "__" + rmeth
+        let rparams = fnParamTypes(rsym)
+        if #rparams != 1 + #e.args then
+            err(e, "method '" + rtn + "." + rmeth + "' takes " + string(#rparams - 1) + " argument(s), got " + string(#e.args))
+        let rargTs: [Type] = []
+        for a in e.args do
+            rargTs += [inferExpr(a)]
+        checkArgs(e, rtn + "." + rmeth, rparams, rargTs, 1, false)
+        e.isMethod = true
+        e.resolvedSym = rsym
+        return parseTypeStr(fnRetType(rsym))
+
     // `assert(cond)` / `assert(cond, "message")` — when `cond` is false it
     // throws `file:line: assertion failed: message`.  The file:line prefix
     // is resolved here (only the analyser has the file map); codegen lowers
@@ -354,6 +383,12 @@ mut Analyzer::inferCall(e: CallExpr): Type
         // was imported (stdlib/*.kmm, or any library), type-check against
         // it, otherwise leave the call unchecked.
         let sym = mangleDotted(e.name)
+        // `mod.fn(...)` on a user module is the same call as `mod::fn(...)`:
+        // rewrite it and resolve through the plain-name path below.
+        if not hasFn(sym) and hasFn(meth) and fnModOf(meth) == recv then
+            e.name = meth
+            e.qualifier = recv
+            return inferCall(e)
         // `Module.member` where `member` sits in a `private` section of a
         // *different* module — reject it.
         if hasFn(sym) and fnVisOf(sym) == "private" then
@@ -408,6 +443,9 @@ mut Analyzer::inferCall(e: CallExpr): Type
             e.isMethod = true
             e.resolvedSym = sym
             return parseTypeStr(fnRetType(sym))
+    // `module::name(...)` must name a declared function of that module.
+    if e.qualifier != "" and not hasFn(e.name) then
+        err(e, "undefined function '" + e.qualifier + "::" + e.name + "'")
     // an unresolved free symbol — a library not on the search path, say.
     // Leave it unchecked rather than guessing.
     return tAny

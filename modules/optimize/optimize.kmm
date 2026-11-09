@@ -217,6 +217,8 @@ public
             return e
 
         if e is CallExpr then
+            if e.receiver != null then
+                e.receiver = foldExpr(e.receiver)
             e.args = foldList(e.args)
             return e
         if e is NewExpr then

@@ -655,6 +655,7 @@ public
         m_scopeUsed = []
         m_scopeMoved = []
         m_scopeMovedAt = []
+        m_scopeDeclAt = []
         m_pathKeys = []
         m_pathTypes = []
 
@@ -671,6 +672,7 @@ public
         m_scopeUsed += [false]
         m_scopeMoved += [false]
         m_scopeMovedAt += [""]
+        m_scopeDeclAt += [string(m_declLine) + ":" + string(m_declCol)]
 
     // ── ownership / move tracking (unique structs) ───────────────────
     //
@@ -1071,6 +1073,9 @@ private
     // per-binding ownership state for `unique` types
     m_scopeMoved: [bool] = []
     m_scopeMovedAt: [string] = []
+    m_scopeDeclAt: [string] = []     // "line:col" where each binding was declared
+    m_declLine: int = 0              // position of the statement being checked
+    m_declCol: int = 0
 
     // member-path narrowings
     m_pathKeys: [string] = []

@@ -271,6 +271,9 @@ private
         // Optional `f` suffix (`2.0f`, `2f`) marks a float literal.
         if peek() == "f" then
             eat()
+            // `2f` means `2.0f`: give the float token a decimal point
+            if not isFloat then
+                text = text + ".0"
             isFloat = true
 
         if isFloat then

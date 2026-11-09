@@ -1,0 +1,5 @@
+import console
+void main()
+    let N be 5
+    N = 6
+    console.print(N)

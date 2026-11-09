@@ -1,0 +1,4 @@
+import console
+void main()
+    let xs = [1, 2, 3]
+    console.print(xs[5]?)

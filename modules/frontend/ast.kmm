@@ -70,6 +70,9 @@ struct CallExpr : Expression
     // `ns::member(args)` — the namespace before the final `::` (kept only
     // for module-privacy diagnostics; the call still targets `name`).
     qualifier: string = ""
+    // `expr.method(args)` where `expr` is not a plain name (a field, an
+    // index, another call): the receiver expression; `name` is ".method".
+    receiver: Expression? = null
     // `name(args)?` — a protected call: yields null instead of
     // propagating a thrown error out of the callee.
     protected: bool = false
