@@ -568,7 +568,8 @@ ababab
 
 Typed and untyped parameters can be mixed (`scale`). A template is never
 emitted on its own, so the body is only checked for the types it is called
-with (see [Known gaps](#known-gaps)).
+with. A call whose types do not fit the body is an error naming the
+instantiation, for example `cannot add 'int' and 'string' ... in call add(int, string)`.
 
 ### Overloading
 
@@ -980,6 +981,10 @@ out of every text block, and the message is shown as it is printed.
 | `` `break` outside a loop `` | `break` or `continue` outside a loop |
 | `` `in` wants a string or an array on the right, got 'int' `` | `in` on an unsupported right-hand type |
 | `struct pattern cannot match on `float` field 'x' yet` | `float` field in a struct pattern |
+| `cannot add 'string' and 'int' (use string(x) or an interpolated string)` | `+` between a string and a number |
+| `undefined function 'secret::nope'` | `module::name` that the module does not declare |
+| `struct bodies hold fields only; use a class for methods` | a `fn` inside a `struct` |
+| `'?' applies to calls, not indexing` | `xs[i]?` |
 | `struct pattern type 'Z' is unrelated to subject type 'P'` | struct pattern of an unrelated type |
 
 ## Known gaps
@@ -987,26 +992,11 @@ out of every text block, and the message is shown as it is printed.
 These were found while writing this page. The compiler's behaviour is shown
 as observed; the design reference describes a stricter rule for some of them.
 
-- **Mixed-type `+` is not diagnosed.** `"value: " + n.value` (with `value: int`)
-  compiles and crashes at run time with `Komodo: crash - invalid memory access
-  (a null value was used) in main`, exit status 139.
-- **Template bodies are not checked per type.** `add(1, "x")` with
-  `fn add(a, b) return a + b` compiles and crashes at run time (exit 139) in
-  the same way.
 - **A template and a typed overload of one name are accepted.** The design
   reference calls this an error. Do not rely on either behaviour.
 - **Class `private` labels are not enforced** (see [Public and private](#public-and-private)).
 - **Positional `new` does not move a `unique` argument.** After
   `new Holder(a)` with a `unique` field, `a` is still usable. Assigning to a
   field (`hold.h = a`) does move it.
-- **Calling a method on a field of a class-typed field fails to link.** For
-  `obj.inner.method(9)` the output is `undefined reference`. Bind the field to
-  a local first: `let i = obj.inner` then `i.method(9)`.
 - **`copy()` on a constructor-based class is not a deep copy.** A nested object
   is still shared between the original and the copy.
-- **`?` is only valid after a call.** `xs[5]?` fails with an internal parser
-  message, `parseStatements stuck at ? type 80`.
-- **A float suffix on an integer literal is wrong.** `2f` prints a garbage
-  value (`2.0f` is correct).
-- **Struct methods are not supported.** A `fn` inside a `struct` body is
-  rejected with `Unexpected top-level token`.

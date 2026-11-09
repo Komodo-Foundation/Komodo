@@ -122,7 +122,7 @@ void main()
 ```
 
 ```text
-example.km:3:38: error: parseStatements stuck at else type 13
+example.km:3:38: error: unexpected 'else': a one-line `if c then X else Y` is not supported; write the branches on separate indented lines
 ```
 
 ## Variables
@@ -143,8 +143,7 @@ void main()
 1 Ada 10
 ```
 
-Assigning to a `be` name is rejected. The current compiler reports it as
-an undeclared variable:
+Assigning to a `be` name is rejected:
 
 ```km
 void main()
@@ -153,7 +152,7 @@ void main()
 ```
 
 ```text
-example.km:3:5: error: assignment to undeclared variable 'limit'
+example.km:3:5: error: cannot assign to macro 'limit' (declared with be)
 ```
 
 A `let` with `be` may also carry a type: `let limit: int be 10`.
@@ -1019,15 +1018,7 @@ or failed `assert` ends the program with status 1 (see
 differently, the compiler is what the examples above follow. The differences
 found while writing this page are:
 
-- `2f` is documented as a float literal, but the current compiler prints it
-  as a wrong value (it reads the bits of the integer). Write `2.0f`.
 - `main(args)`: `args[1]` is the first user argument. `design.md` says
   `args[2]`.
 - `print(args[1])` prints the element's raw number rather than its text. Use
   `"" + args[1]` or assign it to a `string` variable first.
-- `greet.hello(x)` (dot form) on a user module fails to link. Use
-  `greet::hello(x)`. The dot form works for the standard library's
-  `math`, `string` and `algorithm`.
-- Assigning to a `be` name reports `assignment to undeclared variable`.
-- Calling `file::find` and printing a `null` result crashes the program.
-  Check for `null` first, as in the example above.
