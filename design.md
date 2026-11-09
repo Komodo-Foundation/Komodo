@@ -577,8 +577,9 @@ A handful of names the compiler lowers directly (no `import`, no library):
   array fields get a fresh buffer; scalars, strings, enum values and
   opaque handles are copied by value. The source is *read*, never moved —
   `copy(a)` is the explicit way to duplicate a `unique` value while
-  keeping `a` a live owner. Constructor-based classes and `extern type`
-  handles have no deep copy; cyclic data recurses forever.
+  keeping `a` a live owner. A constructor-based class is copied without
+  running its constructor. `extern type` handles are C pointers and are
+  copied by value. Cyclic data recurses forever.
 
 ## Standard library
 

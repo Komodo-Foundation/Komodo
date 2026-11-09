@@ -443,9 +443,10 @@ public
     //  emits it).  Its body clones `src` field by field: a struct/class
     //  field recurses through that type's own helper, an array field is
     //  buffer-cloned, everything else (scalars, strings, enums, opaque
-    //  handles, constructor-based classes) is shared by value.  Cyclic
-    //  data would recurse forever — the same caveat as a hand-written C
-    //  deep copy.
+    //  handles) is shared by value.  A constructor-based class is allocated
+    //  with a raw `new` (no constructor call) and then filled the same way.
+    //  Cyclic data would recurse forever — the same caveat as a hand-written
+    //  C deep copy.
 
     mut synthDeepCopiers(prog: Program)
         // Which types get a helper — computed first so a field can refer
@@ -454,19 +455,13 @@ public
             if not d.isExtern and not d.isAbstract and d.container == null then
                 m_deepCopierTypes += [d.name]
         for c in prog.classes do
-            if not c.isAbstract and not classHasCtor(c) then
+            if not c.isAbstract then
                 m_deepCopierTypes += [c.name]
         for nm in m_deepCopierTypes do
             prog.functions += [makeDeepCopier(nm)]
 
     mut deepCopierExists(name: string): bool
         return (name in m_deepCopierTypes)
-
-    fn classHasCtor(c: ClassDecl): bool
-        for m in c.methods do
-            if m.isConstructor then
-                return true
-        return false
 
     mut makeDeepCopier(typeName: string): FunctionDecl
         let ti = typeIndex(typeName)
@@ -487,7 +482,9 @@ public
         // let c = new T()
         let cdecl = new VarDecl("c")
         cdecl.declaredType = typeName
-        cdecl.init = new NewExpr(typeName, [])
+        let ne = new NewExpr(typeName, [])
+        ne.raw = true
+        cdecl.init = ne
         body += [cdecl]
         // c.<field> = <clone of src.<field>>
         let i = 0
