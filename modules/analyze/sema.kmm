@@ -53,6 +53,12 @@ public
             else if d is ClassDecl then
                 registerClass(d)
 
+        // `void main(args)`: the untyped parameter is the command line,
+        // always a [string] (args[0] the program path, args[1..] the user's).
+        for fd in prog.functions do
+            if fd.name == "main" and #fd.params == 1 and fd.params[0].declaredType == null then
+                fd.params[0].declaredType = "[string]"
+
         // ── Pass 1: free-function + method signatures ──────────────
         //  Generic templates (untyped params) and overload sets (>=2 free
         //  decls sharing a name) are resolved by the code generator
