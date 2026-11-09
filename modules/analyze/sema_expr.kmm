@@ -211,6 +211,12 @@ mut Analyzer::inferBinary(e: BinaryOp): Type
     let ls = legacyOf(lt) == "string"
     let rs = legacyOf(rt) == "string"
     if e.op == "+" and (ls or rs) then
+        let other = lt
+        if ls then
+            other = rt
+        let ol = legacyOf(other)
+        if ol == "int" or ol == "float" or ol == "bool" then
+            err(e, "cannot add '" + typeToString(lt) + "' and '" + typeToString(rt) + "' (use string(x) or an interpolated string)")
         return tPrim("string")
     if e.op == "*" and ls then
         return tPrim("string")
