@@ -992,6 +992,7 @@ private
     m_typeSlotNames: [[string]] = []
     // class owning the method currently being lowered ("" if none)
     m_curClass: string = ""
+    m_curInst: string = ""            // "add(int, string)" while emitting a monomorphised copy
 
     // ── current-function stack frame (see codegen_frame.kmm) ────────
     m_names: [string] = []

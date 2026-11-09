@@ -18,6 +18,7 @@ void Codegen::genFunction(func: FunctionDecl)
     m_curVoid = isVoidFn(func)
     m_curKind = funcKind(func)
     m_curClass = func.ownerClass or ""
+    m_curInst = instDisplay(func)
 
     for p in func.params do
         let pty = "int"

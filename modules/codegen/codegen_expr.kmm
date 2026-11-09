@@ -173,6 +173,14 @@ void Codegen::genBinary(e: BinaryOp)
     else if isCompareOp(e.op) then
         genCompare(e)
     else if e.op == "+" and (ls or rs) then
+        if m_curInst != "" then
+            let ot = exprType(e.right)
+            if rs then
+                ot = exprType(e.left)
+            if ot == "int" or ot == "float" then
+                let lt = exprType(e.left)
+                let rt = exprType(e.right)
+                throw (string(e.line) + ":" + string(e.column) + ": cannot add '" + lt + "' and '" + rt + "' (use string(x) or an interpolated string) in call " + m_curInst)
         genStrOp(e, "km_str_concat")
     else if e.op == "*" and ls then
         genStrOp(e, "km_str_repeat")
