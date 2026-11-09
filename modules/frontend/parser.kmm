@@ -725,7 +725,11 @@ private
                 stmts += [stmt]
             skipNewlines()
             if m_pos == before then
-                throw ("parseStatements stuck at " + string(peek().lexeme) + " type " + string(peek().type))
+                if at(TokenType::TO) or at(TokenType::UNTIL) then
+                    throw "a range `a to b` is only valid in a `for` loop or a slice, not as a value"
+                if at(TokenType::ELSE) then
+                    throw "unexpected 'else': a one-line `if c then X else Y` is not supported; write the branches on separate indented lines"
+                throw ("unexpected '" + string(peek().lexeme) + "'")
         return stmts
 
     mut parseStatement(): Statement?

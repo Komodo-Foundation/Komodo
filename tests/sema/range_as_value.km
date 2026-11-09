@@ -1,0 +1,4 @@
+import console
+void main()
+    let r = 1 to 4
+    console.print(r)

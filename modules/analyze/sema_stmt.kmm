@@ -412,6 +412,8 @@ mut Analyzer::checkAssign(s: AssignStmt)
         consumeMove(s.value, vt)
         return
 
+    if not scopeHas(s.name) and isMacro(s.name) then
+        err(s, "cannot assign to macro '" + s.name + "' (declared with be)")
     if not scopeHas(s.name) then
         err(s, "assignment to undeclared variable '" + s.name + "'")
     if scopeImmut(s.name) then
