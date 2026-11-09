@@ -91,6 +91,7 @@ mut Analyzer::inferIdentifier(e: Identifier): Type
             err(e, "use of moved value '" + e.name + "' — a `unique` value moved away at " + movedAt(e.name) + " leaves nothing behind")
         return scopeType(e.name)
     if isCurField(e.name) then
+        checkFieldAccess(e, m_curClass, e.name)
         return curClassFieldType(e.name)
     if isMacro(e.name) then
         let m = macroExprOf(e.name)
@@ -283,6 +284,7 @@ mut Analyzer::inferCall(e: CallExpr): Type
         let rowner = methodOwner(rtn, rmeth)
         if rowner == "" then
             err(e, "type '" + rtn + "' has no method '" + rmeth + "'" + methodHint(rtn, rmeth))
+        checkMemberAccess(e, rowner, rmeth)
         let rsym = rowner + "__" + rmeth
         let rparams = fnParamTypes(rsym)
         if #rparams != 1 + #e.args then
@@ -435,6 +437,7 @@ mut Analyzer::inferCall(e: CallExpr): Type
     if m_curClass != "" then
         let owner = methodOwner(m_curClass, e.name)
         if owner != "" then
+            checkMemberAccess(e, owner, e.name)
             let sym = owner + "__" + e.name
             let params = fnParamTypes(sym)
             if #params != 1 + #e.args then
@@ -576,6 +579,7 @@ mut Analyzer::inferMethodCall(e: CallExpr, recv: string, meth: string): Type
     let owner = methodOwner(rt, meth)
     if owner == "" then
         err(e, "type '" + rt + "' has no method '" + meth + "'")
+    checkMemberAccess(e, owner, meth)
     let sym = owner + "__" + meth
     let params = fnParamTypes(sym)
     let total = 1 + #e.args
@@ -664,6 +668,7 @@ mut Analyzer::checkNewFields(node: ASTNode, typeName: string, argTs: [Type])
     let i = 0
     while i < #argTs and i < #order do
         let fname = names[order[i]]
+        checkFieldAccess(node, typeName, fname)
         let want = fieldReadType(typeName, fname)
         if not isAssignable(want, argTs[i]) then
             err(node, "field '" + fname + "' of '" + typeName + "': type '" + typeToString(argTs[i]) + "' is not assignable to '" + typeToString(want) + "'")
@@ -723,6 +728,7 @@ mut Analyzer::inferMember(e: MemberExpr): Type
         err(e, "field access on a non-object (type '" + typeToString(ot) + "')")
     if not hasField(base.name, e.member) then
         err(e, "type '" + base.name + "' has no field '" + e.member + "'" + didYouMean(e.member, fieldNamesOf(base.name)))
+    checkFieldAccess(e, base.name, e.member)
     return fieldReadType(base.name, e.member)
 
 mut Analyzer::inferIndex(e: IndexExpr): Type

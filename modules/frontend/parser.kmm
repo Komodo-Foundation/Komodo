@@ -663,16 +663,18 @@ private
         skipNewlines()
 
         let guard = 0
+        let vis = "public"
         while true do
             skipNewlines()
             // a section label sitting at the class column (no indent)
             if at(TokenType::IDENT) and (peek().lexeme == "public" or peek().lexeme == "private") then
+                vis = peek().lexeme
                 eat()
                 skipNewlines()
             if not at(TokenType::INDENT) then
                 break
             eat()
-            parseClassMembers(decl)
+            parseClassMembers(decl, vis)
             if at(TokenType::DEDENT) then
                 eat()
             guard += 1
@@ -680,13 +682,15 @@ private
                 break
         return decl
 
-    void parseClassMembers(decl: ClassDecl)
+    void parseClassMembers(decl: ClassDecl, startVis: string)
+        let vis = startVis
         while not at(TokenType::DEDENT) and not at(TokenType::EOF) do
             skipNewlines()
             if at(TokenType::DEDENT) or at(TokenType::EOF) then
                 break
 
             if at(TokenType::IDENT) and (peek().lexeme == "public" or peek().lexeme == "private") then
+                vis = peek().lexeme
                 eat()
                 skipNewlines()
                 continue
@@ -697,7 +701,9 @@ private
                 continue
 
             if at(TokenType::FN) or at(TokenType::MUT) or at(TokenType::VOID) then
-                decl.methods += [parseFunction()]
+                let fm = parseFunction()
+                fm.visibility = vis
+                decl.methods += [fm]
                 skipNewlines()
                 continue
 
@@ -713,6 +719,7 @@ private
                 fdefault = parseExpression()
             let cf = new ClassField(fname, ftype)
             cf.defaultValue = fdefault
+            cf.visibility = vis
             decl.fields += [cf]
             skipNewlines()
 

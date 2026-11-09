@@ -1,0 +1,19 @@
+import console
+
+class Base
+public
+    constructor(start: int)
+        m_n = start
+
+    fn peek(): int
+        return m_n
+private
+    m_n: int = 0
+
+class Sub : Base
+public
+    fn steal(): int
+        return m_n
+
+void main()
+    console.print(new Sub(1).peek())
