@@ -397,6 +397,7 @@ mut Analyzer::checkAssign(s: AssignStmt)
 
     // unqualified assignment to a field of the enclosing class
     if not scopeHas(s.name) and isCurField(s.name) then
+        checkFieldAccess(s, m_curClass, s.name)
         pathClear("self." + s.name)
         if s.op == "=" then
             checkAssignable(s, curClassFieldType(s.name), vt, "field '" + s.name + "'")
@@ -455,6 +456,7 @@ mut Analyzer::checkFieldAssign(s: FieldAssignStmt)
         err(s, "field assignment on a non-object (type '" + typeToString(ot) + "')")
     if not hasField(base.name, s.field) then
         err(s, "type '" + base.name + "' has no field '" + s.field + "'" + didYouMean(s.field, fieldNamesOf(base.name)))
+    checkFieldAccess(s, base.name, s.field)
     let op = pathOf(s.object)
     if op != "" then
         pathClear(op + "." + s.field)
@@ -664,6 +666,7 @@ mut Analyzer::checkStructPattern(p: StructPattern, subjT: Type)
         seen += [fp.field]
         if not hasField(pn, fp.field) then
             err(p, "type '" + pn + "' has no field '" + fp.field + "'" + didYouMean(fp.field, fieldNamesOf(pn)))
+        checkFieldAccess(p, pn, fp.field)
         let ft = fieldReadType(pn, fp.field)
         let fb = stripNull(ft)
         if isFloatKind(fb.kind) then

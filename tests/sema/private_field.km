@@ -1,0 +1,15 @@
+import console
+
+class Counter
+public
+    constructor(start: int)
+        m_n = start
+
+    fn peek(): int
+        return m_n
+private
+    m_n: int = 0
+
+void main()
+    let c = new Counter(3)
+    console.print(c.m_n)

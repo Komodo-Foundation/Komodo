@@ -807,7 +807,7 @@ void Codegen::genNew(e: NewExpr)
     m_backend.objNew(typeIdOf(e.typeName), nfields)
 
     let ctor = resolveCtorSym(e.typeName)
-    let hasCtor = typeIsClass(e.typeName) and hasFn(ctor)
+    let hasCtor = typeIsClass(e.typeName) and hasFn(ctor) and not e.raw
 
     // Positional `new T(a, b, …)` on a struct / ctor-less class binds args
     // to fields in *constructor order* (required fields first, then this

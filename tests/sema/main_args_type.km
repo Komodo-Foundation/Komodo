@@ -1,0 +1,7 @@
+import console
+
+// `main(args)` receives the command line as a [string]: a number cannot
+// be taken from an element.
+void main(args)
+    let n: int = args[1]
+    console.print(n)
