@@ -391,6 +391,5 @@ Both scripts need `./kmc`. Run `./build-self.sh` first.
 | `KOMODO_CACHE` | `komodo` | The cache directory. Default `${XDG_CACHE_HOME:-~/.cache}/komodo`. |
 | `KM_CC_INPUTS` | `komodo` | Extra linker inputs, word-split, as with `--`. |
 | `KOMODO` | `kmrepl`, `run-tests.sh` | The `komodo` driver to use. |
-| `KOMODO_MAIN` | `build-self.sh`, `build.sh` | Path to the interpreter's `main.py`. Used only when no seed or `kmc` is available. |
+| `KOMODO_MAIN` | `build-self.sh` | Path to the interpreter's `main.py`. Used only when no seed or `kmc` is available. |
 | `KM_PY` | `build-self.sh` | The Python used for the interpreter path. |
-| `KM_OPT` | `build.sh`, `krun.sh` | Optimization level for those scripts. |

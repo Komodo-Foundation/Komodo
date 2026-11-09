@@ -471,9 +471,7 @@ extern "SDL2"                       // a block: one library, many decls
   so `counter += 1` on a C `int` is correct. Add `= "sym"` to bind a
   differently spelled symbol. Arrays and structs are rejected. Works in
   `extern "lib"` blocks too. See `examples/ffi_extern_var.km`.
-- With `build.sh` (the interpreter path) pass link flags after the output
-  name — `./build.sh app.km x86 ./app -lSDL2`; the `komodo` CLI reads
-  `<file>.links` and needs none.
+- The `komodo` CLI reads `<file>.links` and needs no link flags.
 
 ### Exporting to C and C++ (`export fn`)
 
@@ -705,8 +703,8 @@ run.
 
 After analysis, an AST-rewriting pass (`modules/optimize.kmm`) runs at
 one of four levels, chosen by a driver argument
-(`main.km <file> <target> none|low|medium|max`, default `none`; `KM_OPT`
-env for `build.sh` / `krun.sh`):
+(`main.km <file> <target> none|low|medium|max`, default `none`; `komodo
+--release` selects `max`):
 
 | Level | Adds |
 |---|---|

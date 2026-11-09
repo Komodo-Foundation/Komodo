@@ -38,7 +38,7 @@ import file
 //  just picking a `Backend` (see `selectBackend`).  The x86 output
 //  assembles with `nasm -f elf64` and links with `gcc` against the C
 //  standard library in stdlib/.  See stdlib/km_runtime.h for the ABI and
-//  build.sh for the one-shot build.
+//  `komodo` for the one-shot build.
 // ═══════════════════════════════════════════════════════════════════════
 
 fn compile(source: string, target: string): string

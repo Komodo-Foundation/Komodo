@@ -44,3 +44,10 @@
 /tests/interop/export_roundtrip
 /tests/interop/*.o
 /tests/interop/*.a
+
+# build records written next to sources by the compiler
+*.km.deps
+*.km.links
+*.kmm.deps
+*.kmm.links
+/dist/

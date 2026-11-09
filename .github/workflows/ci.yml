@@ -1,0 +1,38 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y nasm gcc g++ libgc-dev libgc1 pkg-config zlib1g-dev
+      - name: Build the compiler (bootstraps from the checked-in seed)
+        run: ./build-self.sh
+      - name: Examples, interop and wasm-free suites
+        run: ./run-tests.sh
+      - name: Analyser diagnostics
+        run: ./run-sema-tests.sh
+      - name: Binding generator
+        run: bash tests/bind/run.sh
+      - name: The compiler reproduces itself
+        run: ./build-self.sh --force
+
+  wasm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 18 }
+      - uses: mymindstorm/setup-emsdk@v14
+      - name: Install toolchain
+        run: sudo apt-get update && sudo apt-get install -y nasm gcc g++ libgc-dev libgc1 pkg-config zlib1g-dev
+      - run: ./build-self.sh
+      - name: Run the suite including the wasm leg
+        run: ./run-tests.sh

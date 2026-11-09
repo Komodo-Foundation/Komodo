@@ -71,7 +71,9 @@ here="$(cd "$(dirname "$self")" && pwd)"
 self="$here/$(basename "$self")"
 
 prog="komodo"
-version="Komodo (native, self-hosted) — kmc"
+ver="$(cat "$here/VERSION" 2>/dev/null || echo dev)"
+rev="$(git -C "$here" rev-parse --short HEAD 2>/dev/null || true)"
+version="Komodo $ver${rev:+ ($rev)} — native, self-hosting"
 
 # One-line error with an optional hint; exits.
 die() { echo "$prog: $1${2:+ — $2}" >&2; exit "${3:-1}"; }
@@ -97,6 +99,7 @@ commands:
   lib         build a library (object, .a, header) for C / C++ / Rust / Python
   clean       delete build products (.komodo/)
   doctor      check that the toolchain is installed
+  upgrade     update this installation (git pull)
   self        work on the compiler itself: self build | test | seed
 
 options:
@@ -113,7 +116,7 @@ Older flags still work; see docs/cli.md#legacy-flags.
 EOF
 }
 
-commands="run build test repl new bind watch clean doctor lib self"
+commands="run build test repl new bind watch clean doctor lib self upgrade"
 is_command() { local c; for c in $commands; do [[ "$c" == "$1" ]] && return 0; done; return 1; }
 
 # Levenshtein distance, for "did you mean".
@@ -329,6 +332,15 @@ void main()
 EOF
     printf '.komodo/\nkomodo_bindings/\n/%s\n' "$name" > "$name/.gitignore"
     echo "created $name/ — next:  cd $name && komodo"
+    exit 0
+fi
+
+# ── upgrade ─────────────────────────────────────────────────────────
+if [[ "$cmd" == "upgrade" ]]; then
+    have git || die "git not found" "$(install_hint git git)"
+    git -C "$here" rev-parse --git-dir >/dev/null 2>&1 || die "$here is not a git checkout" "reinstall with install.sh"
+    git -C "$here" pull --ff-only || die "could not fast-forward" "commit or stash local changes in $here, then retry"
+    echo "upgraded to $(git -C "$here" rev-parse --short HEAD); the compiler rebuilds on the next run"
     exit 0
 fi
 
