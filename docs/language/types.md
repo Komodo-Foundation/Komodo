@@ -204,9 +204,10 @@ error: constructor 'Counter' takes 1 argument(s), got 2
 
 ### Public and private
 
-`public` and `private` section labels are accepted in a class body. The
-compiler does not currently enforce them on classes: a private method called
-from outside the class compiles and runs.
+`public` and `private` section labels are accepted in a class body. A
+`private` field or method is reachable only from the members of its own
+class (methods and the constructor). Reaching it from outside the class is a
+compile error, and so is reaching a parent's private member from a subclass.
 
 ```km
 import console
@@ -228,13 +229,14 @@ private
 void main()
     let c = new Counter(5)
     console.print(c.value())
-    console.print(c.helper())
 ```
 
 ```text
 5
-5
 ```
+
+`c.helper()` or `c.m_n` written in `main` is rejected with
+`'helper' is private to class 'Counter'`.
 
 Module-level `private` is enforced: a `private` function reached as
 `module::name` from another module is an error (see
@@ -808,7 +810,8 @@ void main()
 ```
 
 `copy(x)` makes a deep copy. Nested struct fields and array fields are
-duplicated too:
+duplicated too. A class object is copied the same way, without running its
+constructor:
 
 ```km
 import console
@@ -975,6 +978,8 @@ out of every text block, and the message is shown as it is printed.
 | ``` cannot reassign immutable binding 'i' (declared with `be`) ``` | assignment to a loop variable or a `be` binding |
 | `use of moved value 'a' — a `unique` value moved away at 8:13 leaves nothing behind` | use of a `unique` value after a move |
 | `'key' is private to module 'secret'` | `module::name` of a module-private function |
+| `'m_n' is private to class 'Counter'` | a `private` field or method used outside its class |
+| `template 'twice' cannot share its name with another 'twice' declaration` | a template and another declaration of one name |
 | `no overload of 'f' matches the argument types` | no overload fits the call |
 | `duplicate function 'f' — two overloads have identical parameter types` | exact repeat of an overload |
 | `overloaded function 'greet' cannot have default parameter values` | defaults on an overloaded name |
@@ -992,11 +997,11 @@ out of every text block, and the message is shown as it is printed.
 These were found while writing this page. The compiler's behaviour is shown
 as observed; the design reference describes a stricter rule for some of them.
 
-- **A template and a typed overload of one name are accepted.** The design
-  reference calls this an error. Do not rely on either behaviour.
-- **Class `private` labels are not enforced** (see [Public and private](#public-and-private)).
-- **Positional `new` does not move a `unique` argument.** After
-  `new Holder(a)` with a `unique` field, `a` is still usable. Assigning to a
-  field (`hold.h = a`) does move it.
-- **`copy()` on a constructor-based class is not a deep copy.** A nested object
-  is still shared between the original and the copy.
+- **Template bodies are only checked per instance by the code generator.**
+  A template's body is not analysed on its own. Each instantiated copy is
+  generated with the argument types, so `let q: string = a + b` inside
+  `fn bad(a, b)` is accepted for `bad(1, 2)`, and a wrong call inside the body
+  surfaces only when that copy is generated. A `module.fn(...)` call inside a
+  template body is not rewritten to its linked symbol by the analyzer.
+  Checking each instantiation needs a clone of the template body, because the
+  instances share one body today.

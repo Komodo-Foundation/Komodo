@@ -1020,5 +1020,3 @@ found while writing this page are:
 
 - `main(args)`: `args[1]` is the first user argument. `design.md` says
   `args[2]`.
-- `print(args[1])` prints the element's raw number rather than its text. Use
-  `"" + args[1]` or assign it to a `string` variable first.
