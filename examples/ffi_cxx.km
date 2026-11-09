@@ -4,6 +4,7 @@
 // `extern fn … = "symbol"` aliases (see cxxshim.kmm).
 // (stackvm: skip — needs the native C ABI.)
 // (c: skip — C++ sources are linked by the x86 path only.)
+// (wasm: skip — C FFI is not supported by the wasm target.)
 
 import console
 import cxxshim

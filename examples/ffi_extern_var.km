@@ -1,6 +1,7 @@
 // Reading and writing C global variables with `extern let`.
 // (stackvm: skip — needs the native x86 C ABI.)
 // (c: skip — extern variables are an x86-backend feature.)
+// (wasm: skip — C FFI is not supported by the wasm target.)
 
 import console
 import cglobals

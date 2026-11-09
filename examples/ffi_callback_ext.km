@@ -4,6 +4,7 @@
 // declared signature.
 // (stackvm: skip — needs the native C ABI.)
 // (c: skip — callback trampolines are an x86-backend feature.)
+// (wasm: skip — C FFI is not supported by the wasm target.)
 
 import console
 import cbhelper

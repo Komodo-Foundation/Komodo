@@ -4,6 +4,7 @@
 // Komodo struct.
 // (stackvm: skip — by-value structs need the native x86 C ABI.)
 // (c: skip — by-value structs over the C FFI are not supported by the c target.)
+// (wasm: skip — C FFI is not supported by the wasm target.)
 
 import console
 import sretlib

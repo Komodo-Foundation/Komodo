@@ -40,3 +40,7 @@
 /graphify-out/
 /.claude/
 /.build/
+/tests/interop/export_cpp_main
+/tests/interop/export_roundtrip
+/tests/interop/*.o
+/tests/interop/*.a
