@@ -74,8 +74,8 @@ zero: 1 []
 - `new Name(args)` allocates the object. Arguments bind positionally to the
   fields in constructor order: fields without a default come first, then the
   fields with a default. A field that gets no argument takes its default, or
-  zero (`0`, `""`, `false`, `null`) if it has none. The design reference says
-  "declaration order"; the compiler uses the order above.
+  zero (`0`, `""`, `false`, `null`) if it has none. `design.md` states the
+  same order.
 - Fields are read and written with `.`.
 - A struct has no methods. Write free functions that take the struct as a
   parameter.

@@ -191,8 +191,11 @@ struct Flags : u32                          // fixed-width int container
 - Inheritance: `struct Child : Parent` — child fields follow parent fields.
 - Instantiating an `abstract` type is an error.
 - `new Name(a, b, …)` builds a heap value, binding args to fields in
-  declaration order (unset fields are zero); `obj.field` reads/writes a
-  field; a struct is passed and returned by handle.
+  constructor order: fields without a default first, then fields with one,
+  each group in declaration order. A field with no argument takes its
+  default, or zero; `obj.field` reads/writes a field; a struct is passed and
+  returned by handle. (A defaulted field before a required one is therefore
+  not skipped over by position.)
 - Ownership modifiers (before `struct`, combinable with `abstract`):
   - `shared` — the default: values alias freely, `let b = a` gives two
     handles to one value.
