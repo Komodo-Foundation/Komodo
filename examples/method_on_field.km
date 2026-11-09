@@ -1,0 +1,26 @@
+// Method calls on a computed receiver: a field of a field, an element of
+// an array, the result of another call.
+import console
+
+class Counter
+    n: int
+    mut bump(k: int): int
+        n += k
+        return n
+    fn half(): float
+        return n / 2.0
+
+class Holder
+    inner: Counter
+
+fn first(hs: [Holder]): Holder
+    return hs[0]
+
+void main()
+    let h = new Holder(new Counter(1))
+    console.print(h.inner.bump(9))
+    console.print(h.inner.half())
+    let hs = [h]
+    console.print(hs[0].inner.bump(2))
+    console.print(first(hs).inner.bump(3))
+    console.print(h.inner.n)

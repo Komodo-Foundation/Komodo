@@ -110,6 +110,10 @@ mut Codegen::exprType(e: Expression?): string
             return exprType(e.right)
         return "int"
     if e is CallExpr then
+        if e.receiver != null then
+            let ro = resolveMethodOwner(exprType(e.receiver), e.name[1 to e.name.length])
+            if ro != "" then
+                return fnRet(ro + "__" + e.name[1 to e.name.length])
         let d = dotIndex(e.name)
         // a dotted call may name an overload set / template through its
         // "_"-joined form (`algorithm.sum` → overloaded `algorithm_sum`)

@@ -129,7 +129,10 @@ mut Parser::parsePostfix(): Expression?
                 let base = ""
                 if expr is Identifier then
                     base = expr.name
-                expr = new CallExpr(base + "." + member, cargs)
+                let mce = new CallExpr(base + "." + member, cargs)
+                if not (expr is Identifier) then
+                    mce.receiver = expr
+                expr = mce
             else if member == "length" then
                 // `.length` on a string / array is the same as `#x`.
                 expr = new UnaryOp("#", expr)

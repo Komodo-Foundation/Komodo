@@ -490,6 +490,12 @@ void Codegen::genCall(e: CallExpr)
             m_backend.cvtFloatToInt()
         return
 
+    // `expr.method(args)` on a computed receiver (a field of a field, an
+    // index, a call result): evaluate the receiver expression itself.
+    if e.receiver != null then
+        genMethodCallE(exprType(e.receiver), "", e.receiver, e.name[1 to e.name.length], e.args)
+        return
+
     // `recv.method(args)` where `recv` is an object-typed local, a field
     // of the enclosing class, or `self` — a method call: the receiver
     // rides in as implicit argument 0.
@@ -893,7 +899,9 @@ void Codegen::loadReceiver(recv: string)
         m_backend.loadField(fieldIndexOf(m_curClass, recv))
 
 void Codegen::genMethodCall(recv: string, meth: string, args)
-    let objType = receiverType(recv)
+    genMethodCallE(receiverType(recv), recv, null, meth, args)
+
+void Codegen::genMethodCallE(objType: string, recv: string, recvExpr: Expression?, meth: string, args)
     let owner = resolveMethodOwner(objType, meth)
     if owner == "" then
         throw ("type '" + objType + "' has no method '" + meth + "'")
@@ -906,7 +914,10 @@ void Codegen::genMethodCall(recv: string, meth: string, args)
     let slot = methodSlotOf(objType, meth)
     m_backend.callFrameBegin(total)
     m_backend.callArgTag(0, 0)
-    loadReceiver(recv)
+    if recvExpr != null then
+        genExpr(recvExpr)
+    else
+        loadReceiver(recv)
     m_backend.callArgStore(0)
     let j = 1
     for a in args do
