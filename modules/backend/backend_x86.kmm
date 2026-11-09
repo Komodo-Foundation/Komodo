@@ -1602,7 +1602,7 @@ mut X86Backend::header(): string
     h = h + "global km_abi_gc\n"
     let xi = 0
     while xi < #m_exportNames do
-        h = h + "global $" + m_exportNames[xi] + "\n"
+        h = h + "global " + m_exportNames[xi] + "\n"
         xi += 1
     h = h + "\n"
     if m_usesAlloc then
@@ -1621,7 +1621,12 @@ mut X86Backend::header(): string
         h = h + "extern km_str_join\n"
     let i = 0
     while i < #m_externs do
-        h = h + "extern " + m_externs[i] + "\n"
+        // NASM 3 rejects the `$` escape inside extern/global; a bare name is
+        // fine there even when it is a reserved word
+        let ex = m_externs[i]
+        if #ex > 0 and ex[0] == "$" then
+            ex = ex[1 to #ex]
+        h = h + "extern " + ex + "\n"
         i += 1
     h = h + "\nsection .text\n\n"
     return h

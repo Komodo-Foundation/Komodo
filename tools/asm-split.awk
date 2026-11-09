@@ -35,7 +35,7 @@ function defined(line,   name) {
 }
 mode == "hdr" {
     if ($0 ~ /^section \.text/) { mode = "text"; newchunk(); emit($0); next }
-    if ($0 !~ /^global/) hdr = hdr $0 "\n"
+    if ($0 !~ /^global/) { line = $0; if (line ~ /^extern \$/) sub(/^extern \$/, "extern ", line); hdr = hdr line "\n" }
     next
 }
 mode == "text" {
@@ -57,8 +57,8 @@ END {
         out = f ".asm"
         printf "%s", hdr > out
         split(names[i], mine, "\n")
-        for (j in mine) if (mine[j] != "") print "global " mine[j] > out
-        for (j = 1; j <= nl; j++) if (owner[all[j]] != i) print "extern " all[j] > out
+        for (j in mine) if (mine[j] != "") { g = mine[j]; sub(/^\$/, "", g); print "global " g > out }
+        for (j = 1; j <= nl; j++) if (owner[all[j]] != i) { g = all[j]; sub(/^\$/, "", g); print "extern " g > out }
         while ((getline line < (f ".body")) > 0) print line > out
         close(f ".body")
         print "section .note.GNU-stack noalloc noexec nowrite progbits" > out
