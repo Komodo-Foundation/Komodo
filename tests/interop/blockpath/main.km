@@ -1,0 +1,5 @@
+import console
+import blibs
+
+void main()
+    console.print(`block {blockpath_answer()}`)

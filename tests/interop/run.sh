@@ -106,6 +106,17 @@ if [[ $# -eq 0 ]]; then
     done
 fi
 
+# a block `extern "path.c"` resolves against its module's directory, so the
+# program builds from any working directory
+if [[ $# -eq 0 ]]; then
+    if (cd "$work" && "$komodo" -q "$here/blockpath/main.km" >"$work/bp.out" 2>"$work/err") \
+       && diff -q "$work/bp.out" "$here/blockpath/expected.txt" >/dev/null; then
+        echo "ok       interop/block-extern-path"; pass=$((pass+1))
+    else
+        echo "FAIL     interop/block-extern-path  (run from another directory)"; sed 's/^/           /' "$work/err"; fail=$((fail+1))
+    fi
+fi
+
 echo "────────────────────────────────"
 echo "interop: $pass passed, $fail failed"
 [[ $fail -eq 0 ]]
