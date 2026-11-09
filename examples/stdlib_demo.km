@@ -1,5 +1,4 @@
 // Exercises the expanded Komodo standard library.
-// Build:  kmsrc/compiler/build.sh kmsrc/stdlib_demo.km
 
 import console
 import algorithm

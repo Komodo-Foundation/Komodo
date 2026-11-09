@@ -1,0 +1,2 @@
+export fn twice(x): int
+    return 2

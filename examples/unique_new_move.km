@@ -1,0 +1,17 @@
+// Positional `new` moves a `unique` argument into the field; the new
+// owner is the holder, and a fresh value revives the name.
+import console
+
+unique struct Res
+    id: int
+
+struct Holder
+    h: Res
+    n: int = 0
+
+void main()
+    let a = new Res(5)
+    let hold = new Holder(a, 1)
+    console.print("held", hold.n)
+    a = new Res(9)
+    console.print("revived", a.id)

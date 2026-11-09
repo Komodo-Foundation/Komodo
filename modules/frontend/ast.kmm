@@ -70,6 +70,9 @@ struct CallExpr : Expression
     // `ns::member(args)` — the namespace before the final `::` (kept only
     // for module-privacy diagnostics; the call still targets `name`).
     qualifier: string = ""
+    // `expr.method(args)` where `expr` is not a plain name (a field, an
+    // index, another call): the receiver expression; `name` is ".method".
+    receiver: Expression? = null
     // `name(args)?` — a protected call: yields null instead of
     // propagating a thrown error out of the callee.
     protected: bool = false
@@ -78,6 +81,9 @@ struct CallExpr : Expression
     // does not re-run method-owner resolution.  null for a plain call.
     resolvedSym: string? = null
     isMethod: bool = false
+    // For the built-in `assert`: the `file:line: ` prefix of its failure
+    // message, filled in by the semantic analyser (codegen has no file map).
+    site: string = ""
 
 // `receiver.method(args)`
 struct MethodCallExpr : Expression
@@ -123,6 +129,10 @@ struct NewExpr : Expression
     // `new Type(args)?` — protected construction: yields null instead of
     // propagating a thrown error out of the constructor.
     protected: bool = false
+    // Codegen-only: allocate the object and default its fields, but do not
+    // run its constructor.  `copy(x)` uses it to build the fresh object of a
+    // constructor-based class, whose constructor takes arbitrary arguments.
+    raw: bool = false
 
 // `expr or throw "msg"` / `throw "msg"` used in expression position.
 struct ThrowExpr : Expression
@@ -144,6 +154,10 @@ struct VarDecl : Statement
     // `private` section, mirroring `Declaration`.
     modOwner: string = ""
     visMod: string = "public"
+    // `extern let name: T [= "sym"]` — a C global variable: no storage of
+    // our own, reads / writes go straight to the C symbol.
+    isExtern: bool = false
+    symbol: string? = null
 
 struct AssignStmt : Statement
     name: string
@@ -260,6 +274,14 @@ struct FunctionDecl : Declaration
     // `extern fn` — a foreign C function, no body; calls use the native
     // System V AMD64 C ABI instead of Komodo's (tag,value)[] ABI.
     isExtern: bool = false
+    // `export fn` — a Komodo function with a body that is also callable
+    // FROM C / C++ under its unmangled name, through a native System V
+    // C-ABI entry wrapper.
+    isExport: bool = false
+    // `extern fn f(...) = "sym"` — the C symbol to bind when it differs
+    // from the Komodo name (a C++ mangled name, or a C name that is not a
+    // valid Komodo identifier).  null = the function's own name.
+    symbol: string? = null
     // A body-less declaration (`fn name(params): T` with no indented
     // block): the signature is known to the compiler but the definition
     // is supplied at link time, using the ordinary Komodo call ABI (this
@@ -306,6 +328,8 @@ struct ClassField
     name: string
     declaredType: string? = null
     defaultValue: Expression? = null
+    // `public` / `private` section the field sits in (see sema.kmm, m_privMembers)
+    visibility: string = "public"
 
 struct ClassDecl : Declaration
     name: string

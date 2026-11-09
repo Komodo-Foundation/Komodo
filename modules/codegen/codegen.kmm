@@ -75,7 +75,10 @@ public
             let gty = g.resolvedType or "int"
             m_globalNames += [g.name]
             m_globalTypes += [gty]
-            m_backend.declareGlobal(g.name, gty)
+            if g.isExtern then
+                m_backend.declareExternGlobal(g.name, g.symbol or g.name, g.declaredType or "int")
+            else
+                m_backend.declareGlobal(g.name, gty)
 
         // Enum variants become plain integer constants: `Color::RED` (which
         // the parser has already reduced to the bare name `RED`) lowers to
@@ -128,6 +131,24 @@ public
         if prog.usesCopy then
             synthDeepCopiers(prog)
 
+        // Pass 1-export: a program that exports C entry points but has no
+        // `main` is a library — nothing runs the top-level `let`
+        // initialisers or starts the collector, so synthesize a hidden
+        // init procedure; the first export call runs it (see emitExport).
+        m_exportInit = ""
+        let hasExport = false
+        let hasMain = false
+        for xf in prog.functions do
+            if xf.isExport then
+                hasExport = true
+            if xf.name == "main" and xf.ownerClass == null then
+                hasMain = true
+        if hasExport and not hasMain then
+            m_exportInit = "km_lib_init"
+            let initFn = new FunctionDecl("km_lib_init")
+            initFn.isVoid = true
+            prog.functions += [initFn]
+
         // Pass 1-pre: sift generic templates (a free function with one or
         // more untyped parameters) out of `prog.functions`.  They are
         // never emitted as-is — each call site monomorphizes a copy (see
@@ -156,6 +177,7 @@ public
             m_fnSigs += [paramSig(func)]
             m_fnRawParams += [rawParamList(func)]
             m_fnLink += [func.name]
+            m_fnDecls += [func]
 
         // Pass 1a: two free overloads with the identical normalized
         // parameter-type list are a genuine duplicate (sema exempts every
@@ -187,6 +209,10 @@ public
             let fdef = prog.functions[pi1]
             if not fdef.isExtern and not fdef.isPrototype then
                 m_backend.declareFn(m_fnLink[pi1])
+            if fdef.isExport then
+                m_backend.declareExport(fdef.name)
+            if fdef.isExtern and fdef.symbol != null then
+                m_backend.declareAlias(fdef.name, fdef.symbol or fdef.name)
             pi1 += 1
 
         // Pass 2: lower each body.  "Returns on every path" and the
@@ -207,10 +233,15 @@ public
             genFunction(m_genQueue[gi])
             gi += 1
 
+        // Pass 2b': the C-ABI entry wrapper of every `export fn`.
+        for xfn in prog.functions do
+            if xfn.isExport then
+                genExportWrapper(xfn)
+
         // Pass 2b: one native-ABI trampoline per Komodo function passed to
         // C as a callback (collected while lowering `extern` calls).
         for nm in m_trampNames do
-            m_backend.emitTrampoline(m_backend.mangle(nm), fnArity(nm))
+            genCallbackTramp(nm)
 
         // Emit the per-class vtables + the type-id → vtable index table.
         emitVtables()
@@ -412,9 +443,10 @@ public
     //  emits it).  Its body clones `src` field by field: a struct/class
     //  field recurses through that type's own helper, an array field is
     //  buffer-cloned, everything else (scalars, strings, enums, opaque
-    //  handles, constructor-based classes) is shared by value.  Cyclic
-    //  data would recurse forever — the same caveat as a hand-written C
-    //  deep copy.
+    //  handles) is shared by value.  A constructor-based class is allocated
+    //  with a raw `new` (no constructor call) and then filled the same way.
+    //  Cyclic data would recurse forever — the same caveat as a hand-written
+    //  C deep copy.
 
     mut synthDeepCopiers(prog: Program)
         // Which types get a helper — computed first so a field can refer
@@ -423,19 +455,13 @@ public
             if not d.isExtern and not d.isAbstract and d.container == null then
                 m_deepCopierTypes += [d.name]
         for c in prog.classes do
-            if not c.isAbstract and not classHasCtor(c) then
+            if not c.isAbstract then
                 m_deepCopierTypes += [c.name]
         for nm in m_deepCopierTypes do
             prog.functions += [makeDeepCopier(nm)]
 
     mut deepCopierExists(name: string): bool
         return (name in m_deepCopierTypes)
-
-    fn classHasCtor(c: ClassDecl): bool
-        for m in c.methods do
-            if m.isConstructor then
-                return true
-        return false
 
     mut makeDeepCopier(typeName: string): FunctionDecl
         let ti = typeIndex(typeName)
@@ -456,7 +482,9 @@ public
         // let c = new T()
         let cdecl = new VarDecl("c")
         cdecl.declaredType = typeName
-        cdecl.init = new NewExpr(typeName, [])
+        let ne = new NewExpr(typeName, [])
+        ne.raw = true
+        cdecl.init = ne
         body += [cdecl]
         // c.<field> = <clone of src.<field>>
         let i = 0
@@ -906,6 +934,11 @@ private
     // symbol each function is emitted / called under — differs from its
     // source name only for overloaded free functions and generic instances
     m_fnLink: [string] = []
+    // name of the synthesized library-init procedure ("" = the program
+    // has a `main`, which does that work itself)
+    m_exportInit: string = ""
+    // declaration per m_fn* entry — default arguments are read from it
+    m_fnDecls: [FunctionDecl] = []
     // scratch: candidate order for the last runtime-dispatched call
     m_ovOrder: [int] = []
 
@@ -956,6 +989,7 @@ private
     m_typeSlotNames: [[string]] = []
     // class owning the method currently being lowered ("" if none)
     m_curClass: string = ""
+    m_curInst: string = ""            // "add(int, string)" while emitting a monomorphised copy
 
     // ── current-function stack frame (see codegen_frame.kmm) ────────
     m_names: [string] = []

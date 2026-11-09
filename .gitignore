@@ -22,6 +22,7 @@
 !/examples/*.kmm
 !/examples/*.expected
 !/examples/*.c
+!/examples/*.cpp
 /demos/*
 !/demos/*.km
 !/demos/*.kmm
@@ -34,3 +35,19 @@
 # ── editor / OS ──────────────────────────────────────────────────────
 /.vscode/
 .DS_Store
+
+# graphify output and Claude Code worktrees
+/graphify-out/
+/.claude/
+/.build/
+/tests/interop/export_cpp_main
+/tests/interop/export_roundtrip
+/tests/interop/*.o
+/tests/interop/*.a
+
+# build records written next to sources by the compiler
+*.km.deps
+*.km.links
+*.kmm.deps
+*.kmm.links
+/dist/

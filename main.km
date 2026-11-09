@@ -22,7 +22,7 @@ void main(args)
         km_fail("error: file not found: " + fileName)
 
     // Trailing arguments, in any order:
-    //   x86 | stackvm            code-generation target      (default x86)
+    //   x86 | stackvm | c | wasm  code-generation target      (default x86)
     //   strict                   analyser lint-level checks   (default off)
     //   none | low | medium | max   optimisation level        (default none)
     let target = "x86"
@@ -31,8 +31,10 @@ void main(args)
     let ai = 2
     while ai < #args do
         let a = args[ai]
-        if a == "x86" or a == "stackvm" then
+        if a == "x86" or a == "x86pic" or a == "stackvm" or a == "c" or a == "wasm" then
             target = a
+        else if a == "header" then
+            target = a              // C header for the `export fn`s -> <file>.h
         else if a == "strict" then
             strict = true
         else if a == "none" or a == "low" or a == "medium" or a == "max" then
@@ -58,6 +60,8 @@ void main(args)
     let asm = compiled or ""          // km_fail above does not return
 
     let outputPath = fileName + ".asm"
+    if target == "header" then
+        outputPath = fileName + ".h"
     km_compiler::save(asm, outputPath)
 
 extern void km_fail(msg: string)
@@ -188,9 +192,16 @@ fn gather(rootPath: string, stdlibProbe: string) : GatherResult
 
         // 1b. a block `extern "lib"` links its library automatically, in
         //     any file (unlike the `link` keyword it needs no `module`).
+        //     A quoted path is relative to the file that names it, as for
+        //     `link "x.c"`; when that file does not exist there, the path is
+        //     kept as given (relative to the working directory).
         for t in externLinkTargets(src) do
-            if not (t in links) then
-                links += [t]
+            let tok = t
+            if tok.length > 0 and tok[0 to 1] != "-" and tok[0 to 1] != "/" then
+                if file::exists(dirOf(p) + "/" + tok) then
+                    tok = dirOf(p) + "/" + tok
+            if not (tok in links) then
+                links += [tok]
 
         // 2. a module file: merge its siblings, and collect its `link`s
         //    (the parser enforces `link` is module-only too — see

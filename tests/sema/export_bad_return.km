@@ -1,0 +1,2 @@
+export fn make(): [int]
+    return [1]

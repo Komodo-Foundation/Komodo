@@ -91,6 +91,7 @@ mut Analyzer::inferIdentifier(e: Identifier): Type
             err(e, "use of moved value '" + e.name + "' — a `unique` value moved away at " + movedAt(e.name) + " leaves nothing behind")
         return scopeType(e.name)
     if isCurField(e.name) then
+        checkFieldAccess(e, m_curClass, e.name)
         return curClassFieldType(e.name)
     if isMacro(e.name) then
         let m = macroExprOf(e.name)
@@ -211,6 +212,12 @@ mut Analyzer::inferBinary(e: BinaryOp): Type
     let ls = legacyOf(lt) == "string"
     let rs = legacyOf(rt) == "string"
     if e.op == "+" and (ls or rs) then
+        let other = lt
+        if ls then
+            other = rt
+        let ol = legacyOf(other)
+        if ol == "int" or ol == "float" or ol == "bool" then
+            err(e, "cannot add '" + typeToString(lt) + "' and '" + typeToString(rt) + "' (use string(x) or an interpolated string)")
         return tPrim("string")
     if e.op == "*" and ls then
         return tPrim("string")
@@ -266,6 +273,43 @@ mut Analyzer::inferUnary(e: UnaryOp): Type
 // ── calls: free fn / method / stdlib / extern / builtin ─────────────
 
 mut Analyzer::inferCall(e: CallExpr): Type
+    // `expr.method(args)` on a non-name receiver (`obj.inner.method(9)`,
+    // `xs[0].m()`, `f().m()`): the method resolves on the receiver's type.
+    if e.receiver != null then
+        let rct = inferExpr(e.receiver)
+        if isNullable(rct) then
+            err(e, "receiver is possibly null — narrow it before calling '" + e.name[1 to e.name.length] + "'")
+        let rtn = typeToString(stripNull(rct))
+        let rmeth = e.name[1 to e.name.length]
+        let rowner = methodOwner(rtn, rmeth)
+        if rowner == "" then
+            err(e, "type '" + rtn + "' has no method '" + rmeth + "'" + methodHint(rtn, rmeth))
+        checkMemberAccess(e, rowner, rmeth)
+        let rsym = rowner + "__" + rmeth
+        let rparams = fnParamTypes(rsym)
+        if #rparams != 1 + #e.args then
+            err(e, "method '" + rtn + "." + rmeth + "' takes " + string(#rparams - 1) + " argument(s), got " + string(#e.args))
+        let rargTs: [Type] = []
+        for a in e.args do
+            rargTs += [inferExpr(a)]
+        checkArgs(e, rtn + "." + rmeth, rparams, rargTs, 1, false)
+        e.isMethod = true
+        e.resolvedSym = rsym
+        return parseTypeStr(fnRetType(rsym))
+
+    // `assert(cond)` / `assert(cond, "message")` — when `cond` is false it
+    // throws `file:line: assertion failed: message`.  The file:line prefix
+    // is resolved here (only the analyser has the file map); codegen lowers
+    // the check.  Yields no value.
+    if e.name == "assert" then
+        if #e.args < 1 or #e.args > 2 then
+            err(e, "'assert' takes a condition and an optional message, got " + string(#e.args) + " argument(s)")
+        inferExpr(e.args[0])
+        if #e.args == 2 then
+            checkAssignable(e, tPrim("string"), inferExpr(e.args[1]), "assert message")
+        e.site = locate(string(e.line) + ": ", m_srcFiles, m_srcStarts)
+        return tVoid
+
     // `data(arr)` — element pointer for C interop; result is an int.
     if e.name == "data" then
         for a in e.args do
@@ -314,6 +358,8 @@ mut Analyzer::inferCall(e: CallExpr): Type
     // (so their own types resolve and side effects are seen) but leave
     // the call loosely typed.
     if isTemplateName(e.name) or isOverloadedName(e.name) then
+        if isTemplateName(e.name) then
+            checkTemplateArity(e)
         for a in e.args do
             inferExpr(a)
         return tAny
@@ -339,6 +385,12 @@ mut Analyzer::inferCall(e: CallExpr): Type
         // was imported (stdlib/*.kmm, or any library), type-check against
         // it, otherwise leave the call unchecked.
         let sym = mangleDotted(e.name)
+        // `mod.fn(...)` on a user module is the same call as `mod::fn(...)`:
+        // rewrite it and resolve through the plain-name path below.
+        if not hasFn(sym) and hasFn(meth) and fnModOf(meth) == recv then
+            e.name = meth
+            e.qualifier = recv
+            return inferCall(e)
         // `Module.member` where `member` sits in a `private` section of a
         // *different* module — reject it.
         if hasFn(sym) and fnVisOf(sym) == "private" then
@@ -385,6 +437,7 @@ mut Analyzer::inferCall(e: CallExpr): Type
     if m_curClass != "" then
         let owner = methodOwner(m_curClass, e.name)
         if owner != "" then
+            checkMemberAccess(e, owner, e.name)
             let sym = owner + "__" + e.name
             let params = fnParamTypes(sym)
             if #params != 1 + #e.args then
@@ -393,6 +446,9 @@ mut Analyzer::inferCall(e: CallExpr): Type
             e.isMethod = true
             e.resolvedSym = sym
             return parseTypeStr(fnRetType(sym))
+    // `module::name(...)` must name a declared function of that module.
+    if e.qualifier != "" and not hasFn(e.name) then
+        err(e, "undefined function '" + e.qualifier + "::" + e.name + "'")
     // an unresolved free symbol — a library not on the search path, say.
     // Leave it unchecked rather than guessing.
     return tAny
@@ -407,12 +463,11 @@ mut Analyzer::isCallbackRef(a: Identifier): bool
     return hasFn(nm) and fnKindOf(nm) != "extern"
 
 // A Komodo function handed to C as a callback must use only plain
-// machine-word parameters and an int-class or `void` result — the
-// generated trampoline marshals integer registers only.
+// machine-word / double parameters and a word, double or `void` result —
+// the generated trampoline marshals integer and SSE registers (and the
+// C stack beyond them), not arrays or aggregates.
 mut Analyzer::checkCallbackTarget(node: ASTNode, fnName: string)
     let params = fnParamTypes(fnName)
-    if #params > 6 then
-        err(node, "'" + fnName + "' cannot be a C callback: it takes " + string(#params) + " parameters (max 6)")
     for pt in params do
         if not callbackWordType(parseTypeStr(pt)) then
             err(node, "'" + fnName + "' cannot be a C callback: parameter type '" + pt + "' is not a plain machine word")
@@ -422,11 +477,13 @@ mut Analyzer::checkCallbackTarget(node: ASTNode, fnName: string)
         if not callbackWordType(rt) then
             err(node, "'" + fnName + "' cannot be a C callback: return type '" + ret + "' is not a plain machine word")
 
-// An integer-register-passable type: any integer width, bool, char,
-// string (char*), an object handle (pointer), or `any`.  Not float, not
-// an array, not void.
+// A register-passable type: any integer width, bool, char, string
+// (char*), an object handle (pointer), a float / f32, or `any`.  Not an
+// array, not void.
 mut Analyzer::callbackWordType(t: Type): bool
     let b = stripNull(t)
+    if isFloatKind(b.kind) then
+        return true
     if b.kind == "any" or b.kind == "bool" or b.kind == "char" or b.kind == "string" then
         return true
     if b.kind == "object" then
@@ -443,14 +500,35 @@ mut Analyzer::resolveFnCall(e: CallExpr, sym: string, display: string, argTs: [T
     if fnIsVariadic(sym) then
         if #argTs < fixed then
             err(e, "'" + display + "' takes at least " + string(fixed) + " argument(s), got " + string(#argTs))
-    else if #argTs != fixed then
-        err(e, "'" + display + "' takes " + string(fixed) + " argument(s), got " + string(#argTs))
+    else if #argTs < fnRequiredOf(sym) - skip or #argTs > fixed then
+        arityErr(e, display, fnRequiredOf(sym) - skip, fixed, #argTs)
     if m_curKind == "fn" and k == "void" and not fnIsLinked(sym) then
         err(e, "a pure `fn` cannot call the void procedure '" + display + "'")
     checkArgs(e, display, params, argTs, skip, k == "extern")
     if skip == 0 then
         e.resolvedSym = sym
     return parseTypeStr(fnRetType(sym))
+
+// "takes N argument(s)" or, when defaults make the count a range,
+// "takes LO to HI argument(s)".
+void Analyzer::arityErr(node: ASTNode, display: string, lo: int, hi: int, got: int)
+    let want = string(hi)
+    if lo != hi then
+        want = string(lo) + " to " + string(hi)
+    err(node, "'" + display + "' takes " + want + " argument(s), got " + string(got))
+
+// A call to a generic template: the argument count must fall between the
+// template's required and total parameter counts (codegen fills defaults).
+mut Analyzer::checkTemplateArity(e: CallExpr)
+    for fd in m_tplFns do
+        if fd.name == e.name then
+            let req = 0
+            for p in fd.params do
+                if p.defaultValue == null then
+                    req += 1
+            if #e.args < req or #e.args > #fd.params then
+                arityErr(e, e.name, req, #fd.params, #e.args)
+            return
 
 // Check each argument against its parameter's declared type.  `skip` is
 // the count of leading implicit params (1 for a method receiver).  An
@@ -501,6 +579,7 @@ mut Analyzer::inferMethodCall(e: CallExpr, recv: string, meth: string): Type
     let owner = methodOwner(rt, meth)
     if owner == "" then
         err(e, "type '" + rt + "' has no method '" + meth + "'")
+    checkMemberAccess(e, owner, meth)
     let sym = owner + "__" + meth
     let params = fnParamTypes(sym)
     let total = 1 + #e.args
@@ -577,21 +656,24 @@ mut Analyzer::inferNew(e: NewExpr): Type
     else if not isClassType(e.typeName) then
         if #e.args > fieldCount(e.typeName) then
             err(e, "`new " + e.typeName + "` given more values than it has fields")
-        checkNewFields(e, e.typeName, argTs)
+        checkNewFields(e, e.typeName, argTs, e.args)
     return tObject(e.typeName)
 
 // Positional `new T(a, b, …)` on a struct / constructor-less class binds
 // args to fields in constructor order (required first, then own defaulted,
 // then inherited defaulted — the interpreter's reorder rule).
-mut Analyzer::checkNewFields(node: ASTNode, typeName: string, argTs: [Type])
+mut Analyzer::checkNewFields(node: ASTNode, typeName: string, argTs: [Type], args: [Expression])
     let names = fieldNamesOf(typeName)
     let order = ctorFieldOrder(typeName)
     let i = 0
     while i < #argTs and i < #order do
         let fname = names[order[i]]
+        checkFieldAccess(node, typeName, fname)
         let want = fieldReadType(typeName, fname)
         if not isAssignable(want, argTs[i]) then
             err(node, "field '" + fname + "' of '" + typeName + "': type '" + typeToString(argTs[i]) + "' is not assignable to '" + typeToString(want) + "'")
+        // storing into a field moves a `unique` argument, as `hold.h = a` does
+        consumeMove(args[i], argTs[i])
         i += 1
 
 // Field-slot indices in positional-constructor order (mirrors
@@ -648,6 +730,7 @@ mut Analyzer::inferMember(e: MemberExpr): Type
         err(e, "field access on a non-object (type '" + typeToString(ot) + "')")
     if not hasField(base.name, e.member) then
         err(e, "type '" + base.name + "' has no field '" + e.member + "'" + didYouMean(e.member, fieldNamesOf(base.name)))
+    checkFieldAccess(e, base.name, e.member)
     return fieldReadType(base.name, e.member)
 
 mut Analyzer::inferIndex(e: IndexExpr): Type

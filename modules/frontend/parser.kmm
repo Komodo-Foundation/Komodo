@@ -36,6 +36,17 @@ public
                 break
             if at(TokenType::EXTERN) then
                 parseExternInto(prog)
+            else if at(TokenType::IDENT) and peek().lexeme == "export" and (peekAt(1).type == TokenType::FN or peekAt(1).type == TokenType::MUT or peekAt(1).type == TokenType::VOID) then
+                // `export fn name(...)` — a Komodo function also callable
+                // from C / C++.  `export` is a contextual keyword (an
+                // ordinary identifier everywhere else).
+                eat()               // export
+                let xdecl = parseFunction()
+                if xdecl.isPrototype or xdecl.ownerClass != null then
+                    throw ("`export` needs a free function with a body: '" + xdecl.name + "'")
+                xdecl.isExport = true
+                stampDecl(xdecl)
+                prog.functions += [xdecl]
             else if at(TokenType::FN) or at(TokenType::MUT) or at(TokenType::VOID) then
                 let fdecl = parseFunction()
                 stampDecl(fdecl)
@@ -217,7 +228,15 @@ private
             if at(TokenType::COLON) then
                 eat()
                 ptype = parseType()
-            params += [new Param(pname, ptype)]
+            // `name: T = default` — the default is an expression, checked
+            // by the analyser (a literal, trailing parameters only).
+            let pdefault: Expression? = null
+            if at(TokenType::EQUALS) then
+                eat()
+                pdefault = parseExpression()
+            let param = new Param(pname, ptype)
+            param.defaultValue = pdefault
+            params += [param]
             if at(TokenType::COMMA) then
                 eat()
         return params
@@ -285,6 +304,32 @@ private
     // One foreign declaration — `fn` / `void` prototype or `type` handle —
     // with the leading `extern` (or block indent) already consumed.
     mut parseExternMemberInto(prog: Program)
+        if at(TokenType::LET) then
+            // `extern let name: T [= "sym"]` — a C global variable
+            eat()                   // let
+            let vname = peek().lexeme
+            eat()
+            if not at(TokenType::COLON) then
+                throw ("extern variable '" + vname + "' needs a type: `extern let " + vname + ": int`")
+            eat()
+            let vtype = parseType()
+            let vsym: string? = null
+            if at(TokenType::EQUALS) then
+                eat()
+                if not at(TokenType::STRING) then
+                    throw ("expected a string literal after `=` (the C symbol name) in extern variable '" + vname + "'")
+                let vsl = peek().lexeme
+                eat()
+                vsym = vsl[1 to (vsl.length - 1)]
+                if #(vsym or "") == 0 then
+                    throw ("extern variable '" + vname + "': the C symbol name after `=` is empty")
+            skipNewlines()
+            let vd = new VarDecl(vname)
+            vd.declaredType = vtype
+            vd.isExtern = true
+            vd.symbol = vsym
+            prog.globals += [vd]
+            return
         if at(TokenType::IDENT) and peek().lexeme == "type" then
             eat()                   // type
             let name = peek().lexeme
@@ -310,12 +355,24 @@ private
         if at(TokenType::COLON) then
             eat()
             returnType = parseType()
+        // `= "sym"` — bind a C symbol whose name differs from `name`
+        let symbol: string? = null
+        if at(TokenType::EQUALS) then
+            eat()
+            if not at(TokenType::STRING) then
+                throw ("expected a string literal after `=` (the C symbol name) in extern '" + name + "'")
+            let sl = peek().lexeme
+            eat()
+            symbol = sl[1 to (sl.length - 1)]
+            if #(symbol or "") == 0 then
+                throw ("extern '" + name + "': the C symbol name after `=` is empty")
         skipNewlines()
         let decl = new FunctionDecl(name)
         decl.params = trimVariadic(params)
         decl.variadic = paramsAreVariadic(params)
         decl.returnType = returnType
         decl.isVoid = isVoid
+        decl.symbol = symbol
         decl.isExtern = true
         prog.functions += [decl]
 
@@ -334,6 +391,8 @@ private
         return false
 
     mut parseFunction(): FunctionDecl
+        let fnLine = peek().line
+        let fnCol = peek().column
         // one or two leading keywords: `fn` / `void` / `mut`, and the
         // combination `mut void` (a mutating procedure).
         let isVoid = false
@@ -385,6 +444,8 @@ private
                 eat()
 
         let decl = new FunctionDecl(name)
+        decl.line = fnLine
+        decl.column = fnCol
         decl.params = trimVariadic(params)
         decl.variadic = paramsAreVariadic(params)
         decl.body = body
@@ -430,6 +491,8 @@ private
                 skipNewlines()
                 if at(TokenType::DEDENT) or at(TokenType::EOF) then
                     break
+                if at(TokenType::FN) or at(TokenType::MUT) or at(TokenType::VOID) or at(TokenType::CONSTRUCTOR) then
+                    throw "struct bodies hold fields only; use a class for methods"
                 let memberName = peek().lexeme
                 eat()
                 if at(TokenType::COLON) then
@@ -600,16 +663,18 @@ private
         skipNewlines()
 
         let guard = 0
+        let vis = "public"
         while true do
             skipNewlines()
             // a section label sitting at the class column (no indent)
             if at(TokenType::IDENT) and (peek().lexeme == "public" or peek().lexeme == "private") then
+                vis = peek().lexeme
                 eat()
                 skipNewlines()
             if not at(TokenType::INDENT) then
                 break
             eat()
-            parseClassMembers(decl)
+            parseClassMembers(decl, vis)
             if at(TokenType::DEDENT) then
                 eat()
             guard += 1
@@ -617,13 +682,15 @@ private
                 break
         return decl
 
-    void parseClassMembers(decl: ClassDecl)
+    void parseClassMembers(decl: ClassDecl, startVis: string)
+        let vis = startVis
         while not at(TokenType::DEDENT) and not at(TokenType::EOF) do
             skipNewlines()
             if at(TokenType::DEDENT) or at(TokenType::EOF) then
                 break
 
             if at(TokenType::IDENT) and (peek().lexeme == "public" or peek().lexeme == "private") then
+                vis = peek().lexeme
                 eat()
                 skipNewlines()
                 continue
@@ -634,7 +701,9 @@ private
                 continue
 
             if at(TokenType::FN) or at(TokenType::MUT) or at(TokenType::VOID) then
-                decl.methods += [parseFunction()]
+                let fm = parseFunction()
+                fm.visibility = vis
+                decl.methods += [fm]
                 skipNewlines()
                 continue
 
@@ -650,6 +719,7 @@ private
                 fdefault = parseExpression()
             let cf = new ClassField(fname, ftype)
             cf.defaultValue = fdefault
+            cf.visibility = vis
             decl.fields += [cf]
             skipNewlines()
 
@@ -666,7 +736,11 @@ private
                 stmts += [stmt]
             skipNewlines()
             if m_pos == before then
-                throw ("parseStatements stuck at " + string(peek().lexeme) + " type " + string(peek().type))
+                if at(TokenType::TO) or at(TokenType::UNTIL) then
+                    throw "a range `a to b` is only valid in a `for` loop or a slice, not as a value"
+                if at(TokenType::ELSE) then
+                    throw "unexpected 'else': a one-line `if c then X else Y` is not supported; write the branches on separate indented lines"
+                throw ("unexpected '" + string(peek().lexeme) + "'")
         return stmts
 
     mut parseStatement(): Statement?

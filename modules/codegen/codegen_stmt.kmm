@@ -18,6 +18,7 @@ void Codegen::genFunction(func: FunctionDecl)
     m_curVoid = isVoidFn(func)
     m_curKind = funcKind(func)
     m_curClass = func.ownerClass or ""
+    m_curInst = instDisplay(func)
 
     for p in func.params do
         let pty = "int"
@@ -45,7 +46,7 @@ void Codegen::genFunction(func: FunctionDecl)
     m_backend.beginFunction(emitName, m_frame, paramOffsets, func.name == "main")
 
     // top-level `let` initialisers run once, at the very start of `main`
-    if func.name == "main" and (func.ownerClass or "") == "" then
+    if (func.name == "main" or (func.name == "km_lib_init" and m_exportInit != "")) and (func.ownerClass or "") == "" then
         genGlobalInits()
 
     let macroMark = macroScopeMark()
@@ -207,6 +208,11 @@ void Codegen::genAssign(s: AssignStmt)
             m_backend.loadLocal(slotOf("self"), "int")
             m_backend.pushAcc()
             genExpr(s.value)
+            // a float field is stored as raw bits; widen an int RHS first
+            if fieldTypeOf(m_curClass, s.name) == "float" then
+                if exprType(s.value) != "float" then
+                    m_backend.cvtIntToFloat()
+                m_backend.floatToBits()
             m_backend.storeField(idx)
             return
         // compound `field += v` / `field -= v` against the receiver

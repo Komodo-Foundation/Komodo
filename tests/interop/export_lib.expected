@@ -1,0 +1,6 @@
+fib(20) = 6765
+clamp_f = 0 0.5 1
+label = zero nonzero
+many = 204
+mixed = 66
+narrow = 1000

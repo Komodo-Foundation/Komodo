@@ -53,6 +53,12 @@ public
             else if d is ClassDecl then
                 registerClass(d)
 
+        // `void main(args)`: the untyped parameter is the command line,
+        // always a [string] (args[0] the program path, args[1..] the user's).
+        for fd in prog.functions do
+            if fd.name == "main" and #fd.params == 1 and fd.params[0].declaredType == null then
+                fd.params[0].declaredType = "[string]"
+
         // ── Pass 1: free-function + method signatures ──────────────
         //  Generic templates (untyped params) and overload sets (>=2 free
         //  decls sharing a name) are resolved by the code generator
@@ -61,8 +67,13 @@ public
         //  loosely typed.
         for fd in prog.functions do
             if fnIsTemplate(fd) then
+                //  A template does not also overload (design.md, Functions).
+                for other in prog.functions do
+                    if other.name == fd.name and (other.line != fd.line or other.column != fd.column) then
+                        err(fd, "template '" + fd.name + "' cannot share its name with another '" + fd.name + "' declaration (a template does not overload)")
                 if not (fd.name in m_templateNames) then
                     m_templateNames += [fd.name]
+                m_tplFns += [fd]
                 continue
             if freeDeclCount(prog, fd.name) >= 2 then
                 if not (fd.name in m_overloadNames) then
@@ -76,6 +87,20 @@ public
         for cl in prog.classes do
             for m in cl.methods do
                 registerFn(methodSym(cl.name, m), cl.name, m)
+
+        // ── Pass 1b: default parameter values (see sema_stmt.kmm) ──
+        for fd in prog.functions do
+            checkParamDefaults(fd, "")
+        for cl in prog.classes do
+            for m in cl.methods do
+                checkParamDefaults(m, cl.name)
+
+        // ── Pass 1c: `export fn` / `extern fn … = "sym"` rules ──────
+        for fd in prog.functions do
+            if fd.isExport then
+                checkExport(fd)
+            if fd.isExtern and fd.symbol != null then
+                checkExternSymbol(fd)
 
         // ── Pass 2: top-level macros ──────────────────────────────
         for mac in prog.macros do
@@ -267,9 +292,16 @@ public
             hasDef += [f.defaultValue != null]
         registerType(d.name, d.parent, d, true, d.isAbstract, false, names, types, hasDef)
         let ti = typeIndex(d.name)
+        for f in d.fields do
+            m_ownMembers += [d.name + "." + f.name]
+            if f.visibility == "private" then
+                m_privMembers += [d.name + "." + f.name]
         for m in d.methods do
             if not m.isConstructor then
                 m_typeOwnMethods[ti] += [m.name]
+                m_ownMembers += [d.name + "." + m.name]
+                if m.visibility == "private" then
+                    m_privMembers += [d.name + "." + m.name]
 
     mut registerType(name: string, parent: string?, node: ASTNode, isClass: bool, isAbs: bool, isUniq: bool, fnames: [string], ftypes: [string], fdef: [bool])
         if (name in m_typeNames) then
@@ -377,6 +409,32 @@ public
     mut hasField(typeName: string, field: string): bool
         return (field in fieldNamesOf(typeName))
 
+    // The class that declares member `field` (a field or method) for a
+    // receiver statically `typeName`: the nearest class up the chain whose
+    // own section declares it, or "" when none does.
+    mut fieldDeclaringClass(typeName: string, field: string): string
+        let cur = typeName
+        let guard = 0
+        while cur != "" do
+            if (cur + "." + field) in m_ownMembers then
+                return cur
+            cur = typeParentOf(cur)
+            guard += 1
+            if guard > 100000 then
+                return ""
+        return ""
+
+    // A `private` class member is reachable only from the members of the
+    // class that declares it (a subclass does not inherit that access).
+    mut checkMemberAccess(node: ASTNode, owner: string, member: string)
+        if owner == "" or m_curClass == owner then
+            return
+        if (owner + "." + member) in m_privMembers then
+            err(node, "'" + member + "' is private to class '" + owner + "'")
+
+    mut checkFieldAccess(node: ASTNode, typeName: string, field: string)
+        checkMemberAccess(node, fieldDeclaringClass(typeName, field), field)
+
     // the declared type string of a field (may carry a trailing "?")
     mut fieldDeclType(typeName: string, field: string): string
         let ti = typeIndex(typeName)
@@ -457,6 +515,15 @@ public
         m_fnRet += [retDeclOf(fd)]
         m_fnKind += [kindOf(fd)]
         m_fnVariadic += [fd.variadic]
+        // fewest arguments a call may pass: every parameter without a
+        // default (the implicit receiver always counts)
+        let req = 0
+        if owner != "" then
+            req = 1
+        for p in fd.params do
+            if p.defaultValue == null then
+                req += 1
+        m_fnRequired += [req]
         m_fnLinked += [fd.isPrototype or fd.isExtern]
         m_fnVis += [fd.visibility]
         m_fnMod += [fd.moduleOwner]
@@ -510,6 +577,12 @@ public
         if i < 0 then
             return ""
         return m_fnKind[i]
+
+    mut fnRequiredOf(sym: string): int
+        let i = fnIndex(sym)
+        if i < 0 then
+            return 0
+        return m_fnRequired[i]
 
     mut fnIsVariadic(sym: string): bool
         let i = fnIndex(sym)
@@ -585,6 +658,8 @@ public
     mut registerGlobal(g: VarDecl)
         if isGlobalVar(g.name) or isMacro(g.name) or (g.name in m_fnNames) then
             err(g, "duplicate top-level name '" + g.name + "'")
+        if g.isExtern then
+            checkExternVar(g)
 
         let declared: Type? = null
         if g.declaredType != null then
@@ -623,6 +698,7 @@ public
         m_scopeUsed = []
         m_scopeMoved = []
         m_scopeMovedAt = []
+        m_scopeDeclAt = []
         m_pathKeys = []
         m_pathTypes = []
 
@@ -639,6 +715,7 @@ public
         m_scopeUsed += [false]
         m_scopeMoved += [false]
         m_scopeMovedAt += [""]
+        m_scopeDeclAt += [string(m_declLine) + ":" + string(m_declCol)]
 
     // ── ownership / move tracking (unique structs) ───────────────────
     //
@@ -1011,8 +1088,15 @@ private
     m_fnRet: [string] = []
     m_fnKind: [string] = []
     m_fnVariadic: [bool] = []
+    m_fnRequired: [int] = []      // fewest args a call may pass (see registerFn)
+    // generic templates' declarations, for their call-arity check
+    m_tplFns: [FunctionDecl] = []
     m_fnLinked: [bool] = []
     m_fnVis: [string] = []       // "public" / "private" (module section)
+    // class members: "Class.member" for each own field and method, and the
+    // subset declared under a `private` section
+    m_ownMembers: [string] = []
+    m_privMembers: [string] = []
     m_fnMod: [string] = []       // owning module name ("" for the program)
     // module of the function body currently being checked (for privacy)
     m_curModuleOwner: string = ""
@@ -1036,6 +1120,9 @@ private
     // per-binding ownership state for `unique` types
     m_scopeMoved: [bool] = []
     m_scopeMovedAt: [string] = []
+    m_scopeDeclAt: [string] = []     // "line:col" where each binding was declared
+    m_declLine: int = 0              // position of the statement being checked
+    m_declCol: int = 0
 
     // member-path narrowings
     m_pathKeys: [string] = []

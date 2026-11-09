@@ -3,7 +3,8 @@
 # run-tests.sh — compile every examples/*.km, run it, and check its output
 # against the matching examples/<name>.expected file.  Also compiles each
 # with the `stackvm` backend to confirm the target-independent path stays
-# wired up.
+# wired up, and builds + runs it through the `c` backend (portable C via
+# gcc) against the same expected output.
 #
 # Uses the native, self-hosted compiler via the `komodo` CLI (build one
 # first with ./build-self.sh).  Set $KOMODO to point at a different driver.
@@ -26,6 +27,9 @@ fi
 
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
+
+have_wasm=0 wasm_ran=0
+if command -v emcc >/dev/null 2>&1 && command -v node >/dev/null 2>&1; then have_wasm=1; fi
 
 pass=0 fail=0
 for name in "${names[@]}"; do
@@ -57,10 +61,51 @@ for name in "${names[@]}"; do
         fail=$((fail+1)); continue
     fi
 
+    # c: portable C via gcc, built and run (must match the same expected
+    # output).  A source that needs the native C ABI opts out with a
+    # `c: skip` comment.
+    if ! grep -q 'c: skip' "$src"; then
+        if ! cgot="$("$komodo" -q -t c "$src" 2>"$work/$name.c.err")"; then
+            echo "FAIL     $name  (c build/run errored)"
+            sed 's/^/           /' "$work/$name.c.err"
+            fail=$((fail+1)); continue
+        fi
+        if [[ -f "$exp" ]] && ! diff -q <(printf '%s\n' "$cgot") "$exp" >/dev/null; then
+            echo "FAIL     $name  (c output mismatch)"
+            diff <(printf '%s\n' "$cgot") "$exp" | sed 's/^/           /'
+            fail=$((fail+1)); continue
+        fi
+    fi
+
+    # wasm: the same C output built with emcc and run under node (must match
+    # the same expected output).  Skipped entirely when emcc / node are not
+    # installed; a source that needs the native C ABI (FFI, SDL, ...) opts
+    # out with a `wasm: skip` comment.
+    if [[ $have_wasm -eq 1 ]] && ! grep -q 'wasm: skip' "$src"; then
+        if ! wgot="$("$komodo" -q -t wasm "$src" 2>"$work/$name.wasm.err")"; then
+            echo "FAIL     $name  (wasm build/run errored)"
+            sed 's/^/           /' "$work/$name.wasm.err"
+            fail=$((fail+1)); continue
+        fi
+        if [[ -f "$exp" ]] && ! diff -q <(printf '%s\n' "$wgot") "$exp" >/dev/null; then
+            echo "FAIL     $name  (wasm output mismatch)"
+            diff <(printf '%s\n' "$wgot") "$exp" | sed 's/^/           /'
+            fail=$((fail+1)); continue
+        fi
+        wasm_ran=$((wasm_ran+1))
+    fi
+
     echo "ok       $name"
     pass=$((pass+1))
 done
 
 echo "────────────────────────────────"
 echo "$pass passed, $fail failed"
+if [[ $have_wasm -eq 1 ]]; then echo "(wasm leg ran for $wasm_ran examples)"; else echo "(wasm leg skipped: no emcc / node)"; fi
+
+# C / C++ interop (export fn, --lib, C++ sources): tests/interop/run.sh.
+# Run with the full suite only, not when a name subset was asked for.
+if [[ $# -eq 0 ]]; then
+    "$here/tests/interop/run.sh" || fail=$((fail+1))
+fi
 [[ $fail -eq 0 ]]

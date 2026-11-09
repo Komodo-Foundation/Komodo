@@ -1,0 +1,5 @@
+// bind: stdio.h -m c_stdio -o c_stdio.kmm
+import c_stdio
+
+void main()
+    c_stdio::printf("%d-%s\n", 7, "ok")

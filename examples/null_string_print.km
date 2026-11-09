@@ -1,0 +1,9 @@
+// Printing a null string prints `null` (it used to crash).
+import console
+
+void main()
+    let s: string? = null
+    console.print(s)
+    console.print("v:", string(s))
+    s = "set"
+    console.print(s)

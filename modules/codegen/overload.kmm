@@ -297,6 +297,26 @@ mut Codegen::tplArgTypes(args: [Expression]): [string]
         out += [t]
     return out
 
+// "add(int, string)" for a monomorphised copy `add__g2_int_string`, else "".
+fn Codegen::instDisplay(func: FunctionDecl): string
+    let n = func.name
+    let cut = -1
+    let i = 0
+    while i + 3 <= n.length and cut < 0 do
+        if n[i to (i + 3)] == "__g" then
+            cut = i
+        i += 1
+    if cut < 0 then
+        return ""
+    let out = n[0 to cut] + "("
+    let k = 0
+    for p in func.params do
+        if k > 0 then
+            out = out + ", "
+        out = out + (p.declaredType or "int")
+        k += 1
+    return out + ")"
+
 fn Codegen::instSym(name: string, types: [string]): string
     let s = name + "__g" + string(#types)
     for t in types do
@@ -405,6 +425,7 @@ mut Codegen::ensureInstance(name: string, argTypes: [string]): string
     m_fnSigs += [paramSig(inst)]
     m_fnRawParams += [rawParamList(inst)]
     m_fnLink += [sym]
+    m_fnDecls += [inst]
     m_backend.declareFn(sym)
     m_genQueue += [inst]
     return sym

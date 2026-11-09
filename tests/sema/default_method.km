@@ -1,0 +1,7 @@
+class Counter
+    n: int = 0
+    mut bump(by: int = 1)
+        n += by
+void main()
+    let c = new Counter()
+    c.bump()

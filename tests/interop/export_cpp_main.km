@@ -1,0 +1,39 @@
+// interop: extras export_cpp_main_driver.cpp
+//
+// No `main` here: a C++ program supplies it and calls the `export fn`s
+// below through the generated header (`komodo --emit-header`).  The Komodo
+// runtime (collector, top-level `let`s) starts itself on the first call.
+
+let greeting = "hello"
+let calls = 0
+
+extern type Token
+
+export fn add(a: int, b: int): int
+    calls += 1
+    return a + b
+
+export fn shout(name: string, times: int): string
+    calls += 1
+    let out = greeting + ", " + name
+    let i = 0
+    while i < times do
+        out = out + "!"
+        i += 1
+    return out
+
+export fn lerp(a: float, b: float, t: float): float
+    calls += 1
+    return a + (b - a) * t
+
+export fn is_pos(n: i32): bool
+    return n > 0
+
+export fn call_count(): int
+    return calls
+
+export void reset()
+    calls = 0
+
+export fn pass_through(t: Token): Token
+    return t

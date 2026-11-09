@@ -1,51 +1,60 @@
 #!/usr/bin/env bash
 #
-# komodo — the Komodo compiler & runner CLI.
+# komodo — build, run and manage Komodo programs.
 #
-#   komodo file.km                  compile, link, run  (default)
-#   komodo -c file.km                compile + link only, don't run
-#   komodo -S file.km                emit assembly only, don't assemble/link
-#   komodo -o app file.km             name the output binary
-#   komodo -O max file.km             optimize (none|low|medium|max, 0-3)
-#   komodo --strict file.km           enable strict analysis diagnostics
-#   komodo -t stackvm -S file.km      target the stack-VM backend
-#   komodo demos/sdl_window.km        SDL2 is linked automatically (see below)
-#   komodo file.km -- -lfoo -Ipath    extra flags/objects for the linker
+#   komodo                    build (incrementally) and run the project here
+#   komodo file.km [args...]  build and run one file; args go to the program
+#   komodo build              write ./<name>          komodo test    run tests
+#   komodo watch              rerun on every change   komodo repl    prompt
+#   komodo new <name>         start a project         komodo doctor  check tools
+#   komodo lib                library for C/C++/Rust/Python callers
+#   komodo bind <header.h>    generate `extern` bindings from a C header
+#   komodo self build|test|seed   work on the compiler itself
+#
+# `komodo -h` lists the options; docs/cli.md is the full reference.
 #
 # This is a thin wrapper around the native, self-hosted compiler `kmc`:
 # it drives kmc for the front end, then nasm + gcc for assembly and
 # linking, and finally runs the result. It resolves its own real path
 # (so it still finds kmc/stdlib/ when invoked through a symlink on your
-# PATH — see install.sh) and needs no interpreter at all.
+# PATH — see install.sh) and needs no interpreter at all. When ./kmc is
+# missing or older than its sources, the first run builds it
+# (build-self.sh) — there is no separate compiler build step.
+#
+# ── Where things go ────────────────────────────────────────────────────
+# Build products of `komodo` / `komodo run` live in <project>/.komodo/
+# (created with a `.gitignore` of `*`), so the source tree stays clean.
+# `komodo build` writes ./<name> (or -o). The project root is the entry
+# file's directory (its parent when that is named src/ or tests/).
 #
 # ── Build cache ────────────────────────────────────────────────────────
 # Repeated builds are made cheap by a content-addressed cache under
 # $KOMODO_CACHE (default: ${XDG_CACHE_HOME:-~/.cache}/komodo):
 #
-#   fe/   front-end output (<src>.asm/.deps/.links) keyed on the source,
-#         its transitive deps, the target/opt/strict flags and the kmc
-#         binary. A hit skips running kmc entirely.
-#   obj/  each stdlib/*.c compiled once, keyed on its contents + toolchain.
-#         Replaces "recompile every stdlib .c on every build".
+#   fe/   front-end output (asm/deps/links) keyed on the source, its
+#         transitive deps (by content hash), the target/opt/strict flags
+#         and the kmc binary. A hit skips running kmc entirely.
+#   obj/  each stdlib/*.c and each native/ source compiled once, keyed on
+#         its contents + toolchain.
 #   bin/  the finished executable, keyed on the exact assembly + link
 #         inputs. A hit skips nasm and gcc entirely.
 #
-# The cache is pure derived data: delete it anytime, or `komodo --clean`.
-# `--no-cache` bypasses it for one run; `--time` prints per-phase timings.
+# The cache is pure derived data: delete it anytime (`komodo clean --cache`).
 #
-# ── Automatic linking ─────────────────────────────────────────────────
-# `link` is a real Komodo keyword, valid only inside a module (see
-# stdlib/sdl2.kmm) —
+# ── Native code & libraries ────────────────────────────────────────────
+#   * every .c / .cpp / .cc / .cxx / .o / .a directly in a `native/`
+#     directory next to the entry file (or the project root) is compiled
+#     (cached) and linked automatically; native/ is an include path.
+#   * `link NAME`, `link "file.c"`, block `extern "lib"` headers feed the
+#     linker; `pkg:NAME` expands via `pkg-config --cflags --libs NAME`, and
+#     a bare NAME with a pkg-config entry prefers pkg-config over -lNAME.
+#   * `import NAME` for a library that is neither a project nor a stdlib
+#     module is looked up with tools/km-bind --auto and bound on the fly
+#     (komodo_bindings/ next to the entry file).
 #
-#     link SDL2                library name  ->  -lSDL2
-#     link "vendor/extra.c"    a path, passed to the linker as-is
-#
-# kmc's own parser enforces where `link` may appear; its driver (main.km)
-# resolves every `link` reachable from the program (same traversal as its
-# `import`s) into ready linker tokens and writes them to <file>.links,
-# which komodo just reads. `--` below is only for one-off extras with no
-# interface file of their own yet — not routine -l flags a library
-# should already be declaring itself.
+# Legacy flags (-O -S -c -k --strict --no-cache --clean --time --lib
+# --emit-header and `--` for linker args) still work; they are what the
+# test scripts use. See docs/cli.md#legacy-flags.
 #
 set -uo pipefail
 
@@ -59,141 +68,205 @@ while [[ -L "$self" ]]; do
     esac
 done
 here="$(cd "$(dirname "$self")" && pwd)"
+self="$here/$(basename "$self")"
 
 prog="komodo"
-version="Komodo (native, self-hosted) — kmc"
+ver="$(cat "$here/VERSION" 2>/dev/null || echo dev)"
+rev="$(git -C "$here" rev-parse --short HEAD 2>/dev/null || true)"
+version="Komodo $ver${rev:+ ($rev)} — native, self-hosting"
+
+# One-line error with an optional hint; exits.
+die() { echo "$prog: $1${2:+ — $2}" >&2; exit "${3:-1}"; }
 
 usage() {
     cat <<'EOF'
-usage: komodo [options] <file.km> [-- <extra linker args>]
+Komodo — build and run Komodo programs.
 
-  -o, --output <path>   output binary path (default: <file> without .km)
-  -t, --target <name>   x86 (default) | stackvm
-  -O <level>             optimization level: none|low|medium|max, or 0-3
-                         (default: none)
-      --strict           turn every analyser warning into a hard error
-                         (bad-practice warnings — `x / 0`, `x == x`,
-                         `x = x`, a constant `if`, unreachable code — are
-                         printed by default; --strict makes them fatal)
-  -S, --emit-asm         stop after writing <file>.asm (no assemble/link/run)
-  -c, --compile          assemble + link, but do not run the result
-  -k, --kmc <path>       use this kmc binary instead of the one alongside
-                         komodo (same as $KMC)
-      --no-cache         ignore the build cache for this run (still fills it)
-      --clean            delete the build cache (and <file>'s local
-                         .asm/.o/.deps/.links, if a file is given) and exit
-      --time             print how long each phase took
-  -v, --verbose          echo the nasm / gcc commands as they run
-  -q, --quiet            only print the program's own output
-  -h, --help             show this help
-  -V, --version          show version info
+usage: komodo [command] [options] [file.km] [program args...]
 
-Libraries link themselves: a module may declare `link Name` or
-`link "file.c"` (see stdlib/sdl2.kmm) naming what the linker needs, and
-komodo adds it automatically — no manual -l flags for those.
+  komodo                  build and run the project in this directory
+                          (main.km, src/main.km, <dir>.km, or the only .km file)
+  komodo file.km [args]   build and run one file; args go to your program
 
-Anything after a literal `--` is extra, on top of that: .c / .o / .a
-files, -l flags, -I/-L paths for something with no interface file yet.
-$KM_CC_INPUTS is read the same way.
+commands:
+  run         build incrementally and run (the default)
+  build       build an executable: ./<name>, or -o <path>
+  test        run *_test.km files and tests/*.km programs that define main()
+  repl        interactive prompt
+  new <name>  create a project
+  bind        generate Komodo bindings from a C header
+  watch       rebuild and rerun whenever a source file changes
+  lib         build a library (object, .a, header) for C / C++ / Rust / Python
+  clean       delete build products (.komodo/)
+  doctor      check that the toolchain is installed
+  upgrade     update this installation (git pull)
+  self        work on the compiler itself: self build | test | seed
 
-The build cache lives under $KOMODO_CACHE
-(default ${XDG_CACHE_HOME:-~/.cache}/komodo); it is safe to delete.
+options:
+      --release         optimise (slower to build, faster to run)
+  -t, --target <name>   x86 (default) | c | wasm | stackvm
+  -o <path>             where `build` / `lib` write their output
+  -q, --quiet           only print the program's own output
+  -v, --verbose         show the steps and the nasm / gcc commands
+  -h, --help            show this help
+  -V, --version         show the version
 
-Examples:
-  komodo hello.km
-  komodo -O max -o build/app src/main.km
-  komodo demos/sdl_window.km              # -lSDL2 comes from stdlib/sdl2.kmm
+Libraries need no setup: `import zlib`, put C/C++ in native/, done.
+Older flags still work; see docs/cli.md#legacy-flags.
 EOF
+}
+
+commands="run build test repl new bind watch clean doctor lib self upgrade"
+is_command() { local c; for c in $commands; do [[ "$c" == "$1" ]] && return 0; done; return 1; }
+
+# Levenshtein distance, for "did you mean".
+lev() {
+    local a="$1" b="$2" i j cost
+    local -a prev cur
+    for ((j = 0; j <= ${#b}; j++)); do prev[j]=$j; done
+    for ((i = 1; i <= ${#a}; i++)); do
+        cur[0]=$i
+        for ((j = 1; j <= ${#b}; j++)); do
+            [[ "${a:i-1:1}" == "${b:j-1:1}" ]] && cost=0 || cost=1
+            local d=$((prev[j] + 1)) ins=$((cur[j-1] + 1)) sub=$((prev[j-1] + cost))
+            ((ins < d)) && d=$ins
+            ((sub < d)) && d=$sub
+            cur[j]=$d
+        done
+        prev=("${cur[@]}")
+    done
+    echo "${prev[${#b}]}"
+}
+unknown_command() {
+    local w="$1" c best="" bd=99 d
+    for c in $commands; do
+        d="$(lev "$w" "$c")"
+        if ((d < bd)); then bd=$d; best=$c; fi
+    done
+    if ((bd <= 2)) || [[ "$best" == "$w"* || "$w" == "$best"* ]]; then
+        die "unknown command '$w'" "did you mean '$best'?  (komodo -h lists them)" 2
+    fi
+    die "unknown command '$w'" "see komodo -h; a Komodo file ends in .km" 2
+}
+
+have() { command -v "$1" >/dev/null 2>&1; }
+install_hint() {  # install_hint <tool> [apt-package]
+    local pkg="${2:-$1}"
+    echo "install it (Debian/Ubuntu: sudo apt install $pkg; macOS: brew install $pkg)"
+}
+need_tool() {  # need_tool <tool> [apt-package]
+    have "$1" || die "$1 not found" "$(install_hint "$1" "${2:-$1}"); 'komodo doctor' checks everything"
 }
 
 # ── defaults ───────────────────────────────────────────────────────
 target="x86"
 opt="none"
 strict=""
-mode="run"          # run | compile | emit-asm
-out=""
+mode="run"          # run | compile | emit-asm | lib
+mode_set=0
+lib=0
+emit_header=""
+user_out=""
 quiet=0
 verbose=0
 show_time=0
 no_cache=0
 do_clean=0
+do_cache_clean=0
+kmc_custom=0
 kmc="${KMC:-$here/kmc}"
+[[ -n "${KMC:-}" ]] && kmc_custom=1
 src=""
+cmd=""
+prog_args=()
+test_paths=()
+rest_args=()
 extra_cc=( ${KM_CC_INPUTS:-} )
+orig_args=( "$@" )
 
 cache="${KOMODO_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/komodo}"
 
-normalize_opt() {
+set_opt() {
     case "$1" in
-        none|0) echo none ;;
-        low|1)  echo low ;;
-        medium|2) echo medium ;;
-        max|3)  echo max ;;
-        *) echo "$prog: unknown optimization level '$1' (want none|low|medium|max or 0-3)" >&2; exit 2 ;;
+        none|0) opt=none ;;
+        low|1)  opt=low ;;
+        medium|2) opt=medium ;;
+        max|3)  opt=max ;;
+        *) die "unknown optimization level '$1'" "use --release, or none|low|medium|max (0-3) with -O" 2 ;;
     esac
 }
 
-# ── parse flags ────────────────────────────────────────────────────
+need_arg() { [[ $# -ge 2 && -n "$2" ]] || die "option '$1' needs a value" "see komodo -h" 2; }
+
+# ── parse arguments ─────────────────────────────────────────────────
+# Flags may come before the file. The first non-flag word is a command
+# (run, build, ...) or the file; everything after the file is passed to
+# the PROGRAM (except a literal `--`, the legacy "extra linker args").
 while [[ $# -gt 0 ]]; do
     case "$1" in
         -h|--help)    usage; exit 0 ;;
         -V|--version) echo "$version"; exit 0 ;;
-        -o|--output)  out="$2"; shift 2 ;;
-        -t|--target)  target="$2"; shift 2 ;;
-        -O)           opt="$(normalize_opt "$2")"; shift 2 ;;
-        -O*)          opt="$(normalize_opt "${1#-O}")"; shift ;;
-        --opt=*)      opt="$(normalize_opt "${1#--opt=}")"; shift ;;
+        -o|--output)  need_arg "$@"; user_out="$2"; shift 2 ;;
+        -t|--target)
+            need_arg "$@"
+            target="$2"
+            case "$target" in
+                x86|stackvm|c|wasm) ;;
+                *) die "unknown target '$target'" "known targets: x86, c, wasm, stackvm" 2 ;;
+            esac
+            shift 2 ;;
+        --release)    opt=max; shift ;;
+        -O)           need_arg "$@"; set_opt "$2"; shift 2 ;;
+        -O*)          set_opt "${1#-O}"; shift ;;
+        --opt=*)      set_opt "${1#--opt=}"; shift ;;
         --strict)     strict="strict"; shift ;;
-        -S|--emit-asm) mode="emit-asm"; shift ;;
-        -c|--compile) mode="compile"; shift ;;
-        -k|--kmc)     kmc="$2"; shift 2 ;;
+        -S|--emit-asm) mode="emit-asm"; mode_set=1; shift ;;
+        -c|--compile) mode="compile"; mode_set=1; shift ;;
+        --lib)        lib=1; mode_set=1; shift ;;
+        --emit-header) need_arg "$@"; emit_header="$2"; shift 2 ;;
+        -k|--kmc)     need_arg "$@"; kmc="$2"; kmc_custom=1; shift 2 ;;
         --no-cache)   no_cache=1; shift ;;
         --clean)      do_clean=1; shift ;;
+        --cache)      do_cache_clean=1; shift ;;
         --time)       show_time=1; shift ;;
         -v|--verbose) verbose=1; shift ;;
         -q|--quiet)   quiet=1; shift ;;
-        --)           shift; extra_cc+=( "$@" ); break ;;
+        --)           shift
+                      if [[ -n "$src" ]]; then extra_cc+=( "$@" ); else prog_args=( "$@" ); fi
+                      break ;;
         -*)
-            echo "$prog: unknown option '$1' (see -h)" >&2
-            exit 2
+            die "unknown option '$1'" "komodo -h lists the options" 2
             ;;
         *)
-            if [[ -n "$src" ]]; then
-                echo "$prog: unexpected extra argument '$1' (extra files go after --)" >&2
-                exit 2
+            if [[ -z "$cmd" && -z "$src" ]] && is_command "$1"; then
+                cmd="$1"; shift
+                case "$cmd" in
+                    new|bind|self|repl) rest_args=( "$@" ); break ;;
+                esac
+                continue
             fi
-            src="$1"
-            shift
+            if [[ "$cmd" == "test" ]]; then
+                test_paths+=( "$1" ); shift; continue
+            fi
+            if [[ -z "$cmd" && ! -e "$1" && "$1" != *.km && "$1" != */* ]]; then
+                unknown_command "$1"
+            fi
+            src="$1"; shift
+            # program args up to a literal `--`; after it, legacy linker args
+            while [[ $# -gt 0 && "$1" != "--" ]]; do prog_args+=( "$1" ); shift; done
+            [[ "${1:-}" == "--" ]] && { shift; extra_cc+=( "$@" ); }
+            break
             ;;
     esac
 done
 
 log()  { [[ $quiet -eq 1 ]] || echo "$@" >&2; }
 vlog() { [[ $verbose -eq 1 ]] && echo "+ $*" >&2; return 0; }
+slog() { [[ $verbose -eq 1 && $quiet -eq 0 ]] && echo "$@" >&2; return 0; }
 
-# ── --clean: wipe derived data and leave ───────────────────────────
-if [[ $do_clean -eq 1 ]]; then
-    if [[ -d "$cache" ]]; then
-        rm -rf "$cache" && echo "$prog: removed $cache"
-    else
-        echo "$prog: nothing cached at $cache"
-    fi
-    if [[ -n "$src" ]]; then
-        rm -f "$src.asm" "$src.o" "$src.links" "$src.deps"
-        echo "$prog: removed $src.{asm,o,links,deps}"
-    fi
-    exit 0
-fi
-
-[[ -n "$src" ]] || { usage >&2; exit 2; }
-[[ -f "$src" ]] || { echo "$prog: no such file: $src" >&2; exit 1; }
-[[ -x "$kmc" ]] || { echo "$prog: no native compiler at '$kmc' — build one with ./build-self.sh (or pass -k / set \$KMC)" >&2; exit 1; }
-
-out="${out:-${src%.km}}"
-asm="$src.asm"
-obj="$src.o"
-linkfile="$src.links"
-depfile="$src.deps"
+[[ "$cmd" == "lib" ]] && { lib=1; mode_set=1; }
+[[ $lib -eq 1 && "$mode" != "emit-asm" ]] && mode="lib"
+[[ "$cmd" == "build" && $mode_set -eq 0 ]] && { mode="compile"; mode_set=1; }
 
 # ── small helpers ─────────────────────────────────────────────────
 now_ms() { echo $(( $(date +%s%N) / 1000000 )); }
@@ -205,13 +278,356 @@ report() {  # report <label> <start-ms> [note]
 sha_file() { sha256sum -- "$1" 2>/dev/null | cut -d' ' -f1; }
 sha_str()  { printf '%s' "$1" | sha256sum | cut -d' ' -f1; }
 
+# ── subcommands that never touch the compiler ───────────────────────
+
+# `komodo repl [options]` — the interactive prompt (see kmrepl)
+if [[ "$cmd" == "repl" ]]; then
+    ra=()
+    [[ $opt == max ]] && ra+=( -O max )
+    [[ $kmc_custom -eq 1 ]] && ra+=( -k "$kmc" )
+    exec "$here/kmrepl" "${ra[@]}" "${rest_args[@]}"
+fi
+
+if [[ "$cmd" == "bind" ]]; then
+    kb="$here/tools/km-bind"
+    [[ -e "$kb" ]] || die "tools/km-bind is not installed in this checkout" "it ships with the interop tooling; update your Komodo checkout"
+    [[ -x "$kb" ]] || die "$kb is not executable" "chmod +x $kb"
+    exec "$kb" "${rest_args[@]}"
+fi
+
+if [[ "$cmd" == "self" ]]; then
+    sub="${rest_args[0]:-}"
+    cd "$here" || exit 1
+    case "$sub" in
+        build) exec ./build-self.sh "${rest_args[@]:1}" ;;
+        seed)  exec ./build-self.sh --force --update-seed ;;
+        test)
+            rc=0
+            ./run-tests.sh "${rest_args[@]:1}" || rc=1
+            ./run-sema-tests.sh || rc=1
+            exit $rc ;;
+        *) die "usage: komodo self build|test|seed" "build = ./build-self.sh, test = run-tests.sh + run-sema-tests.sh, seed = refresh bootstrap/main.km.asm.gz" 2 ;;
+    esac
+fi
+
+if [[ "$cmd" == "new" ]]; then
+    name="${rest_args[0]:-}"
+    [[ -n "$name" ]] || die "usage: komodo new <name>" "creates ./<name>/ with a hello-world main.km" 2
+    [[ "$name" =~ ^[A-Za-z_][A-Za-z0-9_-]*$ ]] || die "bad project name '$name'" "use letters, digits, '-' and '_', starting with a letter" 2
+    [[ ! -e "$name" ]] || die "'$name' already exists" "pick another name or remove it"
+    mkdir -p "$name/tests" || die "cannot create $name/"
+    cat > "$name/main.km" <<'EOF'
+import console
+
+void main()
+    console.print("Hello from Komodo!")
+EOF
+    cat > "$name/tests/smoke_test.km" <<'EOF'
+// `komodo test` builds and runs every *_test.km file; exit status 0 = pass.
+import console
+
+void main()
+    assert(1 + 1 == 2, "arithmetic still works")
+    console.print("ok")
+EOF
+    printf '.komodo/\nkomodo_bindings/\n/%s\n' "$name" > "$name/.gitignore"
+    echo "created $name/ — next:  cd $name && komodo"
+    exit 0
+fi
+
+# ── upgrade ─────────────────────────────────────────────────────────
+if [[ "$cmd" == "upgrade" ]]; then
+    have git || die "git not found" "$(install_hint git git)"
+    git -C "$here" rev-parse --git-dir >/dev/null 2>&1 || die "$here is not a git checkout" "reinstall with install.sh"
+    git -C "$here" pull --ff-only || die "could not fast-forward" "commit or stash local changes in $here, then retry"
+    echo "upgraded to $(git -C "$here" rev-parse --short HEAD); the compiler rebuilds on the next run"
+    exit 0
+fi
+
+# ── doctor ──────────────────────────────────────────────────────────
+if [[ "$cmd" == "doctor" ]]; then
+    bad=0
+    row() {  # row <ok|warn|bad> <label> <detail>
+        case "$1" in
+            ok)   printf '  ok    %-12s %s\n' "$2" "$3" ;;
+            warn) printf '  --    %-12s %s\n' "$2" "$3" ;;
+            bad)  printf '  FAIL  %-12s %s\n' "$2" "$3"; bad=1 ;;
+        esac
+    }
+    echo "Komodo toolchain ($here)"
+    if [[ -x "$kmc" ]]; then row ok kmc "$kmc"
+    else row warn kmc "not built yet — the first 'komodo' run builds it (or: komodo self build)"; fi
+    if have nasm; then row ok nasm "$(nasm -v | head -1)"
+    else row bad nasm "missing — $(install_hint nasm)"; fi
+    if have gcc; then row ok gcc "$(gcc --version | head -1)"
+    else row bad gcc "missing — $(install_hint gcc build-essential)"; fi
+    if have gcc && echo 'int main(void){return 0;}' | gcc -x c - -l:libgc.so.1 -o /dev/null 2>/dev/null; then
+        row ok libgc "Boehm GC found"
+    else
+        row bad libgc "missing — Debian/Ubuntu: sudo apt install libgc-dev; macOS: brew install bdw-gc"
+    fi
+    echo "optional"
+    if have g++; then row ok g++ "C++ sources in native/"
+    else row warn g++ "needed only for .cpp files — $(install_hint g++)"; fi
+    if have pkg-config; then row ok pkg-config "'pkg:name' links and 'import <c-library>'"
+    else row warn pkg-config "needed for 'pkg:name' links — $(install_hint pkg-config)"; fi
+    if have emcc; then row ok emcc "$(emcc --version 2>/dev/null | head -1)"
+    else row warn emcc "needed for -t wasm — https://emscripten.org/docs/getting_started/"; fi
+    if have node; then row ok node "$(node --version) (runs -t wasm builds)"
+    else row warn node "needed to run -t wasm builds — $(install_hint node nodejs)"; fi
+    if [[ -x "$here/tools/km-bind" ]]; then row ok km-bind "komodo bind / auto-bound imports"
+    else row warn km-bind "tools/km-bind missing — 'komodo bind' unavailable"; fi
+    echo "cache: $cache"
+    if [[ $bad -eq 0 ]]; then echo "all required tools present."; exit 0; fi
+    echo "fix the FAIL lines above, then run 'komodo doctor' again."
+    exit 1
+fi
+
+# ── project / entry discovery ───────────────────────────────────────
+
+# find_entry <dir>: set $entry_found to the entry file of the project in <dir>; on
+# failure set $entry_err and return 1.
+find_entry() {
+    local d="$1" pre c base cands=() f
+    [[ "$d" == "." ]] && pre="" || pre="${d%/}/"
+    base="$(basename "$(cd "$d" && pwd)")"
+    for c in "main.km" "src/main.km" "$base.km"; do
+        [[ -f "$pre$c" ]] && { entry_found="$pre$c"; return 0; }
+    done
+    for f in "$pre"*.km; do
+        [[ -f "$f" && "$f" != *_test.km ]] && cands+=( "$f" )
+    done
+    if [[ ${#cands[@]} -eq 1 ]]; then entry_found="${cands[0]}"; return 0; fi
+    if [[ ${#cands[@]} -eq 0 ]]; then
+        entry_err="no .km files in ${d} — start a project with 'komodo new <name>', or cd into one"
+    else
+        entry_err="can't tell which file to run in ${d} (${cands[*]}) — run one with 'komodo ${cands[0]}', or name your entry file main.km"
+    fi
+    return 1
+}
+
+project_mode=0
+resolve_src() {
+    local dir
+    if [[ -z "$src" ]]; then dir="."
+    elif [[ -d "$src" ]]; then dir="$src"
+    else return 0; fi
+    entry_err=""
+    find_entry "$dir" || die "$entry_err"
+    src="$entry_found"
+    project_mode=1
+}
+
+# root_of <entry file>: the project root directory (absolute)
+root_of() {
+    local d; d="$(cd "$(dirname "$1")" && pwd)"
+    case "$(basename "$d")" in src|tests|test) d="$(dirname "$d")" ;; esac
+    echo "$d"
+}
+
+setup_wd() {  # sets $wd
+    wd="${KOMODO_WORKDIR:-$root/.komodo}"
+    if ! { mkdir -p "$wd" 2>/dev/null && { [[ -e "$wd/.gitignore" ]] || printf '*\n' > "$wd/.gitignore"; } 2>/dev/null; }; then
+        wd="${TMPDIR:-/tmp}/komodo-work-$(sha_str "$root" | cut -c1-12)"
+        mkdir -p "$wd" || die "cannot create a work directory" "is $root writable?"
+    fi
+}
+
+# ensure_kmc: build ./kmc on demand (first run / sources newer than the
+# last build). build-self.sh is a ~0.02s no-op when nothing changed.
+ensure_kmc() {
+    [[ $kmc_custom -eq 1 ]] && return 0
+    [[ -x "$here/build-self.sh" && -f "$here/main.km" ]] || return 0
+    local stale=0 bout
+    if [[ ! -x "$kmc" ]]; then
+        stale=1
+        log "first run: building the compiler (~2s)"
+    elif [[ ! -f "$here/.build/stamp" ]] || [[ -n "$(find "$here/main.km" "$here/modules" "$here/stdlib" "$here/build-self.sh" "$here/tools/asm-split.awk" -newer "$here/.build/stamp" -print -quit 2>/dev/null)" ]]; then
+        stale=1
+    fi
+    [[ $stale -eq 1 ]] || return 0
+    have nasm || die "nasm not found — cannot build the compiler" "$(install_hint nasm)"
+    have gcc  || die "gcc not found — cannot build the compiler" "$(install_hint gcc build-essential)"
+    if ! bout="$("$here/build-self.sh" 2>&1)"; then
+        echo "$bout" | tail -20 >&2
+        die "building the compiler failed" "run 'komodo doctor', then 'komodo self build' to see the full log"
+    fi
+    return 0
+}
+
+# ── --clean: wipe derived data and leave ───────────────────────────
+if [[ $do_clean -eq 1 ]]; then
+    if [[ -d "$cache" ]]; then
+        rm -rf "$cache" && echo "$prog: removed $cache"
+    else
+        echo "$prog: nothing cached at $cache"
+    fi
+    if [[ -n "$src" && ! -d "$src" ]]; then
+        rm -f "$src.asm" "$src.o" "$src.links" "$src.deps"
+        echo "$prog: removed $src.{asm,o,links,deps}"
+    fi
+    exit 0
+fi
+
+if [[ "$cmd" == "clean" ]]; then
+    croot="."
+    [[ -n "$src" ]] && croot="$src"
+    if [[ -f "$croot" ]]; then croot="$(root_of "$croot")"
+    elif [[ -d "$croot" ]]; then
+        # a project directory: use its entry's root (handles src/main.km)
+        if find_entry "$croot" 2>/dev/null; then croot="$(root_of "$entry_found")"; else croot="$(cd "$croot" && pwd)"; fi
+    else die "no such file or directory: $croot"; fi
+    if [[ -f "$croot/.komodo/outputs" ]]; then
+        while IFS= read -r f; do [[ -n "$f" && -f "$f" ]] && rm -f "$f" && echo "removed $f"; done < "$croot/.komodo/outputs"
+    fi
+    if [[ -d "$croot/.komodo" ]]; then rm -rf "$croot/.komodo" && echo "removed $croot/.komodo"
+    else echo "nothing to clean in $croot"; fi
+    if [[ $do_cache_clean -eq 1 ]]; then
+        [[ -d "$cache" ]] && rm -rf "$cache" && echo "removed $cache"
+    fi
+    exit 0
+fi
+
+# ── test ────────────────────────────────────────────────────────────
+if [[ "$cmd" == "test" ]]; then
+    ensure_kmc
+    [[ ${#test_paths[@]} -gt 0 ]] || test_paths=( "." )
+    files=()
+    for p in "${test_paths[@]}"; do
+        if [[ -f "$p" ]]; then files+=( "$p" )
+        elif [[ -d "$p" ]]; then
+            while IFS= read -r f; do
+                base="$(basename "$f")"
+                if [[ "$base" == *_test.km ]]; then files+=( "$f" )
+                elif [[ "/$f" == */tests/* ]] && grep -q 'void main(' "$f" 2>/dev/null; then files+=( "$f" )
+                fi
+            done < <(find "$p" \( -name .komodo -o -name .git -o -name .build -o -name node_modules -o -name komodo_bindings \) -prune -o -type f -name '*.km' -print | LC_ALL=C sort)
+        else die "no such file or directory: $p"; fi
+    done
+    [[ ${#files[@]} -gt 0 ]] || die "no tests found" "name test programs *_test.km, or put programs with 'void main()' in tests/; exit status 0 means pass"
+    pass=0 fail=0 idx=0
+    tflags=( -q )
+    [[ $opt == max ]] && tflags+=( --release )
+    [[ -n "$strict" ]] && tflags+=( --strict )
+    for f in "${files[@]}"; do
+        idx=$((idx+1))
+        troot="$(root_of "$f")"
+        twd="$troot/.komodo"
+        mkdir -p "$twd/test"; [[ -e "$twd/.gitignore" ]] || printf '*\n' > "$twd/.gitignore"
+        tbin="$twd/test/$idx-$(basename "$f" .km)"
+        t0=$(now_ms)
+        if ! berr="$(KOMODO_WORKDIR="$twd" "$self" "${tflags[@]}" -c -o "$tbin" "$f" 2>&1)"; then
+            echo "FAIL  $f  (build failed)"; printf '%s\n' "$berr" | sed 's/^/        /'
+            fail=$((fail+1)); continue
+        fi
+        tout="$("$tbin" 2>&1 </dev/null)"; rc=$?
+        ms=$(( $(now_ms) - t0 ))
+        if [[ $rc -eq 0 ]]; then
+            echo "ok    $f  (${ms} ms)"
+            [[ $verbose -eq 1 && -n "$tout" ]] && printf '%s\n' "$tout" | sed 's/^/        /'
+            pass=$((pass+1))
+        else
+            echo "FAIL  $f  (exit $rc)"
+            [[ -n "$tout" ]] && printf '%s\n' "$tout" | sed 's/^/        /'
+            fail=$((fail+1))
+        fi
+    done
+    echo "────────────────────────────────"
+    echo "$((pass+fail)) tests: $pass passed, $fail failed"
+    [[ $fail -eq 0 ]]
+    exit $?
+fi
+
+# ── everything below needs a source file ────────────────────────────
+resolve_src
+[[ -n "$src" ]] || die "no entry file" "pass a file (komodo file.km) or run in a project directory"
+[[ -f "$src" ]] || die "no such file: $src" "check the path; 'komodo new <name>' starts a project"
+
+# ── watch ───────────────────────────────────────────────────────────
+if [[ "$cmd" == "watch" ]]; then
+    ensure_kmc
+    wroot="$(root_of "$src")"
+    child=()
+    skipped=0
+    for a in "${orig_args[@]}"; do
+        if [[ $skipped -eq 0 && "$a" == "watch" ]]; then skipped=1; child+=( run ); continue; fi
+        child+=( "$a" )
+    done
+    sig() {
+        find "$wroot" \( -name .komodo -o -name .git -o -name .build -o -name node_modules -o -name komodo_bindings \) -prune -o \
+            -type f \( -name '*.km' -o -name '*.kmm' -o -name '*.c' -o -name '*.h' -o -name '*.cpp' -o -name '*.cc' \
+            -o -name '*.cxx' -o -name '*.hpp' -o -name '*.o' -o -name '*.a' \) -printf '%p %T@ %s\n' 2>/dev/null \
+            | LC_ALL=C sort | sha256sum
+    }
+    pid=""
+    stop_child() { [[ -n "$pid" ]] && { kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; }; pid=""; }
+    trap 'stop_child; exit 0' INT TERM
+    echo "$prog: watching $wroot (Ctrl-C to stop)" >&2
+    last="$(sig)"
+    while true; do
+        KOMODO_EXEC=1 "$self" "${child[@]}" &
+        pid=$!
+        while true; do
+            sleep 0.4
+            cur="$(sig)"
+            if [[ "$cur" != "$last" ]]; then
+                last="$cur"; break
+            fi
+            if [[ -n "$pid" ]] && ! kill -0 "$pid" 2>/dev/null; then
+                wait "$pid" 2>/dev/null; rc=$?
+                pid=""
+                [[ $quiet -eq 1 ]] || echo "$prog: finished (exit $rc) — waiting for changes" >&2
+                # idle until something changes
+                while [[ "$(sig)" == "$last" ]]; do sleep 0.4; done
+                last="$(sig)"; break
+            fi
+        done
+        stop_child
+        [[ $quiet -eq 1 ]] || echo "$prog: change detected — rebuilding" >&2
+    done
+fi
+
+# ── build setup ─────────────────────────────────────────────────────
+ensure_kmc
+[[ -x "$kmc" ]] || die "no compiler at '$kmc'" "run 'komodo self build' (or pass -k / set \$KMC)"
+
+src_abs="$(cd "$(dirname "$src")" && pwd)/$(basename "$src")"
+src_dir_abs="$(dirname "$src_abs")"
+root="$(root_of "$src")"
+base="$(basename "$src" .km)"
+setup_wd
+
+# output path
+if [[ -n "$user_out" ]]; then
+    out="$user_out"
+elif [[ "$mode" == "compile" || "$mode" == "lib" ]]; then
+    if [[ $project_mode -eq 1 ]]; then
+        out="$root/$(basename "$root")"
+        [[ "$root" == "$PWD" ]] && out="./$(basename "$root")"
+    else
+        out="${src%.km}"
+    fi
+else
+    out="$wd/$base"
+fi
+if [[ "$mode" != "emit-asm" ]]; then
+    odir="$(dirname "$out")"
+    [[ -d "$odir" ]] || die "output directory '$odir' does not exist" "create it first (mkdir -p $odir)"
+    [[ ! -d "$out" ]] || die "'$out' is a directory" "choose another name with -o"
+fi
+[[ "$cmd" == "lib" && -z "$emit_header" ]] && emit_header="$out.h"
+
+asm="$wd/$base.asm"
+obj="$wd/$base.o"
+linkfile="$wd/$base.links"
+depfile="$wd/$base.deps"
+
 # A stable id for the parts of the toolchain whose output we cache.
 tool_id="gcc:$(gcc -dumpversion 2>/dev/null)|nasm:$(nasm -v 2>/dev/null | head -1)"
 
 # The whole C runtime (stdlib/*.c + its headers) is a link input on every
 # x86 build. Fold its contents into both the object-cache key and the
-# finished-binary key, so editing any of it invalidates cleanly even when
-# the generated assembly is unchanged.
+# finished-binary key.
 stdlib_sig="$(cat "$here"/stdlib/*.c "$here"/stdlib/*.h 2>/dev/null | sha256sum | cut -d' ' -f1)"
 
 cache_ok=0
@@ -219,10 +635,7 @@ if [[ $no_cache -eq 0 ]] && mkdir -p "$cache/fe" "$cache/obj" "$cache/bin" 2>/de
     cache_ok=1
 fi
 
-# Where user-installed libraries land when there is no root access: a
-# `~/.local` / `/usr/local` prefix. gcc does not search these by default,
-# so we add them explicitly (both as a link path and an rpath, the latter
-# harmless for the static case) and let pkg-config find their .pc files.
+# Where user-installed libraries land when there is no root access.
 user_prefixes=( "$HOME/.local" /usr/local )
 for p in "${user_prefixes[@]}"; do
     [[ -d "$p/lib/pkgconfig" ]] && PKG_CONFIG_PATH="$p/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
@@ -234,125 +647,406 @@ for p in "${user_prefixes[@]}"; do
     [[ -d "$p/lib" ]] && prefix_ldflags+=( -L"$p/lib" -Wl,-rpath,"$p/lib" )
 done
 
-# kmc resolves every `link` declaration reachable from the program (the
-# real keyword — see stdlib/sdl2.kmm) into ready linker tokens and writes
-# them, one per line, to $linkfile. No scanning on komodo's side.
-#
-# One extra step here: a bare `-lNAME` token (from `link NAME`) is run
-# through `pkg-config` when a NAME.pc exists. That turns `link raylib`
-# into the library's real link line — its `-L` prefix and every private
-# transitive dependency (`-lGL -lm -lpthread …` for a static raylib) —
-# plus its `--cflags` (`-I` for a headers-in-a-prefix install), so a
-# module's companion C shim can `#include <raylib.h>`. Instead of a lone
-# `-lraylib` that only resolves if the library is a bare .so on the
-# default search path with no deps of its own. Anything that is not a
-# plain `-lNAME`, or has no .pc, passes through untouched.
+# ── auto-bound imports ──────────────────────────────────────────────
+# `import NAME` where NAME is neither a project module nor a stdlib module
+# is looked up as a C library: tools/km-bind --auto writes a binding module
+# to komodo_bindings/NAME.kmm next to the entry file (the compiler's module
+# search skips dot-directories, so it cannot live in .komodo/). Existing
+# bindings are reused as-is; a failed lookup is not an error here — the
+# compiler reports the missing module and we add a hint.
+unresolved_imports=()
+import_hints() {
+    local n
+    for n in ${unresolved_imports[@]+"${unresolved_imports[@]}"}; do
+        echo "$prog: no C library '$n' found (try: sudo apt install lib$n-dev, or write a binding with \`komodo bind\`)" >&2
+    done
+}
+auto_bind_imports() {
+    local kb="$here/tools/km-bind" names n bdir="$src_dir_abs/komodo_bindings" rc
+    [[ -x "$kb" ]] || return 0
+    names="$(find "$src_dir_abs" \( -name '.*' -o -name node_modules \) -prune -o -type f \( -name '*.km' -o -name '*.kmm' \) -print0 2>/dev/null \
+        | xargs -0 grep -hE '^[[:space:]]*import[[:space:]]+[A-Za-z_][A-Za-z0-9_]*[[:space:]]*$' 2>/dev/null \
+        | sed -E 's/^[[:space:]]*import[[:space:]]+//; s/[[:space:]]*$//' | LC_ALL=C sort -u)"
+    [[ -n "$names" ]] || return 0
+    for n in $names; do
+        [[ -f "$here/stdlib/$n.kmm" || -f "$here/stdlib/$n.km" ]] && continue
+        [[ -n "$(find "$here/stdlib" -name "$n.kmm" -print -quit 2>/dev/null)" ]] && continue
+        [[ -n "$(find "$src_dir_abs" \( -name '.*' -o -name node_modules \) -prune -o -type f \( -name "$n.km" -o -name "$n.kmm" \) -print -quit 2>/dev/null)" ]] && continue
+        mkdir -p "$bdir" 2>/dev/null || continue
+        [[ -e "$bdir/.gitignore" ]] || printf '*\n' > "$bdir/.gitignore" 2>/dev/null
+        slog "looking for a C library '$n' (km-bind --auto)"
+        "$kb" --auto "$n" -o "$bdir/$n.kmm" >/dev/null 2>"$wd/km-bind.err"; rc=$?
+        if [[ $rc -ne 0 ]]; then
+            rm -f "$bdir/$n.kmm"
+            unresolved_imports+=( "$n" )
+        else
+            slog "bound '$n' -> komodo_bindings/$n.kmm"
+        fi
+    done
+    return 0
+}
+auto_bind_imports
+
+# kmc resolves every `link` declaration reachable from the program into
+# ready linker tokens and writes them, one per line, to $linkfile. Here
+# they become compiler/linker arguments, appended to the array `auto_cc`:
+#   pkg:NAME / -lpkg:NAME / dir/pkg:NAME  -> pkg-config --cflags --libs NAME
+#   -lNAME with a NAME.pc                 -> pkg-config --static --libs NAME
+#   anything else                         -> passed through untouched
+auto_cc=()
 read_link_flags() {
     [[ -f "$linkfile" ]] || return 0
     local have_pc=0
-    command -v pkg-config >/dev/null 2>&1 && have_pc=1
-    local tok name expanded cflags
+    have pkg-config && have_pc=1
+    local tok name pkg expanded cflags
     while IFS= read -r tok || [[ -n "$tok" ]]; do
         [[ -n "$tok" ]] || continue
+        pkg=""
+        case "$tok" in
+            pkg:*)    pkg="${tok#pkg:}" ;;
+            */pkg:*)  pkg="${tok##*/pkg:}" ;;
+            -lpkg:*)  pkg="${tok#-lpkg:}" ;;
+        esac
+        if [[ -n "$pkg" ]]; then
+            [[ $have_pc -eq 1 ]] || die "'pkg:$pkg' needs pkg-config, which is not installed" "$(install_hint pkg-config)"
+            pkg-config --exists "$pkg" 2>/dev/null \
+                || die "pkg-config has no package '$pkg'" "install its development package (e.g. sudo apt install lib$pkg-dev)"
+            expanded="$(pkg-config --cflags --libs "$pkg" 2>/dev/null)" || die "pkg-config failed for '$pkg'"
+            for name in $expanded; do auto_cc+=( "$name" ); done
+            continue
+        fi
         if [[ $have_pc -eq 1 && "$tok" == -l* ]]; then
             name="${tok#-l}"
             if pkg-config --exists "$name" 2>/dev/null; then
-                # --static: also emit Libs.private, needed when the .pc
-                # resolves to a static archive (raylib here does).
                 if expanded="$(pkg-config --static --libs "$name" 2>/dev/null)" && [[ -n "$expanded" ]]; then
                     cflags="$(pkg-config --cflags "$name" 2>/dev/null)"
-                    printf '%s\n' $cflags $expanded
+                    for name in $cflags $expanded; do auto_cc+=( "$name" ); done
                     continue
                 fi
             fi
         fi
-        printf '%s\n' "$tok"
+        auto_cc+=( "$tok" )
     done < "$linkfile"
 }
 
+# ── 0. C header for the `export fn`s (--emit-header / `lib`) ────────
+if [[ -n "$emit_header" ]]; then
+    [[ -d "$(dirname "$emit_header")" ]] || die "output directory '$(dirname "$emit_header")' does not exist" "create it first"
+    vlog "$kmc" "$src" header $strict
+    "$kmc" "$src" header $strict | { grep -v '^wrote ' || true; } 1>&2
+    [[ ${PIPESTATUS[0]} -eq 0 ]] || exit 1
+    mv -f "$src.h" "$emit_header" || exit 1
+    slog "wrote $emit_header"
+    [[ $mode_set -eq 1 ]] || exit 0
+fi
+
 # ── 1. Komodo front end + codegen ─────────────────────────────────
 #
-# Front-end cache key: the source's absolute path + target/opt/strict +
-# the kmc binary's fingerprint. The cached entry also carries a manifest
-# of every file kmc read last time (mtime+size); if the source, any of
-# those deps, or kmc itself is newer, the entry is stale and kmc reruns.
-src_abs="$(cd "$(dirname "$src")" && pwd)/$(basename "$src")"
-kmc_fp="$(stat -c '%Y:%s' -- "$kmc" 2>/dev/null || echo '?')"
-fe_key="$(sha_str "$src_abs|$target|$opt|$strict|kmc=$kmc_fp")"
+# Front-end cache key: the source's absolute path (and the cwd, since
+# `link "x.c"` paths come out relative to it) + target/opt/strict + the kmc
+# binary's fingerprint. The cached entry also carries a manifest: the
+# CONTENT HASH of the source and of every file kmc read last time. Any
+# difference — an edit, even a same-size one within the same second — makes
+# the entry stale and kmc reruns.
+# a library build asks kmc for position-independent x86 (see the lib block)
+kmc_target="$target"
+[[ "$mode" == "lib" && "$target" == "x86" ]] && kmc_target="x86pic"
+kmc_fp="$(stat -c '%y:%s' -- "$kmc" 2>/dev/null || echo '?')"
+fe_key="$(sha_str "$src_abs|cwd=$PWD|$kmc_target|$opt|$strict|kmc=$kmc_fp")"
 fe_asm="$cache/fe/$fe_key.asm"
 fe_links="$cache/fe/$fe_key.links"
 fe_deps="$cache/fe/$fe_key.deps"
 fe_stamp="$cache/fe/$fe_key.manifest"
 
-# Manifest of the current on-disk state of the source + last run's deps.
-# Sorted, so it is a set comparison — kmc lists deps in directory order,
-# which is not stable run to run.
+# sha256 of the source plus the deps recorded in $1. Sorted, so it is a
+# set comparison; a vanished dep shows up as MISSING.
 fe_manifest() {
-    { printf '%s\n' "$src"; [[ -f "$depfile" ]] && cat -- "$depfile"; } \
-    | while IFS= read -r f || [[ -n "$f" ]]; do
-        [[ -n "$f" ]] || continue
-        stat -c '%n	%Y	%s' -- "$f" 2>/dev/null || printf '%s\tMISSING\t0\n' "$f"
-    done | LC_ALL=C sort -u
+    local depsrc="$1" f list=( "$src" )
+    if [[ -f "$depsrc" ]]; then
+        while IFS= read -r f || [[ -n "$f" ]]; do [[ -n "$f" ]] && list+=( "$f" ); done < "$depsrc"
+    fi
+    for f in "${list[@]}"; do [[ -f "$f" ]] || printf 'MISSING  %s\n' "$f"; done
+    local present=()
+    for f in "${list[@]}"; do [[ -f "$f" ]] && present+=( "$f" ); done
+    [[ ${#present[@]} -gt 0 ]] && sha256sum -- "${present[@]}"
+    return 0
 }
-
 fe_is_fresh() {
-    [[ $cache_ok -eq 1 && -f "$fe_stamp" && -f "$fe_asm" && -f "$depfile" ]] || return 1
-    diff -q <(fe_manifest) "$fe_stamp" >/dev/null 2>&1
+    [[ $cache_ok -eq 1 && -f "$fe_stamp" && -f "$fe_asm" && -f "$fe_deps" ]] || return 1
+    [[ "$(fe_manifest "$fe_deps" | LC_ALL=C sort -u)" == "$(cat "$fe_stamp")" ]]
 }
 
 t=$(now_ms)
+rm -f "$linkfile"
 if fe_is_fresh; then
     cp -p "$fe_asm" "$asm"
     [[ -f "$fe_links" ]] && cp -p "$fe_links" "$linkfile" || rm -f "$linkfile"
-    [[ -f "$fe_deps"  ]] && cp -p "$fe_deps"  "$depfile"
-    log "compiling $src  (target: $target, -O$opt${strict:+, strict}) — cached"
+    cp -p "$fe_deps" "$depfile"
+    slog "compiling $src  (target: $target, -O$opt${strict:+, strict}) — cached"
     report "front end" "$t" "cached"
 else
-    log "compiling $src  (target: $target, -O$opt${strict:+, strict})"
-    vlog "$kmc" "$src" "$target" $strict $opt
-    # kmc's only stdout is a "wrote <file>.asm" progress line; keep stdout
-    # clean (just the program's output in `run` mode, and consistent
-    # whether or not the front end was served from cache).
-    # Under -q that progress line is dropped; analyser warnings (also on
-    # stdout) and errors (stderr) still show.
-    if [[ $quiet -eq 1 ]]; then
-        "$kmc" "$src" "$target" $strict $opt | { grep -v '^wrote ' || true; } 1>&2
-        [[ ${PIPESTATUS[0]} -eq 0 ]] || exit 1
-    else
-        "$kmc" "$src" "$target" $strict $opt 1>&2 || exit 1
+    slog "compiling $src  (target: $target, -O$opt${strict:+, strict})"
+    vlog "$kmc" "$src" "$kmc_target" $strict $opt
+    rm -f "$src.asm" "$src.deps" "$src.links"
+    kmc_err="$wd/kmc.err"
+    # kmc's stdout is a "wrote <file>.asm" progress line plus analyser
+    # warnings; keep stdout clean (just the program's output) by sending
+    # the warnings to stderr and dropping the progress line.
+    "$kmc" "$src" "$kmc_target" $strict $opt 2>"$kmc_err" | { grep -v '^wrote ' || true; } 1>&2
+    kmc_rc=${PIPESTATUS[0]}
+    cat "$kmc_err" >&2
+    if [[ $kmc_rc -ne 0 ]]; then
+        import_hints
+        rm -f "$src.asm" "$src.deps" "$src.links"
+        exit 1
     fi
-    [[ -f "$asm" ]] || { echo "$prog: kmc produced no $asm" >&2; exit 1; }
+    [[ -f "$src.asm" ]] || die "kmc produced no assembly for $src" "this is a compiler bug; please report it"
+    mv -f "$src.asm" "$asm"
+    [[ -f "$src.links" ]] && mv -f "$src.links" "$linkfile" || rm -f "$linkfile"
+    [[ -f "$src.deps"  ]] && mv -f "$src.deps"  "$depfile"
     if [[ $cache_ok -eq 1 ]]; then
         cp -p "$asm" "$fe_asm"
         [[ -f "$linkfile" ]] && cp -p "$linkfile" "$fe_links" || rm -f "$fe_links"
         [[ -f "$depfile"  ]] && cp -p "$depfile"  "$fe_deps"
-        fe_manifest > "$fe_stamp"
+        fe_manifest "$depfile" | LC_ALL=C sort -u > "$fe_stamp"
     fi
     report "front end" "$t"
 fi
 
 if [[ "$mode" == "emit-asm" ]]; then
+    cp -f "$asm" "$src.asm"
     exit 0
 fi
-if [[ "$target" != "x86" ]]; then
-    log "target '$target' has no assembler/runner — stopping after $asm"
+if [[ "$target" != "x86" && "$target" != "c" && "$target" != "wasm" ]]; then
+    cp -f "$asm" "$src.asm"
+    log "target '$target' has no assembler/runner — wrote $src.asm"
     exit 0
 fi
 
+# ── toolchain checks ──────────────────────────────────────────────
+case "$target" in
+    x86)  need_tool nasm; need_tool gcc build-essential ;;
+    c)    need_tool gcc build-essential ;;
+    wasm) have emcc || die "target wasm needs emcc (Emscripten)" "https://emscripten.org/docs/getting_started/ ; 'komodo doctor' checks your tools"
+          [[ "$mode" == "compile" ]] || have node || die "running a wasm build needs node" "$(install_hint node nodejs)" ;;
+esac
+
 # ── link inputs ───────────────────────────────────────────────────
-mapfile -t auto_cc < <(read_link_flags)
-if [[ $quiet -eq 0 && ${#auto_cc[@]} -gt 0 ]]; then
+read_link_flags
+if [[ $verbose -eq 1 && $quiet -eq 0 && ${#auto_cc[@]} -gt 0 ]]; then
     log "auto-linking: ${auto_cc[*]}"
+fi
+
+# native/ next to the entry (or at the project root): compiled and linked
+# automatically, and an include path.
+native_dirs=()
+for nd in "$src_dir_abs/native" "$root/native"; do
+    [[ -d "$nd" ]] || continue
+    dup=0; for e in ${native_dirs[@]+"${native_dirs[@]}"}; do [[ "$e" == "$nd" ]] && dup=1; done
+    [[ $dup -eq 1 ]] || native_dirs+=( "$nd" )
+done
+native_cc=()
+for nd in ${native_dirs[@]+"${native_dirs[@]}"}; do
+    while IFS= read -r f; do native_cc+=( "$f" ); done < <(find "$nd" -maxdepth 1 -type f \
+        \( -name '*.c' -o -name '*.cpp' -o -name '*.cc' -o -name '*.cxx' -o -name '*.o' -o -name '*.a' \) | LC_ALL=C sort)
+done
+
+# ── C / C++ sources among the extras ───────────────────────────────
+#
+# .cpp / .cc / .cxx files are compiled with g++ (once; cached by content +
+# the headers beside them + the toolchain) and replaced in the link list
+# by their object; -lstdc++ is added. Plain .c files are compiled to
+# cached objects too when asked (native/, or any --lib build, so they can
+# join the archive).
+is_cxx() { case "$1" in *.cpp|*.cc|*.cxx|*.C|*.c++) return 0 ;; esac; return 1; }
+tmp_objdir=""
+objdir() {
+    if [[ $cache_ok -eq 1 ]]; then echo "$cache/obj"; return; fi
+    [[ -n "$tmp_objdir" ]] || { tmp_objdir="$(mktemp -d)"; trap 'rm -rf "$tmp_objdir"' EXIT; }
+    echo "$tmp_objdir"
+}
+have_cxx=0
+cc_flags=( -I"$(dirname "$src")" )
+[[ -n "$emit_header" ]] && cc_flags+=( -I"$(dirname "$emit_header")" )
+for nd in ${native_dirs[@]+"${native_dirs[@]}"}; do cc_flags+=( -I"$nd" ); done
+for tok in ${extra_cc[@]+"${extra_cc[@]}"} ${auto_cc[@]+"${auto_cc[@]}"}; do
+    case "$tok" in -I*|-D*|-std=*) cc_flags+=( "$tok" ) ;; esac
+done
+[[ "$mode" == "lib" ]] && cc_flags+=( -fPIC )   # C members of a shared library
+# prep_extras <array-name> <all-c: 0|1>: rewrite that array, compiling C++
+# sources (and, when all-c=1 or in --lib mode, C sources) to objects.
+prep_extras() {
+    local -n list="$1"
+    local allc="${2:-0}"
+    local new=() tok d hsig oh oo od cxx_id
+    cxx_id="g++:$(g++ -dumpversion 2>/dev/null)"
+    od="$(objdir)"
+    for tok in ${list[@]+"${list[@]}"}; do
+        if [[ -f "$tok" ]] && is_cxx "$tok"; then
+            need_tool g++
+            have_cxx=1
+            d="$(dirname "$tok")"
+            hsig="$(cat "$d"/*.h "$d"/*.hpp "$d"/*.hh "$(dirname "$src")"/*.h ${emit_header:+"$emit_header"} 2>/dev/null | sha256sum | cut -d' ' -f1)"
+            oh="$(sha_str "cxx-obj-v1|$cxx_id|$(sha_file "$tok")|$hsig|${cc_flags[*]}")"
+            oo="$od/$oh.o"
+            if [[ ! -f "$oo" ]]; then
+                vlog g++ -c "${cc_flags[@]}" "$tok" -o "$oo"
+                g++ -c "${cc_flags[@]}" "$tok" -o "$oo.tmp.$$" || exit 1
+                mv -f "$oo.tmp.$$" "$oo"
+            fi
+            new+=( "$oo" )
+        elif [[ -f "$tok" && "$tok" == *.c && ( "$mode" == "lib" || "$allc" == 1 ) ]]; then
+            d="$(dirname "$tok")"
+            hsig="$(cat "$d"/*.h "$(dirname "$src")"/*.h ${emit_header:+"$emit_header"} 2>/dev/null | sha256sum | cut -d' ' -f1)"
+            oh="$(sha_str "c-obj-v2|$tool_id|$(sha_file "$tok")|$hsig|${cc_flags[*]}")"
+            oo="$od/$oh.o"
+            if [[ ! -f "$oo" ]]; then
+                vlog gcc -c "${cc_flags[@]}" "$tok" -o "$oo"
+                gcc -c "${cc_flags[@]}" "$tok" -o "$oo.tmp.$$" || exit 1
+                mv -f "$oo.tmp.$$" "$oo"
+            fi
+            new+=( "$oo" )
+        else
+            new+=( "$tok" )
+        fi
+    done
+    list=( ${new[@]+"${new[@]}"} )
+    return 0
+}
+if [[ "$target" != "wasm" ]]; then
+    prep_extras extra_cc 0
+    prep_extras auto_cc 0
+    prep_extras native_cc 1
+fi
+extra_cc=( ${native_cc[@]+"${native_cc[@]}"} ${extra_cc[@]+"${extra_cc[@]}"} )
+[[ $have_cxx -eq 1 ]] && extra_cc+=( -lstdc++ )
+
+# A program with no `main` (only `export fn`s) is meant to be driven by a
+# C/C++ `main`; the Komodo runtime's own `main` must then step aside.
+rt_nomain=0
+if [[ "$target" == "x86" ]] && ! grep -q '^km_program_main:' "$asm"; then
+    rt_nomain=1
+fi
+
+# The runtime objects, for a link where the Komodo runtime's `main` must
+# not be the entry point.
+stdlib_nomain_objs() {
+    stdlib_inputs=()
+    local od c oh oo
+    od="$(objdir)"
+    for c in "$here"/stdlib/*.c; do
+        oh="$(sha_str "stdlib-obj-nomain-v1|$tool_id|stdlib=$stdlib_sig|$(sha_file "$c")")"
+        oo="$od/$oh.o"
+        if [[ ! -f "$oo" ]]; then
+            vlog gcc -no-pie -I"$here/stdlib" -c "$c" -o "$oo"
+            gcc -no-pie -I"$here/stdlib" -c "$c" -o "$oo.tmp.$$" || exit 1
+            if [[ "$(basename "$c")" == "runtime.c" ]]; then
+                objcopy --redefine-sym main=km_rt_main_unused --weaken-symbol=km_program_main "$oo.tmp.$$" || exit 1
+            fi
+            mv -f "$oo.tmp.$$" "$oo"
+        fi
+        stdlib_inputs+=( "$oo" )
+    done
+}
+
+# Run the finished program (or hand over to it under `komodo watch`).
+run_binary() {  # run_binary <path> [runner...]
+    local path="$1"; shift
+    case "$path" in */*|/*) ;; *) path="./$path" ;; esac
+    if [[ -n "${KOMODO_EXEC:-}" && $# -eq 0 ]]; then
+        exec "$path" ${prog_args[@]+"${prog_args[@]}"}
+    fi
+    local t0; t0=$(now_ms)
+    if [[ $# -gt 0 ]]; then "$@" "$path" ${prog_args[@]+"${prog_args[@]}"}; else "$path" ${prog_args[@]+"${prog_args[@]}"}; fi
+    status=$?
+    report "run" "$t0"
+    [[ $status -eq 0 || $quiet -eq 1 ]] || echo "$prog: program exited with status $status" >&2
+    exit $status
+}
+
+record_output() { [[ "$cmd" == "build" || "$cmd" == "lib" ]] && echo "$1" >> "$wd/outputs"; return 0; }
+
+gcc_fail_hint() {
+    import_hints
+    have gcc && ! echo 'int main(void){return 0;}' | gcc -x c - -l:libgc.so.1 -o /dev/null 2>/dev/null \
+        && echo "$prog: the link failed and libgc is missing — Debian/Ubuntu: sudo apt install libgc-dev" >&2
+    return 0
+}
+
+# ── C target: gcc builds the generated C ($asm holds C source for this
+#    target, so it is compiled as C with -x c) against stdlib/*.c ───────
+if [[ "$target" == "c" ]]; then
+    t=$(now_ms)
+    vlog gcc -std=gnu11 -O1 -w -no-pie -I"$here/stdlib" -o "$out" -x c "$asm" -x none "$here"/stdlib/*.c
+    gcc -std=gnu11 -O1 -w -no-pie -I"$here/stdlib" -o "$out" -x c "$asm" -x none "$here"/stdlib/*.c \
+        ${prefix_ldflags[@]+"${prefix_ldflags[@]}"} \
+        ${auto_cc[@]+"${auto_cc[@]}"} ${extra_cc[@]+"${extra_cc[@]}"} -lm -l:libgc.so.1 || { gcc_fail_hint; exit 1; }
+    report "gcc" "$t"
+    record_output "$out"
+    [[ "$cmd" == "build" ]] && log "built $out"
+    [[ "$mode" == "compile" ]] && exit 0
+    run_binary "$out"
+fi
+
+# ── WebAssembly target: the generated C ($asm) is built with emcc against
+#    stdlib/*.c into <out>.js + <out>.wasm and run with node ─────────────
+if [[ "$target" == "wasm" ]]; then
+    wout="${out%.js}.js"
+    wc_src="$wd/$base.wasm.c"        # emcc picks the language from the extension
+    cp -p "$asm" "$wc_src"
+    wflags=( -std=gnu11 -O1 -w -I"$here/stdlib" )
+    for nd in ${native_dirs[@]+"${native_dirs[@]}"}; do wflags+=( -I"$nd" ); done
+    wlink=( -sEXPORTED_RUNTIME_METHODS=lengthBytesUTF8,stringToUTF8 -sENVIRONMENT=node -sWASM_ASYNC_COMPILATION=0 -sNODERAWFS=1 -sEXIT_RUNTIME=1
+            -sALLOW_MEMORY_GROWTH=1 -sINITIAL_MEMORY=64MB -sTOTAL_STACK=16MB -lm )
+    wtool_id="emcc:$(emcc --version 2>/dev/null | head -1)"
+    t=$(now_ms)
+    stdlib_inputs=()
+    for c in "$here"/stdlib/*.c; do
+        if [[ $cache_ok -eq 1 ]]; then
+            oh="$(sha_str "stdlib-wasm-obj-v1|$wtool_id|stdlib=$stdlib_sig|$(sha_file "$c")")"
+            oo="$cache/obj/$oh.wasm.o"
+            if [[ ! -f "$oo" ]]; then
+                vlog emcc "${wflags[@]}" -c "$c" -o "$oo"
+                emcc "${wflags[@]}" -c "$c" -o "$oo.tmp.$$.o" || { rm -f "$wc_src"; exit 1; }
+                mv -f "$oo.tmp.$$.o" "$oo"
+            fi
+            stdlib_inputs+=( "$oo" )
+        else
+            stdlib_inputs+=( "$c" )
+        fi
+    done
+    vlog emcc "${wflags[@]}" -o "$wout" "$wc_src" "${stdlib_inputs[@]}" "${wlink[@]}"
+    emcc "${wflags[@]}" -o "$wout" "$wc_src" "${stdlib_inputs[@]}" \
+        ${extra_cc[@]+"${extra_cc[@]}"} "${wlink[@]}" || { rm -f "$wc_src"; exit 1; }
+    rm -f "$wc_src"
+    report "emcc" "$t"
+    record_output "$wout"
+    [[ "$cmd" == "build" ]] && log "built $wout"
+    [[ "$mode" == "compile" ]] && exit 0
+    case "$wout" in */*|/*) ;; *) wout="./$wout" ;; esac
+    t=$(now_ms)
+    # V8's default stack (~1 MB) is far smaller than a native process's.
+    # Raise the OS soft limit in a subshell and tell V8 to use 90% of it.
+    (
+        want=1000000
+        hard="$(ulimit -Hs)"
+        [[ "$hard" == unlimited ]] || { [[ "$hard" -lt "$want" ]] && want="$hard"; }
+        ulimit -s "$want" 2>/dev/null
+        cur="$(ulimit -s)"; [[ "$cur" == unlimited ]] && cur="$want"
+        exec node --stack-size=$(( cur * 9 / 10 )) "$wout" ${prog_args[@]+"${prog_args[@]}"}
+    )
+    status=$?
+    report "run" "$t"
+    [[ $status -eq 0 || $quiet -eq 1 ]] || echo "$prog: program exited with status $status" >&2
+    exit $status
 fi
 
 # ── 2+3. assemble + link, or reuse a cached executable ────────────
 #
 # The finished binary is keyed on the exact assembly kmc produced plus
 # every link input (auto + manual) and the toolchain id. A hit means
-# nasm and gcc can both be skipped.
-# Link inputs that are files (a module's companion `link "shim.c"`, extra
-# .c / .o / .a after `--`) count by content, not just by name, so editing
-# one rebuilds the program.
+# nasm and gcc can both be skipped. Link inputs that are files count by
+# content, not just by name, so editing one rebuilds the program.
 link_files_sig() {
     local tok
     for tok in "${auto_cc[@]:-}" "${extra_cc[@]:-}"; do
@@ -360,16 +1054,63 @@ link_files_sig() {
     done
 }
 link_sig="$( { printf '%s\n' "${prefix_ldflags[@]:-}" "${auto_cc[@]:-}" "${extra_cc[@]:-}"; link_files_sig; } | LC_ALL=C sort | sha256sum | cut -d' ' -f1)"
-bin_key="$(sha_str "asm=$(sha_file "$asm")|link=$link_sig|stdlib=$stdlib_sig|$tool_id")"
+bin_key="$(sha_str "asm=$(sha_file "$asm")|link=$link_sig|stdlib=$stdlib_sig|nomain=$rt_nomain|$tool_id")"
 bin_hit="$cache/bin/$bin_key"
+
+# ── lib: an object + a static archive, nothing linked ─────────────
+if [[ "$mode" == "lib" ]]; then
+    t=$(now_ms)
+    vlog nasm -f elf64 "$asm" -o "$obj"
+    nasm -f elf64 "$asm" -o "$obj" || exit 1
+    stdlib_nomain_objs
+    libname="$(basename "$out")"
+    libdir="$(dirname "$out")"
+    cp -f "$obj" "$out.o" || die "cannot write $out.o"
+    members=()
+    for tok in ${extra_cc[@]+"${extra_cc[@]}"} ${auto_cc[@]+"${auto_cc[@]}"}; do
+        # native/ and `link "file.c"` objects (once each, the list can repeat one)
+        [[ -f "$tok" && "$tok" == *.o && " ${members[*]:-} " != *" $tok "* ]] && members+=( "$tok" )
+    done
+    rm -f "$libdir/lib$libname.a"
+    vlog ar rcsD "$libdir/lib$libname.a" "$out.o" "${stdlib_inputs[@]}" ${members[@]+"${members[@]}"}
+    ar rcsD "$libdir/lib$libname.a" "$out.o" "${stdlib_inputs[@]}" ${members[@]+"${members[@]}"} || exit 1
+    # lib<name>.so: the same position-independent object, the runtime
+    # compiled -fPIC (cached like the plain stdlib objects), one -shared link
+    so_inputs=()
+    od="$(objdir)"
+    for c in "$here"/stdlib/*.c; do
+        oh="$(sha_str "stdlib-obj-pic-v1|$tool_id|stdlib=$stdlib_sig|$(sha_file "$c")")"
+        oo="$od/$oh.o"
+        if [[ ! -f "$oo" ]]; then
+            vlog gcc -fPIC -I"$here/stdlib" -c "$c" -o "$oo"
+            gcc -fPIC -I"$here/stdlib" -c "$c" -o "$oo.tmp.$$" || exit 1
+            if [[ "$(basename "$c")" == "runtime.c" ]]; then
+                objcopy --redefine-sym main=km_rt_main_unused --weaken-symbol=km_program_main "$oo.tmp.$$" || exit 1
+            fi
+            mv -f "$oo.tmp.$$" "$oo"
+        fi
+        so_inputs+=( "$oo" )
+    done
+    so_flags=()                     # the objects are already in members
+    for tok in ${auto_cc[@]+"${auto_cc[@]}"}; do [[ "$tok" == *.o ]] || so_flags+=( "$tok" ); done
+    rm -f "$libdir/lib$libname.so"
+    vlog gcc -shared -o "$libdir/lib$libname.so" "$out.o" "${so_inputs[@]}" ${members[@]+"${members[@]}"} ${so_flags[@]+"${so_flags[@]}"} -l:libgc.so.1 -lm
+    gcc -shared -o "$libdir/lib$libname.so" "$out.o" "${so_inputs[@]}" ${members[@]+"${members[@]}"} ${so_flags[@]+"${so_flags[@]}"} -l:libgc.so.1 -lm || exit 1
+    report "lib" "$t"
+    record_output "$out.o"; record_output "$libdir/lib$libname.a"; record_output "$libdir/lib$libname.so"; [[ -n "$emit_header" ]] && record_output "$emit_header"
+    log "built $out.o, $libdir/lib$libname.a, $libdir/lib$libname.so${emit_header:+ and $emit_header}"
+    log "link with: gcc -no-pie main.c $libdir/lib$libname.a ${auto_cc[*]:+${auto_cc[*]} }-l:libgc.so.1 -lm$([[ $have_cxx -eq 1 ]] && echo ' -lstdc++')"
+    log "or with the shared library: gcc main.c -L$libdir -l$libname -Wl,-rpath,$libdir -l:libgc.so.1 -lm"
+    exit 0
+fi
 
 if [[ $cache_ok -eq 1 && -f "$bin_hit" ]]; then
     t=$(now_ms)
-    cp -p "$bin_hit" "$out"
+    cp -p "$bin_hit" "$out" || die "cannot write $out" "is the directory writable?"
     chmod +x "$out"
     report "assemble" "$t" "cached"
     report "link" "$t" "cached"
-    log "built $out (cached)"
+    slog "built $out (cached)"
 else
     # 2. assemble
     t=$(now_ms)
@@ -380,7 +1121,9 @@ else
     # 3. link — stdlib/*.c is compiled once into $cache/obj and reused.
     t=$(now_ms)
     stdlib_inputs=()
-    if [[ $cache_ok -eq 1 ]]; then
+    if [[ $rt_nomain -eq 1 ]]; then
+        stdlib_nomain_objs
+    elif [[ $cache_ok -eq 1 ]]; then
         for c in "$here"/stdlib/*.c; do
             oh="$(sha_str "stdlib-obj-v1|$tool_id|stdlib=$stdlib_sig|$(sha_file "$c")")"
             oo="$cache/obj/$oh.o"
@@ -400,22 +1143,18 @@ else
         ${auto_cc[@]+"${auto_cc[@]}"} ${extra_cc[@]+"${extra_cc[@]}"} -lm -l:libgc.so.1
     gcc -no-pie -I"$here/stdlib" -o "$out" "$obj" "${stdlib_inputs[@]}" \
         ${prefix_ldflags[@]+"${prefix_ldflags[@]}"} \
-        ${auto_cc[@]+"${auto_cc[@]}"} ${extra_cc[@]+"${extra_cc[@]}"} -lm -l:libgc.so.1 || exit 1
+        ${auto_cc[@]+"${auto_cc[@]}"} ${extra_cc[@]+"${extra_cc[@]}"} -lm -l:libgc.so.1 || { gcc_fail_hint; exit 1; }
     report "link" "$t"
-    log "built $out"
+    slog "built $out"
 
     [[ $cache_ok -eq 1 ]] && cp -p "$out" "$bin_hit"
 fi
+record_output "$out"
+[[ "$cmd" == "build" ]] && log "built $out"
 
 if [[ "$mode" == "compile" ]]; then
     exit 0
 fi
 
 # ── 4. run ─────────────────────────────────────────────────────────
-log "── running $out ──"
-t=$(now_ms)
-case "$out" in */*|/*) "$out" ;; *) "./$out" ;; esac
-status=$?
-report "run" "$t"
-log "── exit $status ──"
-exit $status
+run_binary "$out"

@@ -1,0 +1,11 @@
+// bind: string.h -m c_string -o c_string.kmm
+// bind: ctype.h -m c_ctype -o c_ctype.kmm
+import c_string
+import c_ctype
+
+void main()
+    print(c_string::strlen("hello"))
+    print(c_string::strcmp("abc", "abc"))
+    print(c_ctype::isdigit(55) != 0)
+    print(c_ctype::toupper(97))
+    print(c_ctype::tolower(65))

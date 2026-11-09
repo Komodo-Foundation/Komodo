@@ -51,7 +51,7 @@ only, for keeping the implementation and sample code coherent.
 
 | Kind    | Examples |
 |---------|----------|
-| int     | `0`, `42`, `256`, `0xFF` (hex) |
+| int     | `0`, `42`, `256`, `0xFF` (hex), `0b1010` (binary), `1_000_000` (`_` digit separators, any base) |
 | float   | `2.0`, `3.14`, `2.0f`, `2f` (trailing `f` forces float) |
 | string  | `"hi"`, `"a\nb"` (backslash escapes) |
 | interp. string | `` `x = {a + 1}` `` — backtick-delimited; each `{expr}` is spliced in as `string(expr)` |
@@ -136,7 +136,11 @@ void name(x: string)                // procedure — returns nothing
 mut name(): [Token]                 // mutates receiver / instance state
 ```
 
-- Parameters: `name: Type`, may have default values. A trailing `...`
+- Parameters: `name: Type`, may have default values — `fn greet(name: string, greeting: string = "hello")`.
+  A default must be a literal (optionally negated), assignable to the declared
+  type, and only trailing parameters may have one; a call may omit them. Defaults
+  apply to free functions (including generic ones); an overloaded name cannot
+  take defaults, so overloads never compete with defaulted arities. A trailing `...`
   makes the function **variadic** — the call may pass any number of extra
   arguments after the fixed ones (`void console::print(...)`).
 - Return type follows `:`. `return expr` / bare `return`.
@@ -187,8 +191,11 @@ struct Flags : u32                          // fixed-width int container
 - Inheritance: `struct Child : Parent` — child fields follow parent fields.
 - Instantiating an `abstract` type is an error.
 - `new Name(a, b, …)` builds a heap value, binding args to fields in
-  declaration order (unset fields are zero); `obj.field` reads/writes a
-  field; a struct is passed and returned by handle.
+  constructor order: fields without a default first, then fields with one,
+  each group in declaration order. A field with no argument takes its
+  default, or zero; `obj.field` reads/writes a field; a struct is passed and
+  returned by handle. (A defaulted field before a required one is therefore
+  not skipped over by position.)
 - Ownership modifiers (before `struct`, combinable with `abstract`):
   - `shared` — the default: values alias freely, `let b = a` gives two
     handles to one value.
@@ -419,9 +426,12 @@ extern "SDL2"                       // a block: one library, many decls
   argument is handed to C as a function pointer: the compiler emits a
   System V ABI *trampoline* that repackages the integer-register arguments
   into Komodo's call ABI and invokes the function. The target may take up
-  to 6 plain-machine-word parameters (int / bool / char / string / handle)
-  and return one or `void` — no `float`, no arrays. See
-  `examples/ffi_callback.km`.
+  any number of parameters, each an int / bool / string / handle word or
+  a `float` / `f32` (a C `double` / `float`), and return one of those or
+  `void` — no arrays. Parameters beyond the six integer / eight SSE
+  registers are read from the C stack, so a callback may take, say, ten
+  arguments. See `examples/ffi_callback.km` and
+  `examples/ffi_callback_ext.km`.
 - `data(arr)` — the element pointer of a Komodo array, for passing a
   writable buffer / out-param to C (e.g. `SDL_PollEvent(data(ev))`). Read
   results back with ordinary `arr[i]`.
@@ -443,13 +453,108 @@ extern "SDL2"                       // a block: one library, many decls
   bytes) is unpacked from `rax:rdx` / `xmm0:xmm1` into a fresh Komodo
   object. A struct argument *without* `copy(...)` still passes the bare
   handle as a pointer (for a `T*` parameter), as before. Nested struct
-  fields, arrays, and MEMORY-class returns are not supported; see
+  fields and arrays are not supported; see
   `stdlib/raylib.kmm` for a shim-free binding built on this.
-- Not supported in a callback: `float` in the signature; more than 6
-  parameters.
-- With `build.sh` (the interpreter path) pass link flags after the output
-  name — `./build.sh app.km x86 ./app -lSDL2`; the `komodo` CLI reads
-  `<file>.links` and needs none.
+- **Struct returns over 16 bytes** (System V MEMORY class, e.g. a 32-byte
+  `{double,double,double,long}`): the compiler passes a hidden pointer to
+  a static buffer as the first integer argument (so the visible
+  arguments shift by one register) and unpacks the filled buffer into a
+  fresh Komodo object, exactly like the register case. Same field
+  restrictions (scalars only, up to 192 bytes) — see
+  `examples/ffi_sret.km`. (The buffer is shared, so the result must be
+  consumed before the next struct-returning call, which it always is.)
+- **Global variables — `extern let name: T`.** Reads and writes go
+  straight to the C symbol (`extern let counter: i32`,
+  `extern let scale: float`); the declared type is the C width — `i8`
+  ... `u64`, `bool`, `f32` (C `float`), `float` (`double`), `string`
+  (`const char *`), or a handle — widened on read and narrowed on write,
+  so `counter += 1` on a C `int` is correct. Add `= "sym"` to bind a
+  differently spelled symbol. Arrays and structs are rejected. Works in
+  `extern "lib"` blocks too. See `examples/ffi_extern_var.km`.
+- The `komodo` CLI reads `<file>.links` and needs no link flags.
+
+### Exporting to C and C++ (`export fn`)
+
+The reverse direction: a Komodo function callable *from* C / C++.
+
+```
+export fn add(a: int, b: int): int
+    return a + b
+
+export fn greet(name: string): string
+    return "hello, " + name
+
+export void tick()
+    ...
+```
+
+- `export` prefixes an ordinary free function **with a body**. It is a
+  contextual keyword (still a plain identifier elsewhere). The function
+  keeps working as a normal Komodo function; additionally the compiler
+  emits a native System V AMD64 entry point under the **unmangled** symbol
+  `add`, which repackages the C arguments into Komodo's `(argc, KmArg*)`
+  call ABI (the mirror image of the callback trampoline) and calls the
+  real body, which lives under an internal symbol (`add__kmx`).
+- Parameters and the return type must be machine words or doubles:
+  `int` / `uint` / `i8..i64` / `u8..u64` (narrow values are re-extended
+  from the low bits, as C leaves the rest of the register undefined),
+  `bool`, `float` (`double` in C), `f32` (`float`), `string`
+  (`const char *`, NUL-terminated), or an `extern type` handle (an opaque
+  pointer). Arrays, structs and classes are rejected by the analyser.
+  Any number of arguments is fine (stack-passed beyond the registers).
+  Overloading, generics (untyped parameters), default values and the
+  name `main` are rejected: a C symbol names exactly one function.
+- Ownership: a returned `string` points into the Komodo heap. Copy it
+  before calling back into Komodo; do not `free` it. An unhandled
+  `throw` inside an export aborts the process (there is no C++ exception
+  mapping).
+- **Runtime start-up.** If the program has a `main`, the C runtime's own
+  `main` has already set everything up. If it has **none**, the first
+  export call lazily initialises the collector and runs the top-level
+  `let` initialisers (a once-flag in the wrapper; not thread-safe, so
+  make the first call from one thread). The C/C++ side then supplies
+  `main`.
+- Only the **x86** target implements it; `-t c` / `-t stackvm` report
+  `export fn is not supported on target 'X' yet`.
+
+**Building a library** — `komodo --lib prog.km` writes `prog.o` and
+`libprog.a` (the program plus the Komodo runtime, with the runtime's own
+`main` renamed so it cannot clash with yours) and links nothing:
+
+```bash
+komodo --lib --emit-header prog.h prog.km
+gcc -no-pie main.c -L. -lprog -l:libgc.so.1 -lm        # C
+g++ -no-pie main.cpp -L. -lprog -l:libgc.so.1 -lm      # C++
+```
+
+`-no-pie` is required (the generated code is not position-independent).
+Alternatively let `komodo` link it for you: a program with no `main`
+takes the C/C++ `main` as an extra, `komodo prog.km -- driver.cpp`.
+
+**Headers** — `komodo --emit-header out.h prog.km` writes one prototype
+per `export fn` inside `#ifdef __cplusplus extern "C" { #endif`, with
+`int64_t` / `double` / `const char *` / `bool` / `float` mappings, plus a
+`typedef void *Name;` for every `extern type` an exported signature
+mentions. Used alone it only writes the header; with `--lib` / `-c` it
+also builds.
+
+### Binding C++ and oddly named C symbols
+
+`extern fn nice(x: int): int = "_Z3fooi"` binds the Komodo name `nice`
+to the symbol `_Z3fooi` — a C++ mangled name, or a C name that is not a
+valid Komodo identifier (a Komodo keyword such as `match`, say). The
+`= "symbol"` suffix works on `extern fn` / `extern void` and on the
+members of an `extern "lib"` block; the symbol may contain letters,
+digits, `_ $ @ ?`. C++ *classes* are reached the usual way: write a
+small `extern "C"` wrapper (`counter_new`, `counter_add`, …) and bind
+those, with the class held as an opaque `extern type` handle — see
+`examples/ffi_cxx.km`.
+
+C++ sources are built by `komodo` itself: `.cpp` / `.cc` / `.cxx` files
+after `--` (or named by a module's `link "x.cpp"`) are compiled with
+`g++` (cached by content, the headers beside them and the toolchain) and
+linked with `-lstdc++`. `-I…` / `-D…` / `-std=…` extras are forwarded to
+the compile.
 
 ## Built-ins
 
@@ -462,6 +567,9 @@ A handful of names the compiler lowers directly (no `import`, no library):
   `f32` is truncated toward zero (`cvttsd2si`), an integer-class value
   passes through unchanged. This is the sanctioned float→int conversion;
   a plain assignment / return stays width-checked and rejects it.
+- `assert(cond)` / `assert(cond, "message")` — when `cond` is false, throws
+  `file:line: assertion failed: message` (an ordinary error: catchable with `f(...)?`,
+  otherwise `Uncaught error: …`). The message is evaluated only on failure. No value.
 - `join(parts, sep)` — concatenate a `[string]` with `sep` between, in
   one pass (avoids the O(n²) churn of repeated `s = s + line`).
 - `data(arr)` — an array's element pointer, for handing a buffer to C.
@@ -470,8 +578,9 @@ A handful of names the compiler lowers directly (no `import`, no library):
   array fields get a fresh buffer; scalars, strings, enum values and
   opaque handles are copied by value. The source is *read*, never moved —
   `copy(a)` is the explicit way to duplicate a `unique` value while
-  keeping `a` a live owner. Constructor-based classes and `extern type`
-  handles have no deep copy; cyclic data recurses forever.
+  keeping `a` a live owner. A constructor-based class is copied without
+  running its constructor. `extern type` handles are C pointers and are
+  copied by value. Cyclic data recurses forever.
 
 ## Standard library
 
@@ -594,8 +703,8 @@ run.
 
 After analysis, an AST-rewriting pass (`modules/optimize.kmm`) runs at
 one of four levels, chosen by a driver argument
-(`main.km <file> <target> none|low|medium|max`, default `none`; `KM_OPT`
-env for `build.sh` / `krun.sh`):
+(`main.km <file> <target> none|low|medium|max`, default `none`; `komodo
+--release` selects `max`):
 
 | Level | Adds |
 |---|---|
@@ -682,3 +791,47 @@ Code built by a compiler from before the collector (it allocates with raw
 collection switched off — that keeps bootstrapping from an older `kmc`
 working (`build-self.sh` twice: the first run reports a fixpoint mismatch
 because the code generator changed, the second reaches the fixpoint).
+
+## WebAssembly
+
+`komodo -t wasm file.km` builds the program for WebAssembly (wasm32) with
+Emscripten and runs it under node. There is no separate backend: `wasm` is
+the portable C backend (`-t c`, `modules/backend/backend_c.kmm`) with a flag
+(`CBackend::forWasm`) that only changes diagnostics. The generated C is
+compiled by `emcc` together with the same `stdlib/*.c` runtime and linked
+into `<out>.js` + `<out>.wasm`; `komodo` caches the compiled runtime objects
+and runs the result with `node`. `-S` stops at the generated C (`<file>.km.asm`),
+`-c` builds without running, `-o app` names `app.js` / `app.wasm`.
+
+**64-bit words on a 32-bit target.** A Komodo value is always a 64-bit
+word, but wasm32 has 32-bit pointers and a 32-bit `long`. So the runtime ABI
+is spelled with `int64_t` (`KmArray.len/cap/data[]`, `KmArg.tag/value`, every
+`stdlib` entry point's `argc` and result) instead of `long`; on x86-64 the two
+are the same type, so the x86 target and its assembly are unchanged. A
+pointer moves into a word with `KM_WORD(p)` (`(int64_t)(uintptr_t)p`,
+zero-extended, lossless) and back with `KM_PTR`/`KM_STR`/`KM_ARR`
+(truncation); objects keep their `[type_id | field0 | …]` layout of 8-byte
+slots. Floats are IEEE-754 bit patterns in a word, exactly as natively. The
+backend calls every non-user function through `KM_CALL`, a `_Generic` on the
+callee's declared return type (double / void / pointer / integer, from
+`km_runtime.h`), because a wasm call or indirect call with the wrong
+signature traps; this also replaced the earlier asm-label aliasing.
+
+**Runtime differences.** There is no collector: under `__EMSCRIPTEN__`
+`km_alloc` is zeroed `calloc` and nothing is ever freed (native builds keep
+libgc), and there is no heap ceiling beyond the wasm memory (growth is
+enabled). `throw` / `f(args)?` work through Emscripten's setjmp/longjmp. The
+ELF symbol lookup, stack walker and crash-signal handlers are native-only: a
+trap (integer divide by zero, null access) surfaces as a node `RuntimeError`,
+and an uncaught error omits the ` in <function>` suffix. File access
+(`file::`) uses node's real file system (`NODERAWFS`). `komodo` raises the OS
+stack limit (up to 1 GB) and runs `node --stack-size` at 90 % of it, so deep
+recursion matches the native targets. The program's `args` are node's
+`process.argv` minus the interpreter (`args[0]` is the `.js` file).
+
+**Limits.** `extern fn` / C FFI (including by-value structs, callbacks and
+`link` libraries such as SDL2 and raylib) is not supported and fails at
+compile time with `wasm backend: … not supported yet`; the `ffi_*` examples
+are marked `wasm: skip`. Requires `emcc` and `node` on `PATH`; tested with
+Emscripten 3.1.6 and node 18 (the module is instantiated synchronously, as
+node 18's `fetch` rejects file paths).

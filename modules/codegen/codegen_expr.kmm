@@ -173,6 +173,14 @@ void Codegen::genBinary(e: BinaryOp)
     else if isCompareOp(e.op) then
         genCompare(e)
     else if e.op == "+" and (ls or rs) then
+        if m_curInst != "" then
+            let ot = exprType(e.right)
+            if rs then
+                ot = exprType(e.left)
+            if ot == "int" or ot == "float" then
+                let lt = exprType(e.left)
+                let rt = exprType(e.right)
+                throw (string(e.line) + ":" + string(e.column) + ": cannot add '" + lt + "' and '" + rt + "' (use string(x) or an interpolated string) in call " + m_curInst)
         genStrOp(e, "km_str_concat")
     else if e.op == "*" and ls then
         genStrOp(e, "km_str_repeat")
@@ -383,7 +391,43 @@ mut Codegen::arrayTag(t: string): int
 // Every Komodo call is lowered the same way: an argc-long (tag, value)[]
 // buffer, filled one pair at a time.  `print`, `algorithm.sort`, … are
 // just calls whose symbol is resolved by the target's linker / loader.
+// A call that omits trailing defaulted arguments (`f(a)` for
+// `fn f(a: int, b: int = 1)`) gets the callee's default expressions
+// appended, so the lowering below sees a full argument list.  Idempotent;
+// a missing required argument is left for the arity check to report.
+mut Codegen::fillDefaults(e: CallExpr, fd: FunctionDecl)
+    let i = #e.args
+    while i < #fd.params do
+        let d = fd.params[i].defaultValue
+        if d == null then
+            return
+        e.args += [d]
+        i += 1
+
 void Codegen::genCall(e: CallExpr)
+    // `assert(cond, "message")` — lowered to `if not cond then throw
+    // "<site>assertion failed: message"`, so it needs no runtime support
+    // and works in statement and expression position alike.  The message
+    // expression is only evaluated when the assertion fails.
+    if e.name == "assert" then
+        // StringLiteral.value keeps its quotes (loadStrLit strips them)
+        let text: Expression = new StringLiteral("\"" + e.site + "assertion failed\"")
+        if #e.args == 2 then
+            let detail = new CallExpr("string", [e.args[1]])
+            detail.resolvedType = "string"
+            let head = new StringLiteral("\"" + e.site + "assertion failed: \"")
+            let joined = new BinaryOp("+", head, detail)
+            joined.resolvedType = "string"
+            text = joined
+        let thr = new ThrowStmt()
+        thr.message = text
+        let chk = new IfStmt()
+        chk.cond = new UnaryOp("not", e.args[0])
+        chk.thenBody = [thr]
+        genStmt(chk)
+        m_backend.loadIntLit("0")
+        return
+
     // `data(arr)` — the element pointer of a Komodo array (handle + 16),
     // for handing a writable buffer to an `extern fn` (out-params, event
     // structs, …).  Read results back with ordinary `arr[i]`.
@@ -446,6 +490,12 @@ void Codegen::genCall(e: CallExpr)
             m_backend.cvtFloatToInt()
         return
 
+    // `expr.method(args)` on a computed receiver (a field of a field, an
+    // index, a call result): evaluate the receiver expression itself.
+    if e.receiver != null then
+        genMethodCallE(exprType(e.receiver), "", e.receiver, e.name[1 to e.name.length], e.args)
+        return
+
     // `recv.method(args)` where `recv` is an object-typed local, a field
     // of the enclosing class, or `self` — a method call: the receiver
     // rides in as implicit argument 0.
@@ -483,6 +533,7 @@ void Codegen::genCall(e: CallExpr)
     // static argument types and call the specialized instance.
     if isTemplate(e.name) then
         let tpl = templateDeclOf(e.name)
+        fillDefaults(e, tpl)
         if #tpl.params != #e.args then
             throw ("function '" + e.name + "' takes " + string(#tpl.params) + " argument(s), got " + string(#e.args))
         let gsym = ensureInstance(e.name, tplArgTypes(e.args))
@@ -504,6 +555,11 @@ void Codegen::genCall(e: CallExpr)
             genDirectCall(m_fnLink[sel], e.args)
         return
 
+    // a plain function: omitted trailing arguments take their defaults
+    let di = m_fnIdx.first(e.name)
+    if di >= 0 then
+        fillDefaults(e, m_fnDecls[di])
+
     let kind = fnKind(e.name)
 
     // `extern fn` — call through the native System V AMD64 C ABI.
@@ -511,7 +567,10 @@ void Codegen::genCall(e: CallExpr)
     // then spill to the stack; float args fill xmm0..7 then spill; the
     // backend places each one from the class list built here.
     if kind == "extern" then
-        if fnArity(e.name) != #e.args then
+        // A variadic C function (`...` in its prototype) takes its fixed
+        // arguments first and any number of extra ones after them.
+        let vari = m_fnDecls[fnIndexOf(e.name)].variadic
+        if (not vari and fnArity(e.name) != #e.args) or (vari and #e.args < fnArity(e.name)) then
             throw ("extern '" + e.name + "' takes " + string(fnArity(e.name)) + " argument(s), got " + string(#e.args))
         genExternCall(e)
         return
@@ -554,6 +613,16 @@ void Codegen::genExternCall(e: CallExpr)
     m_backend.cCallBegin(#e.args)
     let ci = 0
     let ai = 0
+    // A struct result over 16 bytes (MEMORY class) comes back through a
+    // hidden first argument: a pointer to the buffer the callee fills.
+    let sretName = externRetStructName(e.name)
+    if sretName != "" then
+        let sl = structCLayout(sretName)
+        if sl.ok and sl.memory then
+            m_backend.ffiRetBufAddr()
+            m_backend.cCallArg(ci, "int")
+            classes += ["int"]
+            ci += 1
     for a in e.args do
         let byvalName = byValStructArgType(a)
         if a is Identifier and isCallbackArg(a) then
@@ -627,8 +696,6 @@ void Codegen::genExternCall(e: CallExpr)
         let rl = structCLayout(retStruct)
         if not rl.ok then
             throw ("return type of extern '" + e.name + "': " + rl.err)
-        if rl.memory then
-            throw ("extern '" + e.name + "' returns '" + retStruct + "' (" + string(rl.size) + " bytes) by value; aggregates over 16 bytes can't be returned by value yet")
         let rslots: [int] = []
         let rcoffs: [int] = []
         let rsizes: [int] = []
@@ -740,7 +807,7 @@ void Codegen::genNew(e: NewExpr)
     m_backend.objNew(typeIdOf(e.typeName), nfields)
 
     let ctor = resolveCtorSym(e.typeName)
-    let hasCtor = typeIsClass(e.typeName) and hasFn(ctor)
+    let hasCtor = typeIsClass(e.typeName) and hasFn(ctor) and not e.raw
 
     // Positional `new T(a, b, …)` on a struct / ctor-less class binds args
     // to fields in *constructor order* (required fields first, then this
@@ -835,7 +902,9 @@ void Codegen::loadReceiver(recv: string)
         m_backend.loadField(fieldIndexOf(m_curClass, recv))
 
 void Codegen::genMethodCall(recv: string, meth: string, args)
-    let objType = receiverType(recv)
+    genMethodCallE(receiverType(recv), recv, null, meth, args)
+
+void Codegen::genMethodCallE(objType: string, recv: string, recvExpr: Expression?, meth: string, args)
     let owner = resolveMethodOwner(objType, meth)
     if owner == "" then
         throw ("type '" + objType + "' has no method '" + meth + "'")
@@ -848,7 +917,10 @@ void Codegen::genMethodCall(recv: string, meth: string, args)
     let slot = methodSlotOf(objType, meth)
     m_backend.callFrameBegin(total)
     m_backend.callArgTag(0, 0)
-    loadReceiver(recv)
+    if recvExpr != null then
+        genExpr(recvExpr)
+    else
+        loadReceiver(recv)
     m_backend.callArgStore(0)
     let j = 1
     for a in args do

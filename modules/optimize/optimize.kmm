@@ -7,9 +7,12 @@ module km_compiler
 //      none    — the pass does not run; the backend keeps every literal
 //      low     — constant folding (int / string / bool / logical); the
 //                backend also interns identical .rodata constants
-//      medium  — low + algebraic identities, dead-branch elimination
-//                (`if false`, `while false`, constant `match`) and
-//                dead code after a diverging statement
+//      medium  — low + algebraic identities, strength reduction
+//                (`x * 2^k` -> `x << k` for ints), dead-branch
+//                elimination (`if false`, `while false`, constant
+//                `match`) and dead code after a diverging statement
+//                (return / throw / break / continue, or `while true`
+//                with no break)
 //      max     — medium + constant propagation of never-reassigned
 //                `let x = <literal>` bindings, then another fold
 //
@@ -214,6 +217,8 @@ public
             return e
 
         if e is CallExpr then
+            if e.receiver != null then
+                e.receiver = foldExpr(e.receiver)
             e.args = foldList(e.args)
             return e
         if e is NewExpr then
@@ -271,7 +276,7 @@ public
             return e
         return e
 
-    fn foldBinary(e: BinaryOp): Expression?
+    mut foldBinary(e: BinaryOp): Expression?
         let l = e.left
         let r = e.right
         if l == null or r == null or e.op == "is" then
@@ -377,28 +382,74 @@ public
 
     // ── algebraic identities (medium+) ──────────────────────────
 
-    fn algebraic(e: BinaryOp, l: Expression, r: Expression): Expression?
+    // The literal operand fixes nothing about the other operand's type
+    // (`f * 0` with a float `f` is 0.0, not the int 0; `s + 0` on a
+    // string is a concatenation), so every rewrite checks the analyser's
+    // `resolvedType` of the non-literal side.  Identities that are exact
+    // for floats too (`x - 0`, `1 * x`, `x / 1`) accept int or float;
+    // `0 + x` is not exact for floats (`-0.0 + 0` is `+0.0`), and `x * 0`
+    // is not exact for floats (NaN, -0.0), so those need an int.
+    mut algebraic(e: BinaryOp, l: Expression, r: Expression): Expression?
         let lz = isIntConst(l, 0)
         let rz = isIntConst(r, 0)
         let lo = isIntConst(l, 1)
         let ro = isIntConst(r, 1)
         if e.op == "+" then
-            if lz then
+            if lz and isIntType(r) then
                 return r
-            if rz then
+            if rz and isIntType(l) then
                 return l
-        if e.op == "-" and rz then
+        if e.op == "-" and rz and isNumType(l) then
             return l
         if e.op == "*" then
-            if lo then
+            if lo and isNumType(r) then
                 return r
-            if ro then
+            if ro and isNumType(l) then
                 return l
-            if (lz and pure(r)) or (rz and pure(l)) then
+            if (lz and pure(r) and isIntType(r)) or (rz and pure(l) and isIntType(l)) then
                 return mkInt(0)
-        if e.op == "/" and ro then
+            let sh = strengthReduce(l, r)
+            if sh != null then
+                return sh
+        if e.op == "/" and ro and isNumType(l) then
             return l
         return null
+
+    // `x * 2^k` -> `x << k` (k >= 1) for an int `x`.  Two's-complement
+    // multiply and left shift agree bit-for-bit, wrap-around included.
+    mut strengthReduce(l: Expression, r: Expression): Expression?
+        let x = l
+        let c = r
+        if l is IntLiteral then
+            if r is IntLiteral then
+                return null
+            x = r
+            c = l
+        if not (c is IntLiteral) or not isIntType(x) then
+            return null
+        let v = parseIntStr(c.value)
+        if v < 2 or v >= FOLD_LIMIT then
+            return null
+        let k = 0
+        while v > 1 do
+            let rem = v % 2
+            if rem != 0 then
+                return null
+            v = v / 2
+            k += 1
+        let sh = new BinaryOp("<<", x, mkInt(k))
+        sh.resolvedType = "int"
+        return sh
+
+    fn isIntType(e: Expression?): bool
+        if e == null then
+            return false
+        return e.resolvedType == "int"
+
+    fn isNumType(e: Expression?): bool
+        if e == null then
+            return false
+        return e.resolvedType == "int" or e.resolvedType == "float"
 
     // ── predicates / helpers ────────────────────────────────────
 
@@ -648,6 +699,35 @@ public
             if s is IfStmt then
                 if #s.elseBody > 0 and blockDiverges(s.thenBody) and blockDiverges(s.elseBody) then
                     return true
+            // `while true` with no `break` anywhere inside never exits
+            // normally: it leaves only by return / throw.
+            if s is WhileStmt then
+                if condClass(s.cond) == 1 and not hasBreak(s.body) then
+                    return true
+        return false
+
+    // Conservative: a `break` at any depth counts, even one that belongs
+    // to a nested loop, so this can only under-report divergence.
+    fn hasBreak(stmts: [Statement]): bool
+        for s in stmts do
+            if s is BreakStmt then
+                return true
+            if s is IfStmt then
+                if hasBreak(s.thenBody) or hasBreak(s.elseBody) then
+                    return true
+            else if s is WhileStmt then
+                if hasBreak(s.body) then
+                    return true
+            else if s is ForStmt then
+                if hasBreak(s.body) then
+                    return true
+            else if s is ForInStmt then
+                if hasBreak(s.body) then
+                    return true
+            else if s is MatchStmt then
+                for c in s.cases do
+                    if hasBreak(c.body) then
+                        return true
         return false
 
 private

@@ -1,0 +1,5 @@
+export fn f(a: int): int
+    return a
+
+export fn f(a: string): int
+    return 1

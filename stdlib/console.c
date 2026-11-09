@@ -15,21 +15,21 @@ static void write_arg(FILE *out, KmArg a)
      * km_runtime.h — so dispatch on the low byte, not the raw tag. */
     char fbuf[64];
     switch (a.tag & 0xFF) {
-    case KM_TAG_INT:   fprintf(out, "%ld", a.value);                 break;
+    case KM_TAG_INT:   fprintf(out, "%" PRId64 "", a.value);                 break;
     case KM_TAG_FLOAT: km_fmt_double(fbuf, sizeof fbuf, km_as_float(a.value)); fputs(fbuf, out); break;
-    case KM_TAG_STR:   fputs((const char *)a.value, out);            break;
+    case KM_TAG_STR:   fputs(a.value ? KM_STR(a.value) : "null", out); break;
     case KM_TAG_BOOL:  fputs(a.value ? "true" : "false", out);       break;
     case KM_TAG_ARRAY: {
-        fputs(km_array_to_string((KmArray *)a.value, (a.tag >> 8) & 0xFF, (a.tag >> 16) & 0xFF), out);
+        fputs(km_array_to_string(KM_ARR(a.value), (a.tag >> 8) & 0xFF, (a.tag >> 16) & 0xFF), out);
         break;
     }
     default:           fputs("<?>", out);                            break;
     }
 }
 
-static void write_all(FILE *out, long argc, KmArg *items, int newline)
+static void emit_args(FILE *out, int64_t argc, KmArg *items, int newline)
 {
-    for (long i = 0; i < argc; i++) {
+    for (int64_t i = 0; i < argc; i++) {
         if (i)
             putc(' ', out);
         write_arg(out, items[i]);
@@ -38,10 +38,10 @@ static void write_all(FILE *out, long argc, KmArg *items, int newline)
         putc('\n', out);
 }
 
-void console_print(long argc, KmArg *items) { write_all(stdout, argc, items, 1); }
-void console_write(long argc, KmArg *items) { write_all(stdout, argc, items, 0); }
-void console_error(long argc, KmArg *items) { write_all(stderr, argc, items, 1); }
+void console_print(int64_t argc, KmArg *items) { emit_args(stdout, argc, items, 1); }
+void console_write(int64_t argc, KmArg *items) { emit_args(stdout, argc, items, 0); }
+void console_error(int64_t argc, KmArg *items) { emit_args(stderr, argc, items, 1); }
 
 /* Bare `print(...)` (used by the self-hosted compiler driver) is an
  * alias for `console.print`. */
-void print(long argc, KmArg *items) { console_print(argc, items); }
+void print(int64_t argc, KmArg *items) { console_print(argc, items); }

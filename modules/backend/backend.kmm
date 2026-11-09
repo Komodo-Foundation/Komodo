@@ -92,6 +92,40 @@ public
     // to its array field `idx`
     mut arrayPushToField(idx: int)
         throw ("internal: this backend cannot append in place")
+    // ── C interop beyond calling C ─────────────────────────────────
+    // `extern fn f(...) = "sym"`: calls to Komodo name `f` link against
+    // the C symbol `sym`.
+    mut declareAlias(name: string, symbol: string)
+        throw ("internal: this backend cannot alias an extern symbol")
+    // `export fn name`: the Komodo body is emitted under an internal
+    // symbol, and `emitExport` adds a C-ABI entry point named `name`.
+    mut declareExport(name: string)
+        throw ("export fn is not supported on this target yet")
+    // cls[i]: "int" "i8" "u8" "i16" "u16" "i32" "u32" "bool" "float" "f32"
+    // (how C passes parameter i); tags[i]: the Komodo call-ABI tag;
+    // ret: one of those, or "void"; initFn: Komodo procedure to run once
+    // before the first call ("" = none).
+    mut emitExport(name: string, cls: [string], tags: [int], ret: string, initFn: string)
+        throw ("export fn is not supported on this target yet")
+    // A Komodo function passed to C as a callback.  cls / tags / ret as
+    // for `emitExport`.  The plain integer case (<= 6 words) goes through
+    // the older `emitTrampoline`, so a backend that only has that keeps
+    // working; floats and stack-passed parameters need this override.
+    mut emitCallbackTramp(sym: string, cls: [string], tags: [int], ret: string)
+        let plain = #cls <= 6 and ret != "float" and ret != "f32"
+        for c in cls do
+            if c == "float" or c == "f32" then
+                plain = false
+        if not plain then
+            throw ("callbacks with float parameters or more than 6 parameters are not supported on this target yet")
+        emitTrampoline(sym, #cls)
+    // `extern let name: T [= "sym"]` — a C global variable.
+    mut declareExternGlobal(name: string, symbol: string, rawType: string)
+        throw ("extern variables are not supported on this target yet")
+    // address of the static struct-return buffer into the accumulator
+    // (hidden `sret` pointer for a MEMORY-class struct return)
+    mut ffiRetBufAddr()
+        throw ("struct returns over 16 bytes are not supported on this target yet")
     // ── labels ─────────────────────────────────────────────────────
     mut newLabel(): string
         m_labelId += 1

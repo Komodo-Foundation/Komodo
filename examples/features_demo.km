@@ -1,7 +1,6 @@
 // New language features: for-loops (range / down / for-in), break &
 // continue, bitwise operators, Lua-style `and/or` conditional value,
 // short-circuit and/or.
-// Build:  kmsrc/compiler/build.sh kmsrc/features_demo.km
 
 import console
 
