@@ -391,6 +391,8 @@ private
         return false
 
     mut parseFunction(): FunctionDecl
+        let fnLine = peek().line
+        let fnCol = peek().column
         // one or two leading keywords: `fn` / `void` / `mut`, and the
         // combination `mut void` (a mutating procedure).
         let isVoid = false
@@ -442,6 +444,8 @@ private
                 eat()
 
         let decl = new FunctionDecl(name)
+        decl.line = fnLine
+        decl.column = fnCol
         decl.params = trimVariadic(params)
         decl.variadic = paramsAreVariadic(params)
         decl.body = body

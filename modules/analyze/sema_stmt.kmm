@@ -26,6 +26,8 @@ mut Analyzer::checkFunction(fd: FunctionDecl, owner: string)
     else
         m_curRet = parseTypeStr(fd.returnType)
     m_loopDepth = 0
+    m_declLine = fd.line
+    m_declCol = fd.column
 
     // implicit receiver
     if owner != "" then
@@ -56,7 +58,7 @@ mut Analyzer::checkFunction(fd: FunctionDecl, owner: string)
         while i < #m_scopeNames do
             let nm = m_scopeNames[i]
             if not m_scopeUsed[i] and nm != "self" and not nameHasHash(nm) then
-                err(fd, "'" + nm + "' is declared but never used")
+                throw (m_scopeDeclAt[i] + ": '" + nm + "' is declared but never used")
             i += 1
 
 mut Analyzer::nameHasHash(s: string): bool
@@ -280,6 +282,9 @@ mut Analyzer::checkBlock(stmts: [Statement])
     macroRestore(mark)
 
 mut Analyzer::checkStmt(s: Statement?)
+    if s != null and s.line > 0 then
+        m_declLine = s.line
+        m_declCol = s.column
     if s is VarDecl then
         checkVarDecl(s)
     else if s is AssignStmt then
