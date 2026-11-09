@@ -61,6 +61,10 @@ public
         //  loosely typed.
         for fd in prog.functions do
             if fnIsTemplate(fd) then
+                //  A template does not also overload (design.md, Functions).
+                for other in prog.functions do
+                    if other.name == fd.name and (other.line != fd.line or other.column != fd.column) then
+                        err(fd, "template '" + fd.name + "' cannot share its name with another '" + fd.name + "' declaration (a template does not overload)")
                 if not (fd.name in m_templateNames) then
                     m_templateNames += [fd.name]
                 m_tplFns += [fd]

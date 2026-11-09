@@ -1,0 +1,10 @@
+import console
+
+fn twice(x: int): int
+    return x * 2
+
+fn twice(x)
+    return x + x
+
+void main()
+    console.print(twice(3))
