@@ -177,6 +177,10 @@ mut Parser::parsePostfix(): Expression?
         else if at(TokenType::QUESTION) and expr is NewExpr then
             eat()
             expr.protected = true
+        else if at(TokenType::QUESTION) then
+            if expr is IndexExpr or expr is SliceExpr then
+                throw "'?' applies to calls, not indexing"
+            throw "'?' applies to calls and `new` expressions only"
         else
             break
 

@@ -487,6 +487,8 @@ private
                 skipNewlines()
                 if at(TokenType::DEDENT) or at(TokenType::EOF) then
                     break
+                if at(TokenType::FN) or at(TokenType::MUT) or at(TokenType::VOID) or at(TokenType::CONSTRUCTOR) then
+                    throw "struct bodies hold fields only; use a class for methods"
                 let memberName = peek().lexeme
                 eat()
                 if at(TokenType::COLON) then
