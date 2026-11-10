@@ -94,6 +94,9 @@ extern fn km_str_sub(s: string, n: int, start: int, end: int): string
 
 // The lexer's state lives on the class; every operation on it is
 // declared within the class body with public/private sections.
+extern fn km_ch_alpha(c: char?): int
+extern fn km_ch_digit(c: char?): int
+
 class Lexer
 public
     constructor(src: string)
@@ -169,14 +172,10 @@ private
     m_line_start: bool = true
 
     mut isDigit(c: char?): bool
-        if c == null then
-            return false
-        return c >= "0" and c <= "9"
+        return km_ch_digit(c) == 1
 
     mut isAlpha(c: char?): bool
-        if c == null then
-            return false
-        return (c >= "a" and c <= "z") or (c >= "A" and c <= "Z") or c == "_"
+        return km_ch_alpha(c) == 1
 
     mut isAlphaNum(c: char?): bool
         return isAlpha(c) or isDigit(c)
@@ -211,8 +210,37 @@ private
         while peek() == " " or peek() == "\t" or peek() == "\r" do
             eat()
 
+    // `_` digit separators: an underscore is part of the literal only when
+    // a digit of the same kind follows it (`1_000`, `0xFF_FF`, `0b1010_0001`).
+    mut isBinDigit(c: char?): bool
+        return c == "0" or c == "1"
+
+    // The literal's text with its `_` separators removed.
+    fn stripUnderscores(s: string): string
+        let out = ""
+        let i = 0
+        while i < s.length do
+            if s[i] != "_" then
+                out = out + string(s[i])
+            i += 1
+        return out
+
     mut readNumber(): Token
         let start = m_pos
+
+        // Binary literal (0b / 0B followed by 0/1 digits) — lowered to its
+        // decimal text so every backend sees an ordinary integer literal.
+        if peek() == "0" and (peekNext() == "b" or peekNext() == "B") and m_pos + 2 < m_len and isBinDigit(m_src[m_pos + 2]) then
+            eat()  // consume '0'
+            eat()  // consume 'b' or 'B'
+            let bits = 0
+            while isBinDigit(peek()) or (peek() == "_" and isBinDigit(peekNext())) do
+                let d = eat()
+                if d != "_" then
+                    bits = bits * 2
+                    if d == "1" then
+                        bits = bits + 1
+            return new Token(TokenType::INT, string(bits), m_line, m_col)
 
         // Check for hex literal (0x or 0X followed by hex digits)
         if peek() == "0" and (peekNext() == "x" or peekNext() == "X") then
@@ -220,28 +248,31 @@ private
             eat()  // consume 'x' or 'X'
 
             // Read hex digits
-            while isHexDigit(peek()) do
+            while isHexDigit(peek()) or (peek() == "_" and isHexDigit(peekNext())) do
                 eat()
 
-            let text = km_str_sub(m_src, m_len, start, m_pos)
+            let text = stripUnderscores(km_str_sub(m_src, m_len, start, m_pos))
             return new Token(TokenType::INT, text, m_line, m_col)
 
         // Decimal number parsing
-        while isDigit(peek()) do
+        while isDigit(peek()) or (peek() == "_" and isDigit(peekNext())) do
             eat()
 
         let isFloat = false
         if peek() == "." and isDigit(peekNext()) then
             isFloat = true
             eat()
-            while isDigit(peek()) do
+            while isDigit(peek()) or (peek() == "_" and isDigit(peekNext())) do
                 eat()
 
-        let text = km_str_sub(m_src, m_len, start, m_pos)
+        let text = stripUnderscores(km_str_sub(m_src, m_len, start, m_pos))
 
         // Optional `f` suffix (`2.0f`, `2f`) marks a float literal.
         if peek() == "f" then
             eat()
+            // `2f` means `2.0f`: give the float token a decimal point
+            if not isFloat then
+                text = text + ".0"
             isFloat = true
 
         if isFloat then

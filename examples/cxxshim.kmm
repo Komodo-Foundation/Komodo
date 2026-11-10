@@ -1,0 +1,19 @@
+module cxxshim
+
+// Bindings for cxx_counter.cpp.  `link "…cpp"` makes komodo compile the
+// file with g++ and link it with -lstdc++.
+link "cxx_counter.cpp"
+
+// A C++ object held as an opaque handle.
+extern type Counter
+
+extern fn counter_new(start: int): Counter
+extern fn counter_add(c: Counter, n: int): int
+extern fn counter_label(c: Counter): string
+extern void counter_free(c: Counter)
+
+// `= "symbol"` binds a Komodo name to a differently spelled symbol:
+// a C++ mangled name …
+extern fn triple(x: int): int = "_Z6triplel"
+// … or a C function whose name is a Komodo keyword (`match`).
+extern fn c_match(x: int): int = "match"

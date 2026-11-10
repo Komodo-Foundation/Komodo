@@ -1,0 +1,5 @@
+Uncaught error: boom
+  at inner
+  at Job::run
+  at outer
+  at main

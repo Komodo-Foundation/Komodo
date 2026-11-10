@@ -1,0 +1,9 @@
+before child
+run true: 0
+run exit 3: 3
+run missing: 127
+after child
+captured: hello
+world
+captured bytes: 12
+output of exit 1: 0

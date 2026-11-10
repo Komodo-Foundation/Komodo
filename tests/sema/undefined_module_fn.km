@@ -1,0 +1,5 @@
+import console
+import secret
+
+void main()
+    console.print(secret::no_such_function(3))

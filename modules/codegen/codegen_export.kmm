@@ -1,0 +1,58 @@
+module km_compiler
+
+// ═══════════════════════════════════════════════════════════════════════
+//  `export fn` — the C-ABI entry wrapper of a Komodo function.
+//
+//  The function body is lowered like any other (the backend gives it an
+//  internal symbol); here we only describe its C signature so the backend
+//  can emit the wrapper that repackages native System V arguments into
+//  Komodo's (argc, KmArg*) call ABI.
+// ═══════════════════════════════════════════════════════════════════════
+
+// How C passes / returns a value of declared type `t`.
+mut Codegen::exportClass(t: string?): string
+    let b = stripOpt(t) or "int"
+    if b == "float" or b == "f64" then
+        return "float"
+    if b == "f32" or b == "i8" or b == "u8" or b == "i16" or b == "u16" or b == "i32" or b == "u32" or b == "bool" then
+        return b
+    return "int"
+
+// The Komodo call-ABI tag word for a value of declared type `t`.
+mut Codegen::exportTag(t: string?): int
+    let b = stripOpt(t) or "int"
+    if b == "float" or b == "f64" or b == "f32" then
+        return 1
+    if b == "string" then
+        return 2
+    if b == "bool" then
+        return 3
+    return 0
+
+void Codegen::genExportWrapper(func: FunctionDecl)
+    let cls: [string] = []
+    let tags: [int] = []
+    for p in func.params do
+        cls += [exportClass(p.declaredType)]
+        tags += [exportTag(p.declaredType)]
+    let ret = "void"
+    if not isVoidFn(func) then
+        ret = exportClass(func.returnType)
+    m_backend.emitExport(func.name, cls, tags, ret, m_exportInit)
+
+// The native-ABI trampoline of a Komodo function passed to C as a
+// callback: integer / double parameters (any number — beyond the
+// registers they come from the C stack) and a word, double or void
+// result.
+void Codegen::genCallbackTramp(name: string)
+    let fi = fnIndexOf(name)
+    let cls: [string] = []
+    let tags: [int] = []
+    let ret = "void"
+    if fi >= 0 then
+        for rp in m_fnRawParams[fi] do
+            cls += [exportClass(rp)]
+            tags += [exportTag(rp)]
+        if m_fnKinds[fi] != "void" then
+            ret = exportClass(m_fnRetRaw[fi])
+    m_backend.emitCallbackTramp(m_backend.mangle(name), cls, tags, ret)

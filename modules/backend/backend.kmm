@@ -78,6 +78,37 @@ module km_compiler
 
 abstract class Backend
 public
+    // ── fixed-width integers / f32 ─────────────────────────────────
+    // `k` is u8 u16 u32 u64 uint i8 i16 i32.  Values are kept normalised
+    // (zero-/sign-extended to 64 bits); unsigned <= 32 bits therefore
+    // reuses the signed ops, and only u64/uint needs the *U variants.
+    // A target without them reports a clear error.
+    mut normInt(k: string)
+        throw ("fixed-width integer arithmetic (" + k + ") is not supported on this target yet")
+    mut binaryIntU(op: string)
+        throw ("unsigned 64-bit arithmetic is not supported on this target yet")
+    mut compareIntU(op: string)
+        throw ("unsigned 64-bit comparison is not supported on this target yet")
+    // (a target without them keeps the old behaviour: signed convert,
+    // f32 held as a double)
+    mut cvtUIntToFloat()
+        cvtIntToFloat()
+    // round the double in the float accumulator to single precision
+    mut roundF32()
+        return
+    mut binaryIntK(op: string, k: string)
+        let u = k == "u64" or k == "uint"
+        if u and (op == "/" or op == "%" or op == ">>") then
+            binaryIntU(op)
+            return
+        binaryInt(op)
+        if not u and op != "&" and op != "|" and op != "^" and op != "xor" and op != ">>" then
+            normInt(k)
+    mut compareIntK(op: string, k: string)
+        if (k == "u64" or k == "uint") and op != "==" and op != "!=" then
+            compareIntU(op)
+        else
+            compareInt(op)
     // ── in-place append ────────────────────────────────────────────
     // `dst += [v]` with one element: a backend that can append the value
     // straight into the array (no one-element temporary) answers
@@ -92,21 +123,67 @@ public
     // to its array field `idx`
     mut arrayPushToField(idx: int)
         throw ("internal: this backend cannot append in place")
+    // ── C interop beyond calling C ─────────────────────────────────
+    // `extern fn f(...) = "sym"`: calls to Komodo name `f` link against
+    // the C symbol `sym`.
+    mut declareAlias(name: string, symbol: string)
+        throw ("internal: this backend cannot alias an extern symbol")
+    // `export fn name`: the Komodo body is emitted under an internal
+    // symbol, and `emitExport` adds a C-ABI entry point named `name`.
+    mut declareExport(name: string)
+        throw ("export fn is not supported on this target yet")
+    // cls[i]: "int" "i8" "u8" "i16" "u16" "i32" "u32" "bool" "float" "f32"
+    // (how C passes parameter i); tags[i]: the Komodo call-ABI tag;
+    // ret: one of those, or "void"; initFn: Komodo procedure to run once
+    // before the first call ("" = none).
+    mut emitExport(name: string, cls: [string], tags: [int], ret: string, initFn: string)
+        throw ("export fn is not supported on this target yet")
+    // A Komodo function passed to C as a callback.  cls / tags / ret as
+    // for `emitExport`.  The plain integer case (<= 6 words) goes through
+    // the older `emitTrampoline`, so a backend that only has that keeps
+    // working; floats and stack-passed parameters need this override.
+    mut emitCallbackTramp(sym: string, cls: [string], tags: [int], ret: string)
+        let plain = #cls <= 6 and ret != "float" and ret != "f32"
+        for c in cls do
+            if c == "float" or c == "f32" then
+                plain = false
+        if not plain then
+            throw ("callbacks with float parameters or more than 6 parameters are not supported on this target yet")
+        emitTrampoline(sym, #cls)
+    // `extern let name: T [= "sym"]` — a C global variable.
+    mut declareExternGlobal(name: string, symbol: string, rawType: string)
+        throw ("extern variables are not supported on this target yet")
+    // address of the static struct-return buffer into the accumulator
+    // (hidden `sret` pointer for a MEMORY-class struct return)
+    mut ffiRetBufAddr()
+        throw ("struct returns over 16 bytes are not supported on this target yet")
+    // ── debug info (KM_DEBUG) ──────────────────────────────────────
+    // `files[k]` begins at line `starts[k]` of the merged translation
+    // unit (the same map `locate` uses for diagnostics).  Only a backend
+    // that can describe source lines to a debugger does anything with it.
+    mut setDebugInfo(files: [string], starts: [int])
+        return
+    // the code emitted from here on belongs to merged-unit line `line`
+    mut markLine(line: int)
+        return
     // ── labels ─────────────────────────────────────────────────────
     mut newLabel(): string
         m_labelId += 1
-        return ".L" + string(m_labelId)
+        return labelPrefix() + string(m_labelId)
+    mut labelPrefix(): string
+        return ".L"
 
     // ── program-wide function table ────────────────────────────────
     // Recorded in pass 1 so a call target defined in this program is
     // never emitted as an external symbol.
     mut declareFn(name: string)
         let m = mangle(name)
-        if not (m in m_fnNames) then
+        if not m_fnIdx.has(m) then
             m_fnNames += [m]
+            m_fnIdx.add(m, 0)
 
     mut isLocalFn(mangledSym: string): bool
-        return (mangledSym in m_fnNames)
+        return m_fnIdx.has(mangledSym)
 
     // `module.member` → `module_member`; a plain name is unchanged.
     fn mangle(name: string): string
@@ -123,3 +200,4 @@ public
 private
     m_labelId: int = 0
     m_fnNames: [string] = []
+    m_fnIdx: StrIndex = new StrIndex()    // hashes m_fnNames

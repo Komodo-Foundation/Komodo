@@ -1,0 +1,4 @@
+fn pick(x, y = 10)
+    return x + y
+void main()
+    let v = pick()

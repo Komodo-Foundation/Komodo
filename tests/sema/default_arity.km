@@ -1,0 +1,5 @@
+import console
+fn greet(name: string, greeting: string = "hello"): string
+    return greeting + name
+void main()
+    console.print(greet())

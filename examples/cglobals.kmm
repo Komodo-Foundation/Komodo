@@ -1,0 +1,15 @@
+module cglobals
+
+link "cglobals.c"
+
+// C global variables: `extern let name: type`.  The declared width is the
+// C width (i32 here is a C `int32_t`); reads widen, writes narrow.
+extern let cg_counter: i32
+extern let cg_scale: float
+extern let cg_flag: u8
+extern let cg_name: string
+extern let cg_f32: f32
+// `= "symbol"` binds a differently spelled C name, as for functions.
+extern let big: int = "cg_big"
+
+extern fn cg_total(): int

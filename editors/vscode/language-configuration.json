@@ -1,0 +1,38 @@
+{
+  "comments": {
+    "lineComment": "//",
+    "blockComment": ["/*", "*/"]
+  },
+  "brackets": [
+    ["{", "}"],
+    ["[", "]"],
+    ["(", ")"]
+  ],
+  "autoClosingPairs": [
+    { "open": "{", "close": "}" },
+    { "open": "[", "close": "]" },
+    { "open": "(", "close": ")" },
+    { "open": "\"", "close": "\"", "notIn": ["string"] },
+    { "open": "`", "close": "`", "notIn": ["string"] },
+    { "open": "/**", "close": " */", "notIn": ["string"] }
+  ],
+  "surroundingPairs": [
+    ["{", "}"],
+    ["[", "]"],
+    ["(", ")"],
+    ["\"", "\""],
+    ["`", "`"]
+  ],
+  "folding": {
+    "offSide": true,
+    "markers": {
+      "start": "^\\s*(fn|void|mut|struct|class|enum|match|constructor|module|public|private)\\b",
+      "end": "^\\s*$"
+    }
+  },
+  "indentationRules": {
+    "increaseIndentPattern": "^(?!.*\\b(then|do)\\s+\\S)\\s*(((abstract|shared|unique|export|extern|public|private)\\s+)*(fn|void|mut|struct|class|enum|match|case|constructor|else|if|for|while|public|private)\\b.*|.*\\b(then|do)\\s*)$",
+    "decreaseIndentPattern": "^\\s*(else|case)\\b"
+  },
+  "wordPattern": "[A-Za-z_][A-Za-z0-9_]*"
+}

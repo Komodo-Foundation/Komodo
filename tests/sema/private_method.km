@@ -1,0 +1,17 @@
+import console
+
+class Counter
+public
+    constructor(start: int)
+        m_n = start
+
+    fn peek(): int
+        return helper()
+private
+    m_n: int = 0
+    fn helper(): int
+        return m_n
+
+void main()
+    let c = new Counter(3)
+    console.print(c.helper())

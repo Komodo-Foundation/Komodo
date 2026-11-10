@@ -1,0 +1,4 @@
+extern let xs: [int]
+
+void main()
+    let a = 1

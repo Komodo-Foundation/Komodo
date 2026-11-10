@@ -1,0 +1,18 @@
+// interop: extras export_roundtrip_helper.c
+//
+// A program WITH a `main` may export too: a C helper linked in calls the
+// Komodo functions back, and Komodo code can call them directly as well.
+
+import console
+
+extern fn c_apply(n: int): int
+
+export fn km_square(x: int): int
+    return x * x
+
+export fn km_describe(x: int): string
+    return "square of " + string(x) + " is " + string(km_square(x))
+
+void main()
+    console.print(km_square(7))
+    console.print(c_apply(5))

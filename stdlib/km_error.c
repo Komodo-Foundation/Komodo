@@ -25,28 +25,38 @@
 #include <string.h>
 #include <stdint.h>
 #include <signal.h>
-#include <ucontext.h>
 #include <unistd.h>
 #include <fcntl.h>
+#ifndef __EMSCRIPTEN__
+#include <ucontext.h>
 #include <elf.h>
 #include <dlfcn.h>
 #include <unwind.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
+#endif
 #include "km_runtime.h"
+
+/* Present only in programs built with KM_DEBUG=1 (x86 backend): the
+ * extent of the generated code, and a line table mapping code offsets to
+ * Komodo file:line.  Weak, so every other program links without them. */
+extern const char km_text_begin[] __attribute__((weak));
+extern const char km_text_end[] __attribute__((weak));
+extern const uint32_t km_dbg_lines[] __attribute__((weak));  /* n, then n x { offset, line, file } */
+extern const char km_dbg_files[] __attribute__((weak));      /* NUL-separated file names */
 
 /* The registered landing pads, innermost last.  Each points at a
  * jmp_buf on its caller's stack (no heap data, so plain libc memory
  * holds them); the array grows with the nesting depth of `f(...)?`
  * calls, so a deep recursion through them never loses a pad. */
 static struct __jmp_buf_tag **km_pads;
-static long        km_pad_n = 0, km_pad_cap = 0;
+static int64_t        km_pad_n = 0, km_pad_cap = 0;
 static const char *km_err_msg = NULL;
 
 void km_try_push(struct __jmp_buf_tag *b)
 {
     if (km_pad_n == km_pad_cap) {
-        long cap = km_pad_cap ? km_pad_cap * 2 : 64;
+        int64_t cap = km_pad_cap ? km_pad_cap * 2 : 64;
         struct __jmp_buf_tag **p = realloc(km_pads, (size_t)cap * sizeof *p);
         if (!p) {
             fputs("Komodo: out of memory - protected calls nested too deeply\n", stderr);
@@ -64,10 +74,19 @@ void km_try_pop(void)
         km_pad_n--;
 }
 
+/* Compiler-side switch: is KM_DEBUG set?  (x86 backend: emit %line info.) */
+long km_debug_info(void)
+{
+    const char *d = getenv("KM_DEBUG");
+    return d && *d && *d != '0';
+}
+
 const char *km_error_message(void)
 {
     return km_err_msg;
 }
+
+static void km_uncaught_trace(void);
 
 void km_throw(const char *msg)
 {
@@ -76,6 +95,8 @@ void km_throw(const char *msg)
         _longjmp(km_pads[--km_pad_n], 1);
     fflush(stdout);                  /* the program's output first, then the error */
     fprintf(stderr, "Uncaught error: %s\n", msg ? msg : "");
+    fflush(stderr);
+    km_uncaught_trace();
     exit(1);
 }
 
@@ -86,6 +107,8 @@ void km_fail(const char *msg)
     fprintf(stderr, "%s\n", msg ? msg : "");
     exit(1);
 }
+
+#ifndef __EMSCRIPTEN__   /* ELF symbol lookup, stack walking, crash handlers: native only */
 
 /* ── symbols: naming code addresses ────────────────────────────────
  * The executable's own ELF symbol table (/proc/self/exe, mapped on first
@@ -118,7 +141,12 @@ static int km_sym_usable(const Elf64_Sym *s)
         return 0;
     if (s->st_name == 0 || s->st_name >= km_symstr_len)
         return 0;
-    return strchr(km_symstr + s->st_name, '.') == NULL;
+    const char *nm = km_symstr + s->st_name;
+    /* the KM_DEBUG extent markers share an address with the first function;
+     * which of the two the linker lists first must not decide the name */
+    if (strcmp(nm, "km_text_begin") == 0 || strcmp(nm, "km_text_end") == 0)
+        return 0;
+    return strchr(nm, '.') == NULL;
 }
 
 static void km_idx_sift(KmSymIdx *a, size_t root, size_t n)
@@ -229,6 +257,17 @@ static const char *km_exe_symbol(uintptr_t pc, int *komodo)
         if (lo == 0)
             return NULL;
         best = &km_sym[km_idx[lo - 1].sym];
+        /* equal addresses (km_text_begin and the first function): the
+         * heap sort is unstable, so prefer a sized function symbol */
+        for (size_t j = lo - 1; ; j--) {
+            const Elf64_Sym *c = &km_sym[km_idx[j].sym];
+            if (ELF64_ST_TYPE(c->st_info) == STT_FUNC && c->st_size) {
+                best = c;
+                break;
+            }
+            if (j == 0 || km_idx[j - 1].addr != km_idx[lo - 1].addr)
+                break;
+        }
     } else {
         for (size_t i = 0; i < km_nsym; i++) {
             const Elf64_Sym *s = &km_sym[i];
@@ -244,7 +283,10 @@ static const char *km_exe_symbol(uintptr_t pc, int *komodo)
     int t = ELF64_ST_TYPE(best->st_info);
     if (t == STT_FUNC && best->st_size && a >= best->st_value + best->st_size)
         return NULL;                  /* in a gap, e.g. between C objects */
-    *komodo = t == STT_NOTYPE;
+    /* NASM labels are untyped; a KM_DEBUG build types them (so a debugger
+     * can size them) and is recognised by its code extent instead */
+    *komodo = t == STT_NOTYPE
+        || (km_text_begin && pc >= (uintptr_t)km_text_begin && pc < (uintptr_t)km_text_end);
     return km_symstr + best->st_name;
 }
 
@@ -279,6 +321,32 @@ static void km_pretty(const char *sym, char *out, size_t cap)
         out[o++] = *p;
     }
     out[o] = '\0';
+}
+
+/* "file.km:12" for the Komodo code at `pc` (inside a call instruction),
+ * when the program was built with KM_DEBUG; else "". */
+static void km_where(uintptr_t pc, char *out, size_t cap)
+{
+    out[0] = '\0';
+    if (!km_dbg_lines || !km_text_begin || pc < (uintptr_t)km_text_begin || pc >= (uintptr_t)km_text_end)
+        return;
+    uint32_t off = (uint32_t)(pc - (uintptr_t)km_text_begin);
+    uint32_t n = km_dbg_lines[0], lo = 0, hi = n;     /* last row with offset <= off */
+    const uint32_t *row = km_dbg_lines + 1;
+    while (lo < hi) {
+        uint32_t mid = (lo + hi) / 2;
+        if (row[mid * 3] <= off)
+            lo = mid + 1;
+        else
+            hi = mid;
+    }
+    if (lo == 0)
+        return;
+    const uint32_t *r = row + (lo - 1) * 3;
+    const char *f = km_dbg_files;
+    for (uint32_t i = 0; i < r[2] && *f; i++)
+        f += strlen(f) + 1;
+    snprintf(out, cap, "%s:%u", f, (unsigned)r[1]);
 }
 
 /* Name the code at `pc` for a trace line ("Mesh::build", "strlen (libc.so.6)"). */
@@ -386,20 +454,55 @@ void km_komodo_caller(char *buf, size_t cap)
     }
 }
 
+/* After an uncaught error: the Komodo call chain that raised it, one
+ * `  at fn (file.km:12)` line per frame.  Printed for programs built with
+ * KM_DEBUG=1 (which carry a line table), and for any program run with
+ * KM_TRACE set in the environment (function names only).  Plain builds
+ * print just the error line. */
+static void km_print_trace(const KmWalk *w, int uncaught);
+
+static void km_uncaught_trace(void)
+{
+    if (!km_dbg_lines && !getenv("KM_TRACE"))
+        return;
+    KmWalk w;
+    memset(&w, 0, sizeof w);
+    km_stack_lo = 0;
+    _Unwind_Backtrace(km_walk_cb, &w);
+    if (w.kpc)
+        km_print_trace(&w, 1);
+}
+
+#else  /* __EMSCRIPTEN__: no ELF image or signals — traps surface as JS errors */
+
+static void km_uncaught_trace(void) {}
+
+void km_komodo_caller(char *buf, size_t cap)
+{
+    if (cap)
+        buf[0] = '\0';
+}
+
+#endif
+
 /* `arr[i]` with i outside 0 .. #arr-1 (generated code checks inline and
  * calls here).  Thrown like any Komodo error, so `f(...)?` can catch it. */
-void km_index_error(long index, KmArray *a)
+void km_index_error(int64_t index, KmArray *a)
 {
     char where[160] = "";
+#ifndef __EMSCRIPTEN__
     int komodo = 0;
     const char *s = km_exe_symbol((uintptr_t)__builtin_return_address(0) - 1, &komodo);
     if (s && komodo)
         km_pretty(s, where, sizeof where);
+#endif
     char buf[256];
-    snprintf(buf, sizeof buf, "array index %ld out of range (length %ld)%s%s",
+    snprintf(buf, sizeof buf, "array index %" PRId64 " out of range (length %" PRId64 ")%s%s",
              index, a->len, *where ? " in " : "", where);
     km_throw(km_strndup(buf, strlen(buf)));
 }
+
+#ifndef __EMSCRIPTEN__
 
 /* ── crash signals ─────────────────────────────────────────────────
  * One line saying what went wrong and where, then the Komodo call
@@ -424,37 +527,43 @@ static void km_write(const char *s)
 
 /* Print the walk, folding a run of the same call site ("fib  x 104857")
  * and eliding the middle of very deep stacks. */
-static void km_print_trace(const KmWalk *w)
+static void km_print_trace(const KmWalk *w, int uncaught)
 {
-    KmIter it = { w, 0, 0, 0 };
-    long runs = 0;
+    KmIter it = { w, uncaught ? w->nc : 0, 0, 0 };   /* an error report skips the C frames */
+    int64_t runs = 0;
     uintptr_t prev = 0, f;
     while ((f = km_next_frame(&it)) != 0) {
         if (f != prev)
             runs++;
         prev = f;
     }
-    km_write("Komodo call stack (innermost first):\n");
-    KmIter jt = { w, 0, 0, 0 };
-    long run = 0;
+    const char *ind = uncaught ? "  at " : "    ";
+    if (!uncaught)
+        km_write("Komodo call stack (innermost first):\n");
+    KmIter jt = { w, uncaught ? w->nc : 0, 0, 0 };
+    int64_t run = 0;
     uintptr_t cur = km_next_frame(&jt);
     while (cur) {
-        long count = 1;
+        int64_t count = 1;
         uintptr_t nx;
         while ((nx = km_next_frame(&jt)) == cur)
             count++;
         if (run < KM_TRACE_HEAD || run >= runs - KM_TRACE_TAIL) {
-            char name[200], line[300];
+            char name[200], at[260], line[560];
             int komodo;
             km_describe(cur, name, sizeof name, &komodo);
-            if (count > 1)
-                snprintf(line, sizeof line, "    %s   (x %ld, recursive)\n", name, count);
+            km_where(cur, at, sizeof at);
+            if (*at)
+                snprintf(line, sizeof line, "%s%s (%s)", ind, name, at);
             else
-                snprintf(line, sizeof line, "    %s\n", name);
+                snprintf(line, sizeof line, "%s%s", ind, name);
+            if (count > 1)
+                snprintf(line + strlen(line), 60, "   (x %" PRId64 ", recursive)", count);
+            strcat(line, "\n");
             km_write(line);
         } else if (run == KM_TRACE_HEAD) {
             char line[96];
-            snprintf(line, sizeof line, "    ... %ld more ...\n", runs - KM_TRACE_HEAD - KM_TRACE_TAIL);
+            snprintf(line, sizeof line, "%s... %" PRId64 " more ...\n", ind, runs - KM_TRACE_HEAD - KM_TRACE_TAIL);
             km_write(line);
         }
         run++;
@@ -523,10 +632,14 @@ static void km_on_crash(int sig, siginfo_t *si, void *ucv)
     if (w.kpc) {
         int komodo;
         km_describe(w.kpc, where, sizeof where, &komodo);
+        char at[260];
+        km_where(w.kpc, at, sizeof at);
+        if (*at)
+            snprintf(where + strlen(where), sizeof where - strlen(where), " (%s)", at);
     }
     snprintf(line, sizeof line, "Komodo: crash - %s%s%s\n", what, *where ? " in " : "", where);
     km_write(line);
-    km_print_trace(&w);
+    km_print_trace(&w, 0);
     _exit(128 + sig);
 }
 
@@ -551,3 +664,9 @@ void km_crash_init(void)
     for (size_t i = 0; i < sizeof sigs / sizeof sigs[0]; i++)
         sigaction(sigs[i], &sa, NULL);
 }
+
+#else
+
+void km_crash_init(void) {}
+
+#endif

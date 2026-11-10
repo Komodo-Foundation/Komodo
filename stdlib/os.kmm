@@ -1,0 +1,26 @@
+module os
+
+// Process environment: command-line arguments, environment variables, the
+// working directory, the process id and the platform. Called as os.NAME(...).
+
+// Linked from stdlib/os.c.  Reached as `os.NAME(...)`, which the compiler
+// mangles to the flat symbol `os_NAME`.
+
+// The command-line arguments: element 0 is the program path, and the rest are
+// the user's arguments in order.
+fn os_args(): [string]
+// The value of environment variable name, or null when it is not set. A
+// variable set to the empty string gives an empty string.
+fn os_getenv(name: string): string?
+// Sets environment variable name to value. The change is seen by this program
+// and by processes it starts afterwards.
+void os_setenv(name: string, value: string)
+// Ends the program at once with exit status code. Output already printed is
+// flushed first.
+void os_exit(code: int)
+// The current working directory.
+fn os_cwd(): string
+// The process id of this program.
+fn os_pid(): int
+// The platform name, for example "linux".
+fn os_platform(): string

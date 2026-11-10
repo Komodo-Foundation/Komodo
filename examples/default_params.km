@@ -1,0 +1,28 @@
+// Default parameter values on free functions: trailing parameters may be
+// omitted at the call site, and the default expression is filled in there.
+// Also works on generic (untyped) functions.
+
+import console
+
+fn greet(name: string, greeting: string = "hello"): string
+    return greeting + ", " + name
+
+fn scale(v: int, k: int = 2, offset: int = -1): int
+    return v * k + offset
+
+fn flag(on: bool = true, c: char = 'x', f: float = 1.5): string
+    return string(on) + string(c) + string(f)
+
+fn pick(x, y = 10)
+    return x + y
+
+void main()
+    console.print(greet("ann"))
+    console.print(greet("bob", "hi"))
+    console.print(scale(5))
+    console.print(scale(5, 3))
+    console.print(scale(5, 3, 0))
+    console.print(flag())
+    console.print(flag(false))
+    console.print(pick(1))
+    console.print(pick(1, 2))

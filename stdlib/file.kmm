@@ -1,13 +1,35 @@
 module file
 
+// File-system helpers, called as file::NAME(...). Paths are plain strings.
+// Failures are silent: reads give an empty result and writes do nothing, so
+// check file::exists or file::is_dir first when that matters.
+
 // Linked from stdlib/file.c.  These are reached as `file::name`, which
 // the parser resolves to the bare symbol.
 
+// 1 if a regular file exists at path, else 0. A directory gives 0: use
+// is_dir for that.
 fn exists(path: string): int
+// 1 if a directory exists at path, else 0.
 fn is_dir(path: string): int
+// The whole file as one string, byte for byte. A file that cannot be opened
+// gives an empty string, the same as an empty file.
 fn read_all(path: string): string
+// The file split into lines, without the newline characters. A final newline
+// does not add an empty last line. A file that cannot be opened gives an empty
+// array.
 fn read_lines(path: string): [string]
+// Creates the file, or truncates it, and writes data. If the file cannot be
+// opened nothing happens and no error is raised.
 void write_all(path: string, data: string)
+// Appends data to the file, creating it if needed. If the file cannot be
+// opened nothing happens and no error is raised.
 void append_all(path: string, data: string)
+// Looks for a module file named name.kmm or name.km (give name without the
+// extension). Searches the directory of the file path from, then its
+// subdirectories, and returns the first path found, or null.
 fn find(name: string, from: string): string?
+// The names of the entries in a directory, files and subdirectories alike,
+// without . and ..; the order is the OS order, not sorted. A directory that
+// cannot be read gives an empty array.
 fn list_dir(path: string): [string]

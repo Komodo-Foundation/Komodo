@@ -1,0 +1,28 @@
+// C callbacks beyond plain integer words: `double` / `float` parameters
+// and results, and more than six parameters (the rest arrive on the C
+// stack).  The trampoline for each Komodo function is built from its
+// declared signature.
+// (stackvm: skip — needs the native C ABI.)
+// (c: skip — callback trampolines are an x86-backend feature.)
+// (wasm: skip — C FFI is not supported by the wasm target.)
+
+import console
+import cbhelper
+
+fn square(x: float): float
+    return x * x
+
+fn sum8(a: int, b: int, c: int, d: int, e: int, f: int, g: int, h: int): int
+    return a + 2 * b + 3 * c + 4 * d + 5 * e + 6 * f + 7 * g + 8 * h
+
+fn mixed(a: int, b: float, c: int, d: float, e: int, f: float, g: int, h: float, i: int, j: float): float
+    return a + b + c + d + e + f + g + h + i + j
+
+fn pairsum(x: f32, y: f32): f32
+    return x + y
+
+void main()
+    console.print(cbhelper::cb_integrate(square, 0.0, 3.0, 300))
+    console.print(cbhelper::cb_sum8(sum8))
+    console.print(cbhelper::cb_mixed(mixed))
+    console.print(cbhelper::cb_f32(pairsum))

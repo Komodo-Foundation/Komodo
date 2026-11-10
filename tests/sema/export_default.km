@@ -1,0 +1,2 @@
+export fn f(a: int = 3): int
+    return a

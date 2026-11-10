@@ -1,0 +1,55 @@
+{
+  "name": "komodo-lang",
+  "displayName": "Komodo",
+  "description": "Syntax highlighting, snippets and indentation for the Komodo language (.km, .kmm).",
+  "version": "0.1.0",
+  "license": "MIT",
+  "publisher": "lrperks",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lrperks/Komodo.git"
+  },
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Snippets"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "komodo",
+        "aliases": [
+          "Komodo",
+          "komodo"
+        ],
+        "extensions": [
+          ".km",
+          ".kmm"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "komodo",
+        "scopeName": "source.komodo",
+        "path": "./syntaxes/komodo.tmLanguage.json"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "komodo",
+        "path": "./snippets/komodo.code-snippets"
+      }
+    ],
+    "configurationDefaults": {
+      "[komodo]": {
+        "editor.tabSize": 4,
+        "editor.insertSpaces": true,
+        "editor.detectIndentation": false
+      }
+    }
+  }
+}

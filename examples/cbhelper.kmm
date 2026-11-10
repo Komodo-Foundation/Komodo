@@ -1,0 +1,8 @@
+module cbhelper
+
+link "cbhelper.c"
+
+extern fn cb_integrate(f: int, a: float, b: float, n: int): float
+extern fn cb_sum8(f: int): int
+extern fn cb_mixed(f: int): float
+extern fn cb_f32(f: int): f32

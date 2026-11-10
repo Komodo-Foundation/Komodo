@@ -1,0 +1,29 @@
+// interop: lib export_lib_main.c
+//
+// Built with `komodo --lib`: an object + static archive, no executable.
+
+export fn fib(n: int): int
+    if n < 2 then
+        return n
+    return fib(n - 1) + fib(n - 2)
+
+export fn clamp_f(x: float, lo: float, hi: float): float
+    if x < lo then
+        return lo
+    if x > hi then
+        return hi
+    return x
+
+export fn label(n: u8): string
+    if n == 0 then
+        return "zero"
+    return "nonzero"
+
+export fn many(a: int, b: int, c: int, d: int, e: int, f: int, g: int, h: int): int
+    return a + 2 * b + 3 * c + 4 * d + 5 * e + 6 * f + 7 * g + 8 * h
+
+export fn mixed(a: float, b: int, c: float, d: int, e: float, f: float, g: float, h: float, i: float, j: float, k: int): float
+    return a + b + c + d + e + f + g + h + i + j + k
+
+export fn narrow(a: i8, b: u16, c: f32): f32
+    return c * 2.0 + a + b

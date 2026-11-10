@@ -45,7 +45,70 @@ private
     m_tryCatch: [string] = []       // protected-call: catch labels (nesting stack)
     m_tryDone: [string] = []        // protected-call: done labels (nesting stack)
     m_pSpan: int = 0                // peephole: source lines covered by the last rewrite
+    m_aliasNames: [string] = []     // `extern fn f = "sym"`: Komodo name → C symbol
+    m_aliasSyms: [string] = []
+    m_exportNames: [string] = []    // `export fn` names (internal body symbol is renamed)
+    m_hasMain: bool = false
+    m_xgNames: [string] = []        // `extern let` C globals: Komodo name, symbol, declared type
+    m_xgSyms: [string] = []
+    m_xgTypes: [string] = []
+    m_usesExportInit: bool = false  // reserve the once-flag in .bss
+    m_keepIdx: StrIndex = new StrIndex()   // hashes m_keepJumps
     m_keepJumps: [string] = []      // targets of `and`/`or` branches whose rax is read at the join
+    m_pic: bool = false             // position-independent output (shared libraries only)
+    m_dbgFiles: [string] = []       // KM_DEBUG: source file of each merged part
+    m_dbgStarts: [int] = []         // KM_DEBUG: merged line at which each part begins
+    m_dbgOn: bool = false           // emit `%line` directives
+    m_curSym: string = ""         // label of the function being emitted
+    m_dbgN: int = 0
+    m_dbgTab: [string] = []         // line-table rows (see markLine)
+    m_dbgLast: string = ""          // last `file:line` marked (no repeats)
+
+// ── debug line info ────────────────────────────────────────────────
+//
+//  With KM_DEBUG set, a `%line N+0 file` directive precedes each
+//  statement's code, so `nasm -g -F dwarf` records the original Komodo
+//  file and line (not the .asm's) in the object's DWARF line table.
+//  `+0` keeps every following assembly line on N until the next one.
+//  Default output has no such lines.
+
+extern fn km_debug_info(): int
+
+mut X86Backend::setDebugInfo(files: [string], starts: [int])
+    if km_debug_info() != 0 and #files > 0 then
+        m_dbgOn = true
+        m_dbgFiles = files
+        m_dbgStarts = starts
+
+mut X86Backend::markLine(line: int)
+    if not m_dbgOn or line <= 0 then
+        return
+    let k = 0
+    let at = 0 - 1
+    while k < #m_dbgStarts do
+        if m_dbgStarts[k] <= line then
+            at = k
+        k += 1
+    if at < 0 then
+        return
+    let local = line - m_dbgStarts[at] + 1
+    let mark = m_dbgFiles[at] + ":" + string(local)
+    if mark == m_dbgLast then
+        return
+    m_dbgLast = mark
+    emit("%line " + string(local) + "+0 " + m_dbgFiles[at])
+    // the runtime's own line table (km_error.c): code offset, line, file
+    m_dbgN += 1
+    emit("..@D" + string(m_dbgN) + ":")
+    m_dbgTab += ["    dd ..@D" + string(m_dbgN) + " - km_text_begin, " + string(local) + ", " + string(at) + "\n"]
+
+// In a debug build, jump targets are `..@Ln` labels: NASM keeps those out
+// of the object's symbol table, so a debugger resolves every address in a
+// function to the function itself rather than to a `fn.L3` pseudo-symbol.
+mut X86Backend::labelPrefix(): string
+    if m_dbgOn then
+        return "..@L"
+    return ".L"
 
 // ── line buffer ────────────────────────────────────────────────────
 
@@ -65,8 +128,29 @@ void X86Backend::label(name: string)
 void X86Backend::emitCall(sym: string)
     ins("mov rbx, rsp")
     ins("and rsp, -16")
-    ins("call " + sym)
+    ins("call " + callTarget(sym))
     ins("mov rsp, rbx")
+
+// Position-independent output for a shared library (`komodo lib`, the
+// `x86pic` target).  Calls go through the PLT, C globals are reached via
+// the GOT, and vtables move to .data.rel.ro.  The default output has none
+// of this: m_pic stays false and every line is emitted as before.
+void X86Backend::forPic()
+    m_pic = true
+
+// The operand of a `call`: `wrt ..plt` in PIC output, else the bare symbol.
+fn X86Backend::callTarget(sym: string): string
+    if m_pic then
+        return sym + " wrt ..plt"
+    return sym
+
+// Operand for a link-time C global (`extern let`).  Executables address it
+// RIP-relative; PIC output loads its address from the GOT into r11 first.
+mut X86Backend::externGlobalRef(sym: string): string
+    if not m_pic then
+        return "[rel " + asmSym(sym) + "]"
+    ins("mov r11, [rel " + asmSym(sym) + " wrt ..got]")
+    return "[r11]"
 
 // ── .rodata interning ──────────────────────────────────────────────
 
@@ -123,6 +207,16 @@ mut X86Backend::addString(lexeme: string): string
 // object file still carries the bare name.  Every symbol that comes from
 // a Komodo name (function labels, call targets, externs) goes through it.
 fn X86Backend::asmSym(name: string): string
+    if #m_aliasNames > 0 and (name in m_aliasNames) then
+        let k = 0
+        while k < #m_aliasNames do
+            if m_aliasNames[k] == name then
+                return "$" + m_aliasSyms[k]
+            k += 1
+    // an exported function's Komodo-ABI body lives under an internal
+    // name; the plain symbol is the C-ABI wrapper (see emitExport)
+    if #m_exportNames > 0 and (name in m_exportNames) then
+        return "$" + name + "__kmx"
     return "$" + name
 
 // A call target that isn't defined in this program is resolved at link
@@ -147,9 +241,11 @@ void X86Backend::begin()
 void X86Backend::beginFunction(name: string, frame: int, paramOffsets: [int], isMain: bool)
     m_idxFail = ""
     if isMain then
-        label("km_program_main")
+        m_hasMain = true
+        m_curSym = "km_program_main"
     else
-        label(asmSym(name))
+        m_curSym = asmSym(name)
+    label(m_curSym)
     ins("push rbp")
     ins("mov rbp, rsp")
     ins("push rbx")
@@ -173,7 +269,13 @@ void X86Backend::endFunction()
         ins("mov rdi, rcx")
         ins("mov rsi, rax")
         ins("and rsp, -16")
-        ins("call km_index_error")
+        ins("call " + callTarget("km_index_error"))
+    m_dbgLast = ""
+    if m_dbgOn then
+        // a sized FUNC symbol, so a debugger names every address in the
+        // function after the function (see docs/debugging.md)
+        emit(m_curSym + ".end:")
+        emit("global " + m_curSym + ":function " + m_curSym + ".end - " + m_curSym)
     emit("")
 
 void X86Backend::epilogue()
@@ -224,13 +326,84 @@ void X86Backend::declareGlobal(name: string, ty: string)
     if not (name in m_globals) then
         m_globals += [name]
 
+mut X86Backend::declareExternGlobal(name: string, symbol: string, rawType: string)
+    m_xgNames += [name]
+    m_xgSyms += [symbol]
+    let t = rawType
+    if #t > 0 and t[#t - 1] == "?" then
+        t = t[0 to (#t - 1)]
+    if t == "f64" then
+        t = "float"
+    m_xgTypes += [t]
+    addExtern(asmSym(symbol))
+
+fn X86Backend::xgIndex(name: string): int
+    if #m_xgNames == 0 then
+        return 0 - 1
+    let k = 0
+    while k < #m_xgNames do
+        if m_xgNames[k] == name then
+            return k
+        k += 1
+    return 0 - 1
+
+// The C global `xi` → accumulator (rax, or xmm0 for a float), widening
+// from the declared C width.
+mut X86Backend::loadExternGlobal(xi: int)
+    let ref = externGlobalRef(m_xgSyms[xi])
+    let t = m_xgTypes[xi]
+    if t == "float" then
+        ins("movsd xmm0, " + ref)
+    else if t == "f32" then
+        ins("movss xmm0, " + ref)
+        ins("cvtss2sd xmm0, xmm0")
+    else if t == "i8" then
+        ins("movsx rax, byte " + ref)
+    else if t == "u8" or t == "bool" then
+        ins("movzx eax, byte " + ref)
+    else if t == "i16" then
+        ins("movsx rax, word " + ref)
+    else if t == "u16" then
+        ins("movzx eax, word " + ref)
+    else if t == "i32" then
+        ins("movsxd rax, dword " + ref)
+    else if t == "u32" then
+        ins("mov eax, dword " + ref)
+    else
+        ins("mov rax, " + ref)
+
+mut X86Backend::storeExternGlobal(xi: int)
+    let ref = externGlobalRef(m_xgSyms[xi])
+    let t = m_xgTypes[xi]
+    if t == "float" then
+        ins("movsd " + ref + ", xmm0")
+    else if t == "f32" then
+        ins("cvtsd2ss xmm1, xmm0")
+        ins("movss " + ref + ", xmm1")
+    else if t == "i8" or t == "u8" or t == "bool" then
+        ins("mov byte " + ref + ", al")
+    else if t == "i16" or t == "u16" then
+        ins("mov word " + ref + ", ax")
+    else if t == "i32" or t == "u32" then
+        ins("mov dword " + ref + ", eax")
+    else
+        ins("mov " + ref + ", rax")
+
 void X86Backend::loadGlobal(name: string, ty: string)
+    let xi = xgIndex(name)
+    if xi >= 0 then
+        loadExternGlobal(xi)
+        return
     if ty == "float" then
         ins("movsd xmm0, [rel KG_" + name + "]")
     else
         ins("mov rax, [rel KG_" + name + "]")
 
 void X86Backend::storeGlobal(name: string, ty: string)
+    let xi = xgIndex(name)
+    if xi >= 0 then
+        storeExternGlobal(xi)
+        return
     if ty == "float" then
         ins("movsd [rel KG_" + name + "], xmm0")
     else
@@ -274,6 +447,65 @@ void X86Backend::binaryInt(op: string)
         ins("shl rax, cl")
     else if op == ">>" then
         ins("sar rax, cl")
+
+mut X86Backend::normInt(k: string)
+    if k == "u8" then
+        ins("movzx eax, al")
+    else if k == "u16" then
+        ins("movzx eax, ax")
+    else if k == "u32" then
+        ins("mov eax, eax")
+    else if k == "i8" then
+        ins("movsx rax, al")
+    else if k == "i16" then
+        ins("movsx rax, ax")
+    else if k == "i32" then
+        ins("movsxd rax, eax")
+
+mut X86Backend::binaryIntU(op: string)
+    ins("mov rcx, rax")
+    ins("pop rax")
+    if op == ">>" then
+        ins("shr rax, cl")
+    else
+        ins("xor edx, edx")
+        ins("div rcx")
+        if op == "%" then
+            ins("mov rax, rdx")
+
+mut X86Backend::compareIntU(op: string)
+    ins("mov rcx, rax")
+    ins("pop rax")
+    ins("cmp rax, rcx")
+    let c = "setae"
+    if op == "<" then
+        c = "setb"
+    else if op == ">" then
+        c = "seta"
+    else if op == "<=" then
+        c = "setbe"
+    ins(c + " al")
+    ins("movzx eax, al")
+
+mut X86Backend::cvtUIntToFloat()
+    let big = newLabel()
+    let done = newLabel()
+    ins("test rax, rax")
+    ins("js " + big)
+    ins("cvtsi2sd xmm0, rax")
+    ins("jmp " + done)
+    label(big)
+    ins("mov rcx, rax")
+    ins("shr rax, 1")
+    ins("and ecx, 1")
+    ins("or rax, rcx")
+    ins("cvtsi2sd xmm0, rax")
+    ins("addsd xmm0, xmm0")
+    label(done)
+
+mut X86Backend::roundF32()
+    ins("cvtsd2ss xmm0, xmm0")
+    ins("cvtss2sd xmm0, xmm0")
 
 void X86Backend::compareInt(op: string)
     ins("mov rcx, rax")
@@ -647,10 +879,12 @@ void X86Backend::branchIfNonzero(name: string)
 // the "keep" forms are identical to the plain ones on x86.
 void X86Backend::branchIfZeroKeep(name: string)
     m_keepJumps += [name]
+    m_keepIdx.add(name, 0)
     branchIfZero(name)
 
 void X86Backend::branchIfNonzeroKeep(name: string)
     m_keepJumps += [name]
+    m_keepIdx.add(name, 0)
     branchIfNonzero(name)
 
 // loop-variable in rax spilled by pushAcc(), bound in rax; exit when the
@@ -898,7 +1132,7 @@ mut X86Backend::cCallEnd(name: string, classes: [string])
 
     // al = number of vector registers used (harmless for non-variadic).
     ins("mov eax, " + string(xmm))
-    ins("call " + sym)
+    ins("call " + callTarget(sym))
     // Unwind the outgoing block and the scratch in one move.
     ins("mov rsp, rbx")
     ins("add rsp, " + string(n * 8))
@@ -1016,6 +1250,14 @@ mut X86Backend::ffiStructRet(typeId: int, nFields: int, slots: [int], coffs: [in
             ins("mov " + dst + ", rcx")
         i += 1
 
+// Hidden `sret` pointer for a MEMORY-class struct return: the static
+// marshalling scratch (free by then — by-value arguments were already
+// copied to the argument area).  The callee fills it; ffiStructRet then
+// unpacks it with no register classes.
+mut X86Backend::ffiRetBufAddr()
+    m_usesFfiStruct = true
+    ins("lea rax, [rel km_ffi_marshal]")
+
 // `data(arr)` — element pointer of an array handle (skip len/cap).
 void X86Backend::arrayDataPtr()
     ins("add rax, 16")
@@ -1052,7 +1294,109 @@ mut X86Backend::emitTrampoline(sym: string, argc: int)
         i += 1
     ins("mov rdi, " + string(n))
     ins("mov rsi, rsp")
-    ins("call " + asmSym(sym))
+    ins("call " + callTarget(asmSym(sym)))
+    ins("mov rsp, rbp")
+    ins("pop rbp")
+    ins("ret")
+    emit("")
+
+// ── symbol aliasing + C-callable exports ───────────────────────────
+
+mut X86Backend::declareAlias(name: string, symbol: string)
+    m_aliasNames += [name]
+    m_aliasSyms += [symbol]
+
+mut X86Backend::declareExport(name: string)
+    if not (name in m_exportNames) then
+        m_exportNames += [name]
+
+//  `export fn name(...)`: the reverse of a callback trampoline.  `$name`
+//  is a native System V AMD64 entry point; it packs its register / stack
+//  arguments into a Komodo (tag,value)[] frame, runs the one-time library
+//  init when the program has no `main` (collector + top-level `let`s),
+//  then calls the Komodo-ABI body `$name__kmx` and returns its result
+//  (rax, or xmm0 for a float) straight to the C caller.  Narrow integer
+//  and bool parameters are re-extended from the low bits — the C ABI
+//  leaves the rest of the register undefined.
+mut X86Backend::emitExport(name: string, cls: [string], tags: [int], ret: string, initFn: string)
+    cAbiEntry("$" + name, asmSym(name), cls, tags, ret, initFn)
+
+//  A callback trampoline is the same wrapper aimed at a Komodo function
+//  that C will call through a function pointer (no one-time init).
+mut X86Backend::emitCallbackTramp(sym: string, cls: [string], tags: [int], ret: string)
+    cAbiEntry("km_tramp_" + sym, asmSym(sym), cls, tags, ret, "")
+
+//  The wrapper proper: native System V entry `entry` → Komodo-ABI `target`.
+mut X86Backend::cAbiEntry(entry: string, target: string, cls: [string], tags: [int], ret: string, initFn: string)
+    let n = #cls
+    let gp = ["rdi", "rsi", "rdx", "rcx", "r8", "r9"]
+    label(entry)
+    ins("push rbp")
+    ins("mov rbp, rsp")
+    if n > 0 then
+        ins("sub rsp, " + string(n * 16))
+    let ig = 0                      // integer registers consumed
+    let fx = 0                      // xmm registers consumed
+    let st = 0                      // stack words consumed
+    let i = 0
+    while i < n do
+        let c = cls[i]
+        let slot = "[rsp + " + string(i * 16 + 8) + "]"
+        ins("mov qword [rsp + " + string(i * 16) + "], " + string(tags[i]))
+        if c == "float" or c == "f32" then
+            if fx < 8 then
+                if c == "f32" then
+                    ins("cvtss2sd xmm0, xmm" + string(fx))
+                    ins("movsd " + slot + ", xmm0")
+                else
+                    ins("movsd " + slot + ", xmm" + string(fx))
+                fx += 1
+            else
+                ins("mov rax, [rbp + " + string(16 + st * 8) + "]")
+                st += 1
+                if c == "f32" then
+                    ins("movd xmm0, eax")
+                    ins("cvtss2sd xmm0, xmm0")
+                    ins("movq rax, xmm0")
+                ins("mov " + slot + ", rax")
+        else
+            if ig < 6 then
+                ins("mov rax, " + gp[ig])
+                ig += 1
+            else
+                ins("mov rax, [rbp + " + string(16 + st * 8) + "]")
+                st += 1
+            if c == "i8" then
+                ins("movsx rax, al")
+            else if c == "i16" then
+                ins("movsx rax, ax")
+            else if c == "i32" then
+                ins("movsxd rax, eax")
+            else if c == "u8" or c == "bool" then
+                ins("movzx eax, al")
+            else if c == "u16" then
+                ins("movzx eax, ax")
+            else if c == "u32" then
+                ins("mov eax, eax")
+            ins("mov " + slot + ", rax")
+        i += 1
+    if initFn != "" then
+        m_usesExportInit = true
+        let ready = ".ready"
+        ins("cmp byte [rel km_export_ready], 0")
+        ins("jne " + ready)
+        ins("mov byte [rel km_export_ready], 1")
+        addExtern(asmSym("GC_init"))
+        ins("call " + callTarget("$GC_init"))
+        ins("xor edi, edi")
+        ins("xor esi, esi")
+        ins("call " + callTarget(asmSym(initFn)))
+        label(ready)
+    ins("mov rdi, " + string(n))
+    ins("mov rsi, rsp")
+    ins("call " + callTarget(target))
+    if ret == "f32" then
+        ins("cvtsd2ss xmm0, xmm0")
     ins("mov rsp, rbp")
     ins("pop rbp")
     ins("ret")
@@ -1131,25 +1475,20 @@ extern fn km_str_find(s: string, sub: string): int
 fn asmHas(line: string, sub: string): bool
     return km_str_find(line, sub) >= 0
 
+extern fn km_str_starts(s: string, p: string): int
+extern fn km_str_ends(s: string, p: string): int
+extern fn km_asm_spanbad(s: string): int
+extern fn km_asm_peepstart(s: string): int
+
 fn asmStarts(line: string, p: string): bool
-    return line.length >= p.length and line[0 to p.length] == p
+    return km_str_starts(line, p) == 1
 
 fn asmEnds(line: string, p: string): bool
-    return line.length >= p.length and line[line.length - p.length to line.length] == p
+    return km_str_ends(line, p) == 1
 
 // A line that may sit inside a spill span: straight-line code only.
 fn spanSafe(line: string): bool
-    if line.length == 0 then
-        return false
-    if line[line.length - 1] == ':' then
-        return false
-    if asmStarts(line, "    j") then
-        return false
-    if asmHas(line, "rsp") or asmHas(line, "call") then
-        return false
-    if asmHas(line, "push") or asmHas(line, "pop") then
-        return false
-    return true
+    return km_asm_spanbad(line) == 0
 
 // Index of the first line at or after `start` equal to `stop`, provided
 // every line before it is span-safe; -1 otherwise.
@@ -1232,6 +1571,8 @@ mut X86Backend::peepholeAt(src: [string], i: int): [string]
     let n = #src
     let a = src[i]
     m_pSpan = 1
+    if km_asm_peepstart(a) == 0 then
+        return []
 
     // store then reload of the same slot: the reload is a no-op
     if i + 1 < n then
@@ -1269,7 +1610,7 @@ mut X86Backend::peepholeAt(src: [string], i: int): [string]
                 off = 12
             let target = br[off to br.length]
             let cc = jccOf(src[i + 1])
-            if cc != "" and src[i + 2] == "    movzx eax, al" and src[i + 3] == "    test rax, rax" and not (target in m_keepJumps) then
+            if cc != "" and src[i + 2] == "    movzx eax, al" and src[i + 3] == "    test rax, rax" and not m_keepIdx.has(target) then
                 let jump = cc
                 if isJe then
                     jump = jccInverse(cc)
@@ -1341,18 +1682,51 @@ mut X86Backend::peephole()
 
 // ── final assembly ─────────────────────────────────────────────────
 
+// PIC output sends every call through the PLT, but NASM rejects `wrt
+// ..plt` on a symbol defined in this object.  Once the whole body is
+// known, a call to a label defined here becomes a plain rel32 call again.
+mut X86Backend::unPltLocalCalls()
+    let defs = new StrIndex()
+    let n = #m_lines
+    let i = 0
+    while i < n do
+        let l = m_lines[i]
+        if l.length > 1 and l[0] != " " and l[l.length - 1] == ":" then
+            defs.add(l[0 to l.length - 1], 1)
+        i += 1
+    i = 0
+    while i < n do
+        let l = m_lines[i]
+        let k = l.length
+        if k > 19 and l[0 to 9] == "    call " and l[k - 10 to k] == " wrt ..plt" then
+            let name = l[9 to k - 10]
+            if defs.first(name) >= 0 then
+                m_lines[i] = "    call " + name
+        i += 1
+
 mut X86Backend::finish(): string
     peephole()
-    return header() + join(m_lines, "\n") + "\n" + footer()
+    if m_pic then
+        unPltLocalCalls()
+    let tail = ""
+    if m_dbgOn then
+        tail = "global km_text_end\nkm_text_end:\n"
+    return header() + join(m_lines, "\n") + "\n" + tail + footer()
 
 mut X86Backend::header(): string
     let h = "; generated by the Komodo compiler — NASM x86-64\n"
     h = h + "default rel\n\n"
     // The C runtime provides `main` (it marshals argv into a Komodo
     // string array); the program's own entry point is `km_program_main`.
-    h = h + "global km_program_main\n"
+    if m_hasMain then
+        h = h + "global km_program_main\n"
     // marks code that allocates on the collected heap (runtime.c)
-    h = h + "global km_abi_gc\n\n"
+    h = h + "global km_abi_gc\n"
+    let xi = 0
+    while xi < #m_exportNames do
+        h = h + "global " + m_exportNames[xi] + "\n"
+        xi += 1
+    h = h + "\n"
     if m_usesAlloc then
         h = h + "extern km_alloc\n"
     if m_usesIndexCheck then
@@ -1369,9 +1743,16 @@ mut X86Backend::header(): string
         h = h + "extern km_str_join\n"
     let i = 0
     while i < #m_externs do
-        h = h + "extern " + m_externs[i] + "\n"
+        // NASM 3 rejects the `$` escape inside extern/global; a bare name is
+        // fine there even when it is a reserved word
+        let ex = m_externs[i]
+        if #ex > 0 and ex[0] == "$" then
+            ex = ex[1 to #ex]
+        h = h + "extern " + ex + "\n"
         i += 1
     h = h + "\nsection .text\n\n"
+    if m_dbgOn then
+        h = h + "global km_text_begin\nkm_text_begin:\n"
     return h
 
 fn X86Backend::footer(): string
@@ -1384,8 +1765,26 @@ fn X86Backend::footer(): string
             gi += 1
         if m_usesFfiStruct then
             r = r + "align 16\nkm_ffi_marshal: resb 256\n"
+    if m_usesExportInit then
+        r = r + "\nsection .bss\nkm_export_ready: resb 8\n"
     r = r + "\nsection .rodata\nkm_abi_gc: dq 1\n" + join(m_rodata, "")
+    if m_dbgOn then
+        // KM_DEBUG: line table for the runtime's call-chain reports.
+        // `dd count`, then count rows of `dd offset-in-.text, line, file`
+        // (sorted by offset), and the file names as NUL-separated strings.
+        r = r + "global km_dbg_lines\nglobal km_dbg_files\nalign 4\nkm_dbg_lines: dd " + string(m_dbgN) + "\n"
+        r = r + join(m_dbgTab, "")
+        r = r + "km_dbg_files:\n"
+        let fi = 0
+        while fi < #m_dbgFiles do
+            r = r + "    db \"" + m_dbgFiles[fi] + "\", 0\n"
+            fi += 1
+
     if m_vtabCount > 0 then
+        // vtables hold absolute function addresses: in PIC output they
+        // belong in a relocated (writable at load time) section
+        if m_pic then
+            r = r + "\nsection .data.rel.ro\n"
         r = r + join(m_vtblText, "")
         r = r + "__km_vtab: dq "
         let i = 0

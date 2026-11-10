@@ -1,0 +1,6 @@
+import console
+class N
+    value: int
+void main()
+    let n = new N(3)
+    console.print("v: " + n.value)

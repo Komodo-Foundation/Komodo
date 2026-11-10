@@ -1,1 +1,1 @@
-cannot be a C callback: parameter type 'float'
+cannot be a C callback: parameter type '[int]'

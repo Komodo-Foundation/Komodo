@@ -1,0 +1,5 @@
+module blibs
+
+// a quoted path in a block extern is relative to this file, not the cwd
+extern "parts/shim.c"
+extern fn blockpath_answer(): int

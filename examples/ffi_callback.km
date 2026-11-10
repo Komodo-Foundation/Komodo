@@ -1,4 +1,6 @@
 // Passing a Komodo function to C as a native callback.
+// (c: skip — C callbacks need the native trampoline; the c target lacks it.)
+// (wasm: skip — C callbacks are not supported by the wasm target.)
 //
 // `atexit` is plain libc — no library to link, no companion C file.  The
 // compiler emits a System V ABI trampoline for `farewell` and hands its

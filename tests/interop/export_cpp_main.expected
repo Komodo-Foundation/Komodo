@@ -1,0 +1,8 @@
+add: 42
+shout: hello, cpp!!! (13 chars)
+lerp: 12.50
+is_pos: 1 0
+sum: 20
+token: 0x1234
+calls: 8
+after reset: 0

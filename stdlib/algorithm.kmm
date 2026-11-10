@@ -1,5 +1,9 @@
 module algorithm
 
+// Array algorithms, called as algorithm.NAME(...). Each function is
+// overloaded for [int] and for [float]; the argument's element type picks the
+// version. sort, reverse and fill change the array in place.
+
 // The public surface is a set of *overloaded* free functions: one name
 // per operation, resolved on the element type of the array argument.
 // `algorithm.sort(xs)` picks `km_algo_sort` for `[int]` and
@@ -31,42 +35,58 @@ private
 
 // ── overloaded public surface ────────────────────────────────────────
 public
+// Sorts the array in place, smallest first.
 void algorithm_sort(a: [int])
     km_algo_sort(a)
+// Sorts the array in place, smallest first.
 void algorithm_sort(a: [float])
     km_algo_sortf(a)
 
+// Reverses the array in place.
 void algorithm_reverse(a: [int])
     km_algo_reverse(a)
+// Reverses the array in place.
 void algorithm_reverse(a: [float])
     km_algo_reversef(a)
 
+// Sum of the elements. An empty array gives 0.
 fn algorithm_sum(a: [int]): int
     return km_algo_sum(a)
+// Sum of the elements. An empty array gives 0.0.
 fn algorithm_sum(a: [float]): float
     return km_algo_sumf(a)
 
+// Largest element. An empty array gives 0 (no error is raised).
 fn algorithm_max(a: [int]): int
     return km_algo_max(a)
+// Largest element. An empty array gives 0.0 (no error is raised).
 fn algorithm_max(a: [float]): float
     return km_algo_maxf(a)
 
+// Smallest element. An empty array gives 0 (no error is raised).
 fn algorithm_min(a: [int]): int
     return km_algo_min(a)
+// Smallest element. An empty array gives 0.0 (no error is raised).
 fn algorithm_min(a: [float]): float
     return km_algo_minf(a)
 
+// Index of the first element equal to v, counting from 0, or -1 if v is absent.
 fn algorithm_index_of(a: [int], v: int): int
     return km_algo_index_of(a, v)
+// Index of the first element equal to v, counting from 0, or -1 if v is absent.
 fn algorithm_index_of(a: [float], v: float): int
     return km_algo_index_off(a, v)
 
+// 1 if v occurs in the array, else 0.
 fn algorithm_contains(a: [int], v: int): int
     return km_algo_contains(a, v)
+// 1 if v occurs in the array, else 0.
 fn algorithm_contains(a: [float], v: float): int
     return km_algo_containsf(a, v)
 
+// Sets every element to v, in place.
 void algorithm_fill(a: [int], v: int)
     km_algo_fill(a, v)
+// Sets every element to v, in place.
 void algorithm_fill(a: [float], v: float)
     km_algo_fillf(a, v)

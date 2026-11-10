@@ -1,0 +1,17 @@
+name: Release
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  deb:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y nasm gcc libgc-dev libgc1
+      - run: packaging/build-deb.sh
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.deb

@@ -26,6 +26,8 @@ mut Analyzer::checkFunction(fd: FunctionDecl, owner: string)
     else
         m_curRet = parseTypeStr(fd.returnType)
     m_loopDepth = 0
+    m_declLine = fd.line
+    m_declCol = fd.column
 
     // implicit receiver
     if owner != "" then
@@ -56,7 +58,7 @@ mut Analyzer::checkFunction(fd: FunctionDecl, owner: string)
         while i < #m_scopeNames do
             let nm = m_scopeNames[i]
             if not m_scopeUsed[i] and nm != "self" and not nameHasHash(nm) then
-                err(fd, "'" + nm + "' is declared but never used")
+                throw (m_scopeDeclAt[i] + ": '" + nm + "' is declared but never used")
             i += 1
 
 mut Analyzer::nameHasHash(s: string): bool
@@ -102,6 +104,109 @@ mut Analyzer::matchReturns(s: MatchStmt): bool
         if c.isDefault then
             sawDefault = true
     return sawDefault
+
+// ── default parameter values ─────────────────────────────────────────
+//  `fn f(a: int, b: string = "x")`.  Rules: only free functions with a
+//  body take defaults; a default is a literal (optionally negated); only
+//  trailing parameters may have one; it must be assignable to the declared
+//  type; and an overloaded name cannot have one (overloads are resolved by
+//  exact arity first, so defaults are not combined with them).  A call that
+//  omits trailing defaulted arguments is completed by codegen
+//  (`Codegen::fillDefaults`).
+
+fn isLiteralDefault(e: Expression?): bool
+    if e is UnaryOp then
+        return e.op == "-" and isLiteralDefault(e.operand)
+    if e is IntLiteral or e is FloatLiteral or e is StringLiteral then
+        return true
+    if e is BoolLiteral or e is CharLiteral or e is NullLiteral then
+        return true
+    return false
+
+mut Analyzer::checkParamDefaults(fd: FunctionDecl, owner: string)
+    let hasDefault = false
+    for p in fd.params do
+        if p.defaultValue != null then
+            hasDefault = true
+    if not hasDefault then
+        return
+    if owner != "" or fd.isExtern or fd.isPrototype or fd.isConstructor or fd.variadic then
+        err(fd, "default parameter values are only allowed on free functions with a body")
+    if isOverloadedName(fd.name) then
+        err(fd, "overloaded function '" + fd.name + "' cannot have default parameter values")
+    let sawDefault = false
+    for p in fd.params do
+        if p.defaultValue == null then
+            if sawDefault then
+                err(fd, "parameter '" + p.name + "' needs a default value, because it follows a parameter that has one")
+        else
+            sawDefault = true
+            if not isLiteralDefault(p.defaultValue) then
+                err(fd, "default value of parameter '" + p.name + "' must be a literal")
+            let dt = inferExpr(p.defaultValue)
+            if p.declaredType != null then
+                checkAssignable(fd, parseTypeStr(p.declaredType), dt, "default value of parameter '" + p.name + "'")
+
+// ── `export fn`: a Komodo function callable from C / C++ ────────────
+//
+// The C-ABI entry wrapper only knows how to marshal machine words and
+// doubles, so every parameter and the return type must be one of those.
+mut Analyzer::isExportableType(t: string): bool
+    let b = t
+    if #b > 0 and b[#b - 1] == "?" then
+        b = b[0 to (#b - 1)]
+    if isIntKind(b) or b == "bool" or b == "float" or b == "f32" or b == "f64" or b == "string" or b == "char" then
+        return true
+    return isExternType(b)
+
+mut Analyzer::checkExport(fd: FunctionDecl)
+    let nm = fd.name
+    if nm == "main" then
+        err(fd, "`export fn main` is not allowed — `main` is the program entry point; export a differently named function")
+    if isOverloadedName(nm) then
+        err(fd, "export fn '" + nm + "' cannot be overloaded — a C symbol names exactly one function")
+    for p in fd.params do
+        if p.declaredType == null then
+            err(fd, "export fn '" + nm + "': parameter '" + p.name + "' needs a type annotation")
+        let pt = p.declaredType or "int"
+        if not isExportableType(pt) then
+            err(fd, "export fn '" + nm + "': parameter '" + p.name + "' has type '" + pt + "', which can't cross the C ABI (use int / sized ints, bool, float, f32, string or an `extern type` handle)")
+        if p.defaultValue != null then
+            err(fd, "export fn '" + nm + "' cannot have default parameter values — C callers always pass every argument")
+    if not fd.isVoid and fd.returnType != null then
+        let rt = fd.returnType or "int"
+        if not isExportableType(rt) then
+            err(fd, "export fn '" + nm + "': return type '" + rt + "' can't cross the C ABI (use int / sized ints, bool, float, f32, string or an `extern type` handle)")
+
+// `extern fn f(...) = "sym"`: the symbol must be something the assembler
+// can spell as a bare identifier.
+mut Analyzer::checkExternSymbol(fd: FunctionDecl)
+    let sy = fd.symbol or ""
+    let i = 0
+    while i < #sy do
+        let c = sy[i]
+        let ok = (c >= "a" and c <= "z") or (c >= "A" and c <= "Z") or (c >= "0" and c <= "9") or c == "_" or c == "$" or c == "@" or c == "." or c == "?"
+        if not ok then
+            err(fd, "extern '" + fd.name + "': character '" + c + "' is not allowed in the C symbol \"" + sy + "\"")
+        i += 1
+    if sy[0] >= "0" and sy[0] <= "9" then
+        err(fd, "extern '" + fd.name + "': the C symbol \"" + sy + "\" cannot start with a digit")
+
+// `extern let name: T [= "sym"]`: a C global.  Only scalar types have a
+// layout we know; the symbol obeys the same spelling rule as `extern fn`.
+mut Analyzer::checkExternVar(g: VarDecl)
+    let t = g.declaredType or "int"
+    if not isExportableType(t) then
+        err(g, "extern variable '" + g.name + "': type '" + t + "' is not supported (use int / sized ints, bool, float, f32, string or an `extern type` handle)")
+    if g.symbol != null then
+        let sy = g.symbol or ""
+        let i = 0
+        while i < #sy do
+            let c = sy[i]
+            let ok = (c >= "a" and c <= "z") or (c >= "A" and c <= "Z") or (c >= "0" and c <= "9") or c == "_" or c == "$" or c == "@" or c == "?"
+            if not ok then
+                err(g, "extern variable '" + g.name + "': character '" + c + "' is not allowed in the C symbol \"" + sy + "\"")
+            i += 1
 
 // "Mutating code" the caller can observe: a field write (`obj.f = v`, or
 // bare `field = v` against the receiver) or an array-element write.  A
@@ -177,6 +282,9 @@ mut Analyzer::checkBlock(stmts: [Statement])
     macroRestore(mark)
 
 mut Analyzer::checkStmt(s: Statement?)
+    if s != null and s.line > 0 then
+        m_declLine = s.line
+        m_declCol = s.column
     if s is VarDecl then
         checkVarDecl(s)
     else if s is AssignStmt then
@@ -277,10 +385,14 @@ mut Analyzer::widenForBinding(t: Type): Type
         return tNullable(tPrim("int"))
     if t.kind == "never" then
         return tPrim("int")
+    if isLit(t) then
+        return tPrim(t.kind)
     if t.kind == "array" then
         let el = t.elem or tPrim("int")
         if el.kind == "never" then
             return tArray(tPrim("int"))
+        if isLit(el) then
+            return tArray(tPrim(el.kind))
     return t
 
 mut Analyzer::checkAssign(s: AssignStmt)
@@ -289,7 +401,10 @@ mut Analyzer::checkAssign(s: AssignStmt)
 
     // unqualified assignment to a field of the enclosing class
     if not scopeHas(s.name) and isCurField(s.name) then
+        checkFieldAccess(s, m_curClass, s.name)
         pathClear("self." + s.name)
+        s.numKind = narrowKind(stripNull(curClassFieldType(s.name)).kind)
+        adoptF32(s.numKind, s.value)
         if s.op == "=" then
             checkAssignable(s, curClassFieldType(s.name), vt, "field '" + s.name + "'")
         // `field += v` (array append or numeric) / `field -= v` — permissive,
@@ -299,6 +414,8 @@ mut Analyzer::checkAssign(s: AssignStmt)
 
     // assignment to a top-level variable (always mutable — no `be` form)
     if not scopeHas(s.name) and not isCurField(s.name) and isGlobalVar(s.name) then
+        s.numKind = narrowKind(stripNull(globalVarType(s.name)).kind)
+        adoptF32(s.numKind, s.value)
         if s.op == "=" then
             let gt = globalVarType(s.name)
             checkAssignable(s, gt, vt, "'" + s.name + "'")
@@ -309,6 +426,8 @@ mut Analyzer::checkAssign(s: AssignStmt)
         consumeMove(s.value, vt)
         return
 
+    if not scopeHas(s.name) and isMacro(s.name) then
+        err(s, "cannot assign to macro '" + s.name + "' (declared with be)")
     if not scopeHas(s.name) then
         err(s, "assignment to undeclared variable '" + s.name + "'")
     if scopeImmut(s.name) then
@@ -321,6 +440,8 @@ mut Analyzer::checkAssign(s: AssignStmt)
             lint(s, "self-assignment of '" + s.name + "' has no effect")
 
     let decl = scopeDeclType(s.name)
+    s.numKind = narrowKind(stripNull(decl).kind)
+    adoptF32(s.numKind, s.value)
     if s.op == "+=" or s.op == "-=" then
         // numeric `-=`, or array/string append `+=` — permissive, matches
         // codegen's two lowerings.
@@ -345,21 +466,33 @@ mut Analyzer::checkFieldAssign(s: FieldAssignStmt)
         err(s, "field assignment on a non-object (type '" + typeToString(ot) + "')")
     if not hasField(base.name, s.field) then
         err(s, "type '" + base.name + "' has no field '" + s.field + "'" + didYouMean(s.field, fieldNamesOf(base.name)))
+    checkFieldAccess(s, base.name, s.field)
     let op = pathOf(s.object)
     if op != "" then
         pathClear(op + "." + s.field)
     let vt = inferExpr(s.value)
+    if s.op != "=" then
+        s.numKind = narrowKind(stripNull(fieldReadType(base.name, s.field)).kind)
+        adoptF32(s.numKind, s.value)
     if s.op == "=" then
         checkAssignable(s, fieldReadType(base.name, s.field), vt, "field '" + s.field + "'")
     // `field += v` (append or numeric) / `field -= v` — permissive.
     // storing into a field takes ownership of a `unique` value
     consumeMove(s.value, vt)
 
+// a float literal assigned to an f32 target is itself an f32 (rounded)
+mut Analyzer::adoptF32(k: string, v: Expression?)
+    if k == "f32" and v is FloatLiteral then
+        v.numKind = "f32"
+
 mut Analyzer::checkIndexAssign(s: IndexAssignStmt)
     let ot = inferExpr(s.object)
     inferExpr(s.index)
     let vt = inferExpr(s.value)
     let base = stripNull(ot)
+    if s.op != "=" and base.kind == "array" then
+        s.numKind = narrowKind(stripNull(base.elem or tPrim("int")).kind)
+        adoptF32(s.numKind, s.value)
     if s.op == "=" and base.kind == "array" then
         checkAssignable(s, base.elem or tPrim("int"), vt, "array element")
     // `arr[i] += v` (append or numeric) / `arr[i] -= v` — permissive.
@@ -554,6 +687,7 @@ mut Analyzer::checkStructPattern(p: StructPattern, subjT: Type)
         seen += [fp.field]
         if not hasField(pn, fp.field) then
             err(p, "type '" + pn + "' has no field '" + fp.field + "'" + didYouMean(fp.field, fieldNamesOf(pn)))
+        checkFieldAccess(p, pn, fp.field)
         let ft = fieldReadType(pn, fp.field)
         let fb = stripNull(ft)
         if isFloatKind(fb.kind) then
@@ -715,6 +849,13 @@ mut Analyzer::lastDot(s: string): int
 mut Analyzer::checkAssignable(node: ASTNode, dst: Type, src: Type, what: string)
     if isAssignable(dst, src) then
         return
+    let db = stripNull(dst)
+    if isLit(src) and isIntKind(db.kind) and src.kind == "int" then
+        err(node, what + ": literal " + litText(src) + " does not fit in " + db.kind)
+        return
+    if isIntKind(db.kind) and isIntKind(stripNull(src).kind) then
+        err(node, what + ": type '" + typeToString(src) + "' is not assignable to '" + typeToString(dst) + "' — convert explicitly with " + db.kind + "(x)")
+        return
     err(node, what + ": type '" + typeToString(src) + "' is not assignable to '" + typeToString(dst) + "'")
 
 mut Analyzer::isAssignable(dst: Type, src: Type): bool
@@ -746,7 +887,11 @@ mut Analyzer::isAssignable(dst: Type, src: Type): bool
         // only narrowed to 32 bits at a struct / C-FFI boundary.
         if isFloatKind(dst.kind) then
             return true
-        return isIntKind(src.kind) and isIntKind(dst.kind)
+        if not (isIntKind(src.kind) and isIntKind(dst.kind)) then
+            return false
+        if isLit(src) then
+            return litFits(litText(src), dst.kind)
+        return intWidens(canonInt(src.kind), canonInt(dst.kind)) or canonInt(src.kind) == canonInt(dst.kind)
 
     if dst.kind == "bool" and src.kind == "bool" then
         return true

@@ -1,0 +1,16 @@
+import console
+
+// Positional `new` stores each argument into a field, which moves a
+// `unique` argument just as `hold.h = a` does.
+unique struct Res
+    id: int
+
+struct Holder
+    h: Res
+    n: int = 0
+
+void main()
+    let a = new Res(5)
+    let hold = new Holder(a, 1)
+    console.print("n = " + string(hold.n))
+    console.print("a = " + string(a.id))    // error: `a` was moved into hold

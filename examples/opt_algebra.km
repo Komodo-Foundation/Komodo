@@ -1,0 +1,27 @@
+// Optimizer: algebraic identities and `x * 2^k` -> `x << k` strength
+// reduction.  The output must be identical at -O none and -O max.
+// The float lines check that a literal 0 / 1 never changes the type
+// or value of a float operand.
+
+fn scale(x: int): int
+    return x * 8
+
+fn main()
+    let f = 2.5
+    print(f * 0)
+    print(f * 1)
+    print(f - 0)
+    print(f / 1)
+
+    let n = 7
+    print(n * 0)
+    print(n * 1)
+    print(n + 0)
+    print(0 + n)
+    print(n * 8)
+    print(n * 2)
+    print(n * 6)
+    print(n * 1024)
+    print(3 * n)
+    print(scale(5))
+    print(scale(-3))

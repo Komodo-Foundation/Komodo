@@ -1,0 +1,31 @@
+// `private` class members: usable inside their own class (methods and the
+// constructor), not from outside it or from a subclass.  The same class
+// uses a public method to reach its private state.
+
+import console
+
+class Account
+public
+    constructor(owner: string, balance: int)
+        m_owner = owner
+        m_balance = balance
+
+    mut deposit(amount: int)
+        m_balance = m_balance + fee(amount)
+
+    fn describe(): string
+        return m_owner + ": " + string(m_balance)
+
+    fn sibling(other: Account): int
+        return other.m_balance
+private
+    m_owner: string = ""
+    m_balance: int = 0
+    fn fee(amount: int): int
+        return amount - 1
+
+void main()
+    let a = new Account("ann", 10)
+    a.deposit(5)
+    console.print(a.describe())
+    console.print(a.sibling(new Account("bob", 7)))

@@ -1,0 +1,4 @@
+import console
+void main()
+    let c = true
+    if c then console.print(1) else console.print(2)

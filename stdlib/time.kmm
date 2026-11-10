@@ -1,0 +1,18 @@
+module time
+
+// Clocks and time formatting, called as time.NAME(...). Times are Unix seconds
+// (since 1970-01-01 UTC) unless a name says otherwise.
+
+// Linked from stdlib/time.c.  Reached as `time.NAME(...)`, which the
+// compiler mangles to the flat symbol `time_NAME`.
+
+// Current time as Unix seconds (whole seconds since 1970-01-01 UTC).
+fn time_now(): int
+// Milliseconds from a monotonic clock that starts at an unspecified point. Only
+// differences are meaningful: this is not Unix time.
+fn time_millis(): int
+// Waits for at least ms milliseconds.
+void time_sleep_ms(ms: int)
+// The Unix time secs formatted in UTC with strftime codes, such as
+// "%Y-%m-%d %H:%M:%S". Returns an empty string when the time cannot be converted.
+fn time_format(secs: int, fmt: string): string

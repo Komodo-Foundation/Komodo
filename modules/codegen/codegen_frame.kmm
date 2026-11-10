@@ -110,6 +110,10 @@ mut Codegen::exprType(e: Expression?): string
             return exprType(e.right)
         return "int"
     if e is CallExpr then
+        if e.receiver != null then
+            let ro = resolveMethodOwner(exprType(e.receiver), e.name[1 to e.name.length])
+            if ro != "" then
+                return fnRet(ro + "__" + e.name[1 to e.name.length])
         let d = dotIndex(e.name)
         // a dotted call may name an overload set / template through its
         // "_"-joined form (`algorithm.sum` → overloaded `algorithm_sum`)
@@ -122,6 +126,8 @@ mut Codegen::exprType(e: Expression?): string
                 if owner != "" then
                     return fnRet(owner + "__" + mth)
             cn = m_backend.mangle(e.name)
+        if isTemplate(cn) then
+            fillDefaults(e, templateDeclOf(cn))
         if isTemplate(cn) and #templateDeclOf(cn).params == #e.args then
             let gsym = ensureInstance(cn, tplArgTypes(e.args))
             return lookupRet(gsym)

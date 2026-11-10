@@ -1,0 +1,7 @@
+import console
+struct P
+    x: int
+    fn double(): int
+        return x * 2
+void main()
+    console.print(1)

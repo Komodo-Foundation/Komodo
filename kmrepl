@@ -1,0 +1,162 @@
+#!/usr/bin/env bash
+#
+# kmrepl — an interactive Komodo prompt.
+#
+#   ./kmrepl            start a session
+#   ./kmrepl -h         help
+#
+# Komodo is compiled, so the REPL keeps the session as source text:
+# declarations (fn / struct / class / enum / import / extern ...) are
+# collected at top level, every other accepted line becomes a statement
+# of a synthesized `void main()`.  Each entry recompiles the session and
+# runs it; output the previous entries already produced is skipped, so
+# you only see what the new line printed.  That is exact for
+# deterministic programs; stdin is /dev/null and time/random values
+# will not replay identically.
+#
+# A bare expression is echoed:   >>> 1 + 2        3
+# A line that opens a block (if / while / for / match, or a declaration)
+# continues on `...` lines until you enter a blank one.
+#
+set -uo pipefail
+
+here="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+komodo="${KOMODO:-$here/komodo}"
+prog="$(basename "$0")"
+
+usage() {
+    cat <<EOF
+usage: $prog [--release] [-k kmc]       (also: komodo repl)
+
+Commands:  :help  :show  :reset  :undo  :quit   (Ctrl-D also quits)
+  :show   print the program the session has built so far
+  :reset  forget everything
+  :undo   drop the last accepted statement or declaration
+EOF
+}
+
+komodo_args=(-q)
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -h|--help) usage; exit 0 ;;
+        -O) komodo_args+=(-O "$2"); shift 2 ;;
+        --release) komodo_args+=(--release); shift ;;
+        -k) komodo_args+=(-k "$2"); shift 2 ;;
+        *) echo "$prog: unknown option '$1'" >&2; exit 2 ;;
+    esac
+done
+[[ -x "$komodo" ]] || { echo "$prog: no komodo driver at $komodo" >&2; exit 1; }
+
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+src="$work/repl.km"
+bin="$work/repl"
+
+decls=()     # top-level declaration chunks (each a multi-line string)
+stmts=()     # statement chunks, replayed in order inside main
+printed=0    # bytes of stdout the accepted session has already produced
+
+# build <extra-stmt> — write the session (+ one trial statement) to $src
+build() {
+    {
+        printf '%s\n' "${decls[@]+"${decls[@]}"}"
+        echo "void main()"
+        local s
+        for s in "${stmts[@]+"${stmts[@]}"}"; do
+            printf '%s\n' "$s" | sed 's/^/    /'
+        done
+        [[ -n "${1:-}" ]] && printf '%s\n' "$1" | sed 's/^/    /'
+        echo "    return"
+    } > "$src"
+}
+
+# attempt <extra-stmt> — compile + run.  Sets $out (new stdout), $total
+# (stdout bytes of the whole run) and $err; returns 0 on success.
+attempt() {
+    build "$1"
+    err="$("$komodo" "${komodo_args[@]}" -c -o "$bin" "$src" 2>&1 >/dev/null)" \
+        || { err="${err//$src/<repl>}"; return 1; }
+    local raw="$work/out"
+    "$bin" </dev/null >"$raw" 2>"$work/rt.err"
+    local rc=$?
+    total=$(stat -c %s "$raw")
+    out="$(tail -c +"$((printed + 1))" "$raw")"
+    if [[ $rc -ne 0 ]]; then
+        err="$(cat "$work/rt.err")"
+        [[ -n "$err" ]] || err="program exited with status $rc"
+        return 1
+    fi
+    return 0
+}
+
+is_decl() {
+    case "$1" in
+        fn\ *|void\ *|mut\ *|struct\ *|class\ *|enum\ *|abstract\ *|unique\ *|shared\ *|import\ *|extern\ *|module\ *|link\ *|macro\ *) return 0 ;;
+    esac
+    return 1
+}
+
+opens_block() {
+    case "$1" in
+        if\ *|while\ *|for\ *|match\ *|*" do"|*" then") return 0 ;;
+    esac
+    return 1
+}
+
+show_out() { [[ -n "$out" ]] && printf '%s\n' "$out"; }
+
+echo "Komodo REPL — :help for commands, Ctrl-D to quit"
+while true; do
+    IFS= read -r -e -p ">>> " line || { echo; break; }
+    [[ -z "${line//[[:space:]]/}" ]] && continue
+    case "$line" in
+        :q|:quit|:exit) break ;;
+        :help|:h) usage; continue ;;
+        :reset) decls=(); stmts=(); printed=0; echo "(session cleared)"; continue ;;
+        :show) build ""; cat "$src"; continue ;;
+        :undo)
+            if [[ ${#stmts[@]} -gt 0 ]]; then unset 'stmts[${#stmts[@]}-1]'
+            elif [[ ${#decls[@]} -gt 0 ]]; then unset 'decls[${#decls[@]}-1]'
+            else echo "(nothing to undo)"; continue; fi
+            if attempt ""; then printed=$total; else printed=0; fi
+            continue ;;
+        :*) echo "unknown command '$line' (try :help)"; continue ;;
+    esac
+
+    entry="$line"
+    if is_decl "$line" || opens_block "$line"; then
+        while IFS= read -r -e -p "... " more && [[ -n "${more//[[:space:]]/}" ]]; do
+            entry+=$'\n'"$more"
+        done
+    fi
+
+    if is_decl "$line"; then
+        decls+=("$entry")
+        if attempt ""; then
+            printed=$total
+        else
+            unset 'decls[${#decls[@]}-1]'
+            printf '%s\n' "$err"
+        fi
+        continue
+    fi
+
+    # 1. as an expression: print its value (not kept in the session)
+    assign_re='^[A-Za-z_][][A-Za-z0-9_. ]*[-+*/%]?=([^=]|$)'
+    # (a line that already is a print call would print twice: print(print(..)))
+    print_re='^(console\.)?print(ln)?[[:space:]]*\('
+    if [[ "$entry" != *$'\n'* && ! "$entry" =~ ^let[[:space:]] && ! "$entry" =~ $assign_re \
+          && ! "$entry" =~ $print_re ]] \
+       && attempt "print($entry)"; then
+        show_out
+        continue
+    fi
+    # 2. as a statement: keep it if it compiles and runs cleanly
+    if attempt "$entry"; then
+        show_out
+        printed=$total
+        stmts+=("$entry")
+    else
+        printf '%s\n' "$err"
+    fi
+done

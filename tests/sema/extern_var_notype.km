@@ -1,0 +1,4 @@
+extern let counter
+
+void main()
+    let a = 1

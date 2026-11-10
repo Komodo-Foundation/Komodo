@@ -1,0 +1,1 @@
+default value of parameter 'b': type 'string' is not assignable to 'int'

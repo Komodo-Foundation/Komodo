@@ -1,0 +1,18 @@
+module random
+
+// Pseudo-random numbers, called as random.NAME(...). A program that never
+// calls random.seed gets the same sequence on every run.
+
+// Linked from stdlib/random.c.  Reached as `random.NAME(...)`, which the
+// compiler mangles to the flat symbol `random_NAME`.  The generator is
+// splitmix64: the same seed gives the same sequence on every platform.
+
+// Sets the generator state from n. Seeding again with the same n restarts the same sequence.
+void random_seed(n: int)
+// A random integer from lo to hi, both included. If lo is greater than hi the
+// two are swapped; when lo equals hi that value is returned.
+fn random_int(lo: int, hi: int): int
+// A random float in [0, 1): 0.0 can occur, 1.0 never does.
+fn random_float(): float
+// Shuffles the array in place (Fisher-Yates): the same elements, in a new order.
+void random_shuffle(xs: [int])

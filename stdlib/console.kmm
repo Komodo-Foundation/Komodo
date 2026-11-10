@@ -1,9 +1,16 @@
 module console
 
+// Printing to standard output and standard error. Any values may be passed;
+// they are separated by single spaces.
+
 // The console library.  Bodies are linked from stdlib/console.c; these
 // declarations give the compiler the call signatures.  Variadic: any
 // number of values of any type may follow.
 
+// Prints the values separated by spaces, then a newline. Bools print as true
+// or false and null prints as 0. With no arguments it prints just a newline.
 void console_print(...)
+// Like console_print, but writes no newline at the end.
 void console_write(...)
+// Like console_print, but writes to standard error.
 void console_error(...)

@@ -3,7 +3,7 @@
  *
  * Reached through the uniform Komodo call ABI (see km_runtime.h):
  * rdi = argc, rsi = KmArg records.  Every argument here is a `char *`
- * (KM_TAG_STR) or a small int; results are a fresh `char *`, a `long`
+ * (KM_TAG_STR) or a small int; results are a fresh `char *`, a `int64_t`
  * (0/1 for predicates, or an index), or a `KmArray *` of `char *`.
  *
  * Results live on the collected heap (km_alloc_atomic / km_strndup, see
@@ -17,7 +17,7 @@
 #include <ctype.h>
 #include "km_runtime.h"
 
-#define STR(items, i)  ((const char *)(items)[i].value)
+#define STR(items, i)  (KM_STR((items)[i].value))
 
 static char *dup_n(const char *s, size_t n)
 {
@@ -25,17 +25,17 @@ static char *dup_n(const char *s, size_t n)
 }
 
 /* string.length(s) : int  — byte length (mirrors #s). */
-long string_length(long argc, KmArg *items)
+int64_t string_length(int64_t argc, KmArg *items)
 {
     (void)argc;
     const char *s = STR(items, 0);
-    return s ? (long)strlen(s) : 0;
+    return s ? (int64_t)strlen(s) : 0;
 }
 
 /* string.split(s, sep) : [string]
  * Split on every non-overlapping occurrence of `sep`.  An empty `sep`
  * yields the whole string as a single element. */
-KmArray *string_split(long argc, KmArg *items)
+KmArray *string_split(int64_t argc, KmArg *items)
 {
     (void)argc;
     const char *s = STR(items, 0);
@@ -43,49 +43,49 @@ KmArray *string_split(long argc, KmArg *items)
     if (!s) s = "";
     if (!sep || !*sep) {
         KmArray *one = km_array_new(1);
-        one->data[0] = (long)dup_n(s, strlen(s));
+        one->data[0] = KM_WORD(dup_n(s, strlen(s)));
         one->len = 1;
         return one;
     }
     size_t seplen = strlen(sep);
 
     /* count pieces */
-    long pieces = 1;
+    int64_t pieces = 1;
     for (const char *p = s; (p = strstr(p, sep)); p += seplen)
         pieces++;
 
     KmArray *out = km_array_new(pieces);
-    long i = 0;
+    int64_t i = 0;
     const char *start = s;
     const char *hit;
     while ((hit = strstr(start, sep))) {
-        out->data[i++] = (long)dup_n(start, (size_t)(hit - start));
+        out->data[i++] = KM_WORD(dup_n(start, (size_t)(hit - start)));
         start = hit + seplen;
     }
-    out->data[i++] = (long)dup_n(start, strlen(start));
+    out->data[i++] = KM_WORD(dup_n(start, strlen(start)));
     out->len = i;
     return out;
 }
 
 /* string.join(parts, sep) : string */
-const char *string_join(long argc, KmArg *items)
+const char *string_join(int64_t argc, KmArg *items)
 {
     (void)argc;
-    KmArray *parts = (KmArray *)items[0].value;
+    KmArray *parts = KM_ARR(items[0].value);
     const char *sep = STR(items, 1);
     if (!sep) sep = "";
     if (!parts || parts->len == 0) return "";
     size_t seplen = strlen(sep);
     size_t total = 0;
-    for (long i = 0; i < parts->len; i++) {
-        const char *p = (const char *)parts->data[i];
+    for (int64_t i = 0; i < parts->len; i++) {
+        const char *p = KM_STR(parts->data[i]);
         total += p ? strlen(p) : 0;
         if (i + 1 < parts->len) total += seplen;
     }
     char *out = km_alloc_atomic(total + 1);
     char *w = out;
-    for (long i = 0; i < parts->len; i++) {
-        const char *p = (const char *)parts->data[i];
+    for (int64_t i = 0; i < parts->len; i++) {
+        const char *p = KM_STR(parts->data[i]);
         size_t n = p ? strlen(p) : 0;
         memcpy(w, p, n);
         w += n;
@@ -106,13 +106,13 @@ static const char *trim_impl(const char *s, int left, int right)
 }
 
 /* string.trim(s) / trim_start(s) / trim_end(s) : string */
-const char *string_trim(long argc, KmArg *items)       { (void)argc; return trim_impl(STR(items, 0), 1, 1); }
-const char *string_trim_start(long argc, KmArg *items) { (void)argc; return trim_impl(STR(items, 0), 1, 0); }
-const char *string_trim_end(long argc, KmArg *items)   { (void)argc; return trim_impl(STR(items, 0), 0, 1); }
+const char *string_trim(int64_t argc, KmArg *items)       { (void)argc; return trim_impl(STR(items, 0), 1, 1); }
+const char *string_trim_start(int64_t argc, KmArg *items) { (void)argc; return trim_impl(STR(items, 0), 1, 0); }
+const char *string_trim_end(int64_t argc, KmArg *items)   { (void)argc; return trim_impl(STR(items, 0), 0, 1); }
 
 /* string.replace(s, from, to) : string  — every non-overlapping match.
  * An empty `from` returns `s` unchanged. */
-const char *string_replace(long argc, KmArg *items)
+const char *string_replace(int64_t argc, KmArg *items)
 {
     (void)argc;
     const char *s = STR(items, 0);
@@ -123,7 +123,7 @@ const char *string_replace(long argc, KmArg *items)
     if (!to) to = "";
     size_t flen = strlen(from), tlen = strlen(to);
 
-    long hits = 0;
+    int64_t hits = 0;
     for (const char *p = s; (p = strstr(p, from)); p += flen)
         hits++;
     if (hits == 0) return dup_n(s, strlen(s));
@@ -143,24 +143,24 @@ const char *string_replace(long argc, KmArg *items)
 }
 
 /* string.index_of(s, sub) : int  — byte offset, or -1. */
-long string_index_of(long argc, KmArg *items)
+int64_t string_index_of(int64_t argc, KmArg *items)
 {
     (void)argc;
     const char *s = STR(items, 0);
     const char *sub = STR(items, 1);
     if (!s || !sub) return -1;
     const char *hit = strstr(s, sub);
-    return hit ? (long)(hit - s) : -1;
+    return hit ? (int64_t)(hit - s) : -1;
 }
 
-long string_contains(long argc, KmArg *items)
+int64_t string_contains(int64_t argc, KmArg *items)
 {
     (void)argc;
     const char *s = STR(items, 0), *sub = STR(items, 1);
     return (s && sub && strstr(s, sub)) ? 1 : 0;
 }
 
-long string_starts_with(long argc, KmArg *items)
+int64_t string_starts_with(int64_t argc, KmArg *items)
 {
     (void)argc;
     const char *s = STR(items, 0), *pre = STR(items, 1);
@@ -169,7 +169,7 @@ long string_starts_with(long argc, KmArg *items)
     return strncmp(s, pre, n) == 0 ? 1 : 0;
 }
 
-long string_ends_with(long argc, KmArg *items)
+int64_t string_ends_with(int64_t argc, KmArg *items)
 {
     (void)argc;
     const char *s = STR(items, 0), *suf = STR(items, 1);
@@ -190,26 +190,26 @@ static const char *map_case(const char *s, int up)
     return out;
 }
 
-const char *string_to_upper(long argc, KmArg *items) { (void)argc; return map_case(STR(items, 0), 1); }
-const char *string_to_lower(long argc, KmArg *items) { (void)argc; return map_case(STR(items, 0), 0); }
+const char *string_to_upper(int64_t argc, KmArg *items) { (void)argc; return map_case(STR(items, 0), 1); }
+const char *string_to_lower(int64_t argc, KmArg *items) { (void)argc; return map_case(STR(items, 0), 0); }
 
 /* string.repeat(s, n) : string */
-const char *string_repeat(long argc, KmArg *items)
+const char *string_repeat(int64_t argc, KmArg *items)
 {
     (void)argc;
     const char *s = STR(items, 0);
-    long n = items[1].value;
+    int64_t n = items[1].value;
     if (!s || n <= 0) return "";
     size_t sn = strlen(s);
     char *out = km_alloc_atomic(sn * (size_t)n + 1);
     char *w = out;
-    for (long i = 0; i < n; i++) { memcpy(w, s, sn); w += sn; }
+    for (int64_t i = 0; i < n; i++) { memcpy(w, s, sn); w += sn; }
     *w = '\0';
     return out;
 }
 
 /* string.reverse(s) : string  — byte-wise. */
-const char *string_reverse(long argc, KmArg *items)
+const char *string_reverse(int64_t argc, KmArg *items)
 {
     (void)argc;
     const char *s = STR(items, 0);
@@ -224,13 +224,13 @@ const char *string_reverse(long argc, KmArg *items)
 
 /* string.substring(s, start, end) : string  — [start, end) byte range,
  * clamped to bounds; negative indices count from the end. */
-const char *string_substring(long argc, KmArg *items)
+const char *string_substring(int64_t argc, KmArg *items)
 {
     (void)argc;
     const char *s = STR(items, 0);
     if (!s) return "";
-    long n = (long)strlen(s);
-    long a = items[1].value, b = items[2].value;
+    int64_t n = (int64_t)strlen(s);
+    int64_t a = items[1].value, b = items[2].value;
     if (a < 0) a += n;
     if (b < 0) b += n;
     if (a < 0) a = 0;
@@ -239,29 +239,29 @@ const char *string_substring(long argc, KmArg *items)
     return dup_n(s + a, (size_t)(b - a));
 }
 
-static const char *pad_impl(const char *s, long width, const char *pad, int start)
+static const char *pad_impl(const char *s, int64_t width, const char *pad, int start)
 {
     if (!s) s = "";
     if (!pad || !*pad) pad = " ";
-    long sn = (long)strlen(s);
+    int64_t sn = (int64_t)strlen(s);
     if (sn >= width) return dup_n(s, (size_t)sn);
-    long need = width - sn;
-    long pn = (long)strlen(pad);
+    int64_t need = width - sn;
+    int64_t pn = (int64_t)strlen(pad);
     char *out = km_alloc_atomic((size_t)width + 1);
     char *fill = start ? out : out + sn;
-    for (long i = 0; i < need; i++)
+    for (int64_t i = 0; i < need; i++)
         fill[i] = pad[i % pn];
     memcpy(start ? out + need : out, s, (size_t)sn);
     out[width] = '\0';
     return out;
 }
 
-const char *string_pad_start(long argc, KmArg *items)
+const char *string_pad_start(int64_t argc, KmArg *items)
 {
     (void)argc;
     return pad_impl(STR(items, 0), items[1].value, STR(items, 2), 1);
 }
-const char *string_pad_end(long argc, KmArg *items)
+const char *string_pad_end(int64_t argc, KmArg *items)
 {
     (void)argc;
     return pad_impl(STR(items, 0), items[1].value, STR(items, 2), 0);

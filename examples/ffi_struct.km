@@ -2,6 +2,8 @@
 // The companion C lives next to vecffi.kmm (`link "vecffi.c"`) and is
 // resolved relative to that module, wherever this program is built from.
 // (stackvm: skip — by-value structs need the native x86 C ABI.)
+// (c: skip — by-value structs over the C FFI are not supported by the c target.)
+// (wasm: skip — C FFI is not supported by the wasm target.)
 
 import vecffi
 
