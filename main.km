@@ -29,6 +29,9 @@ void main(args)
     let target = "x86"
     let strict = false
     let opt = "none"
+    let rich = false
+    let color = false
+    let width = 100
     let ai = 2
     while ai < #args do
         let a = args[ai]
@@ -40,6 +43,12 @@ void main(args)
             strict = true
         else if a == "none" or a == "low" or a == "medium" or a == "max" then
             opt = a
+        else if a == "rich" or a == "color" then
+            rich = true             // rustc-style diagnostics (see diag.kmm)
+            if a == "color" then
+                color = true
+        else if a.length > 6 and a[0 to 6] == "width=" then
+            width = km_compiler::dgNum(a[6 to a.length])
         ai += 1
 
     // The standard library ships as `.kmm` declaration files under the
@@ -47,6 +56,7 @@ void main(args)
     // so `import console` resolves no matter where the user's file is.
     // `file::find` walks recursively, so the executable's directory is
     // enough whether `stdlib/` is a subdirectory or holds kmc itself.
+    km_compiler::diagSetMode(rich, color, width)
     let stdlibProbe = dirOf(selfPath) + "/probe.km"
 
     let gathered = gather(fileName, stdlibProbe)
@@ -58,8 +68,12 @@ void main(args)
     if compiled == null then
         // report as `file:line:col: error: …`, against the file the
         // problem is actually in rather than the merged unit
+        // (several errors arrive newline-separated, one per failed function)
         let raw = km_error_message() or "compilation failed"
-        km_fail(km_compiler::locate(errorLine(raw), gathered.deps, gathered.starts))
+        let shown: [string] = []
+        for one in km_compiler::dgSplit(raw, "\n") do
+            shown += [km_compiler::locate(errorLine(one), gathered.deps, gathered.starts)]
+        km_fail(km_compiler::diagReport(shown))
     if target == "check" then
         return                        // analysed clean; diagnostics already printed
     let asm = compiled or ""          // km_fail above does not return

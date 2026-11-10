@@ -128,7 +128,7 @@ public
 
         // non-fatal bad-practice warnings, in source order
         for w in m_lints do
-            print(locate(w, m_srcFiles, m_srcStarts))
+            print(diagOne(locate(w, m_srcFiles, m_srcStarts)))
 
         prog.analyzed = true
         prog.usesCopy = m_usesCopy
