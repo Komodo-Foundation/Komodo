@@ -686,6 +686,19 @@ int64_t km_str_find(const char *s, const char *sub)
     return p ? (int64_t)(p - s) : -1;
 }
 
+/* `s` starts / ends with `p` — no allocation (the peephole pass tests
+ * thousands of assembly lines against short prefixes). */
+int64_t km_str_starts(const char *s, const char *p)
+{
+    return strncmp(s, p, strlen(p)) == 0;
+}
+
+int64_t km_str_ends(const char *s, const char *p)
+{
+    size_t n = strlen(s), m = strlen(p);
+    return n >= m && memcmp(s + n - m, p, m) == 0;
+}
+
 /* `s[start to end]` for a caller that already knows `n == #s` — the same
  * clamping as km_str_slice, without re-measuring `s`.  The lexer cuts
  * every token out of a source of hundreds of KB; measuring up to `end`
