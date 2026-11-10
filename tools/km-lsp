@@ -1,0 +1,340 @@
+#!/usr/bin/env python3
+"""km-lsp — a Language Server for Komodo (.km, .kmm).
+
+Speaks JSON-RPC 2.0 over stdio with LSP Content-Length framing. Python
+standard library only; no npm and no third-party packages.
+
+Supported:
+  initialize, initialized, shutdown, exit
+  textDocument/didOpen      compile, publish diagnostics
+  textDocument/didChange    update the buffer only (no compile)
+  textDocument/didSave      compile, publish diagnostics
+  textDocument/didClose     clear diagnostics, forget the buffer
+  textDocument/documentSymbol   top-level fn / struct / class / enum / module
+
+Diagnostics come from the compiler. Each one is a line on the compiler's
+output, `file:line:col: error: message` (or `warning:`); a message without a
+location is placed on line 1. The server runs `komodo check <file>` when the
+compiler has that command. Otherwise it runs `komodo -S -q <file>`, which
+compiles without linking or running and prints the same lines. Each compile
+runs in a temporary copy of the source tree, so the project directory is
+never written to and an unsaved buffer is checked as it is in the editor.
+
+Binary lookup: $KOMODO, then the komodo next to this repository, then PATH.
+
+Run it as the editor's language-server command:  tools/km-lsp
+"""
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+from urllib.parse import unquote, urlparse
+
+ROOT = Path(__file__).resolve().parent.parent
+IDENT = re.compile(r'[A-Za-z0-9_]')
+DIAG_LINE = re.compile(
+    r'^(?:(?P<file>.+?):(?P<line>\d+):(?P<col>\d+): )?(?P<sev>error|warning): (?P<msg>.*)$')
+TOP_DECL = re.compile(
+    r'^(?:(?:public|private|export|abstract|shared|unique|extern)[ \t]+)*'
+    r'(fn|mut|void|struct|class|enum|module)[ \t]+([A-Za-z_][A-Za-z0-9_]*)')
+SYMBOL_KIND = {'fn': 12, 'mut': 12, 'void': 12, 'struct': 23, 'class': 5,
+               'enum': 10, 'module': 2}
+SEVERITY = {'error': 1, 'warning': 2}
+MAX_STAGED = 2000  # .km/.kmm files copied per compile
+
+_check_mode = None  # None until probed: 'check' or 'fallback'
+
+
+def log(*args):
+    print('km-lsp:', *args, file=sys.stderr, flush=True)
+
+
+# ---------------------------------------------------------------- transport
+
+def read_message(stream):
+    """Return the next decoded JSON message, or None at end of input."""
+    while True:
+        length = None
+        while True:
+            line = stream.readline()
+            if not line:
+                return None
+            line = line.strip()
+            if not line:
+                break
+            if line.lower().startswith(b'content-length:'):
+                length = int(line.split(b':', 1)[1])
+        if length is None:
+            log('message without Content-Length; skipped')
+            continue
+        body = stream.read(length)
+        return json.loads(body.decode('utf-8'))
+
+
+def send(obj):
+    body = json.dumps(obj, separators=(',', ':')).encode('utf-8')
+    out = sys.stdout.buffer
+    out.write(b'Content-Length: %d\r\n\r\n' % len(body))
+    out.write(body)
+    out.flush()
+
+
+def respond(req_id, result=None, error=None):
+    msg = {'jsonrpc': '2.0', 'id': req_id}
+    if error is not None:
+        msg['error'] = error
+    else:
+        msg['result'] = result
+    send(msg)
+
+
+def notify(method, params):
+    send({'jsonrpc': '2.0', 'method': method, 'params': params})
+
+
+# ----------------------------------------------------------------- compiler
+
+def komodo_binary():
+    env = os.environ.get('KOMODO')
+    if env:
+        return env
+    local = ROOT / 'komodo'
+    if local.exists():
+        return str(local)
+    return shutil.which('komodo') or 'komodo'
+
+
+def run_compiler(args, cwd):
+    proc = subprocess.run([komodo_binary(), *args], cwd=cwd, capture_output=True,
+                          text=True, timeout=120, stdin=subprocess.DEVNULL)
+    return proc.returncode, proc.stdout + proc.stderr
+
+
+def compile_output(path, target_name, cwd):
+    """Run the compiler on target_name inside cwd and return its output text."""
+    global _check_mode
+    if _check_mode in (None, 'check'):
+        rc, out = run_compiler(['check', target_name], cwd)
+        if 'unknown command' in out and 'check' in out:
+            _check_mode = 'fallback'
+            log('komodo has no `check` command; using `-S -q`')
+        else:
+            _check_mode = 'check'
+            return out
+    _, out = run_compiler(['-S', '-q', target_name], cwd)
+    return out
+
+
+def stage_sources(path, text, dest):
+    """Copy the .km/.kmm tree around path into dest, with path's buffer text.
+
+    The compiler writes .asm and .komodo/ next to its input, so it never runs
+    in the user's directory. Hidden and node_modules directories are skipped.
+    """
+    root = path.parent
+    copied = 0
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if not d.startswith('.') and d != 'node_modules']
+        for name in filenames:
+            if not name.endswith(('.km', '.kmm')):
+                continue
+            src = Path(dirpath, name)
+            if src == path:
+                continue
+            rel = src.relative_to(root)
+            if copied >= MAX_STAGED:
+                break
+            (Path(dest) / rel).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy(src, Path(dest) / rel)
+            copied += 1
+    (Path(dest) / path.name).write_text(text, encoding='utf-8')
+
+
+def diagnostics_for(path, text):
+    """Compile text as path (the buffer, or the file's contents).
+
+    Returns a list of (line, col, severity, message); line is None when the
+    compiler printed no location.
+    """
+    with tempfile.TemporaryDirectory(prefix='km-lsp-') as tmp:
+        stage_sources(path, text, tmp)
+        out = compile_output(path, path.name, tmp)
+    found = []
+    for raw in out.splitlines():
+        m = DIAG_LINE.match(raw.strip())
+        if not m:
+            continue
+        if m.group('file') and Path(m.group('file')).name != path.name:
+            continue  # error in an imported file; not shown in this buffer
+        line = int(m.group('line')) if m.group('file') else None
+        col = int(m.group('col')) if m.group('file') else None
+        found.append((line, col, SEVERITY[m.group('sev')], m.group('msg')))
+    return found
+
+
+def to_lsp_diagnostic(lines, line, col, severity, message):
+    if line is None:
+        start_l, start_c = 0, 0
+        end_c = len(lines[0]) if lines else 0
+        end_l = 0
+    else:
+        start_l = min(max(line - 1, 0), max(len(lines) - 1, 0))
+        text = lines[start_l] if lines else ''
+        start_c = min(max(col - 1, 0), len(text))
+        end_c = start_c
+        while end_c < len(text) and IDENT.match(text[end_c]):
+            end_c += 1
+        if end_c == start_c:
+            end_c = min(start_c + 1, len(text))
+        end_l = start_l
+    return {
+        'range': {'start': {'line': start_l, 'character': start_c},
+                  'end': {'line': end_l, 'character': end_c}},
+        'severity': severity,
+        'source': 'komodo',
+        'message': message,
+    }
+
+
+# ------------------------------------------------------------------- server
+
+class Server:
+    def __init__(self):
+        self.docs = {}          # uri -> buffer text
+        self.shutdown_requested = False
+
+    @staticmethod
+    def path_of(uri):
+        parsed = urlparse(uri)
+        if parsed.scheme != 'file':
+            return None
+        return Path(unquote(parsed.path))
+
+    def text_of(self, uri, path):
+        if uri in self.docs:
+            return self.docs[uri]
+        return path.read_text(encoding='utf-8') if path.exists() else ''
+
+    def publish(self, uri, diagnostics):
+        notify('textDocument/publishDiagnostics', {'uri': uri, 'diagnostics': diagnostics})
+
+    def check(self, uri):
+        path = self.path_of(uri)
+        if path is None:
+            return  # untitled or remote buffers cannot be compiled
+        buffer = self.docs.get(uri)
+        if buffer is None:
+            buffer = path.read_text(encoding='utf-8') if path.exists() else ''
+        lines = buffer.split('\n')
+        try:
+            found = diagnostics_for(path, buffer)
+        except (OSError, subprocess.TimeoutExpired) as err:
+            log('compile failed:', err)
+            return
+        diags = [to_lsp_diagnostic(lines, *item) for item in found]
+        self.publish(uri, diags)
+
+    def document_symbols(self, uri):
+        path = self.path_of(uri)
+        if path is None:
+            return []
+        lines = self.text_of(uri, path).split('\n')
+        starts = []
+        for i, text in enumerate(lines):
+            m = TOP_DECL.match(text)
+            if m:
+                starts.append((i, m.group(1), m.group(2)))
+        symbols = []
+        for n, (i, keyword, name) in enumerate(starts):
+            end = len(lines) - 1
+            for j in range(i + 1, len(lines)):
+                t = lines[j]
+                if t.strip() and not t[0].isspace() and not t.startswith(('//', '/*', '*')):
+                    end = j - 1
+                    break
+            while end > i and not lines[end].strip():
+                end -= 1
+            col = lines[i].find(name)
+            symbols.append({
+                'name': name,
+                'kind': SYMBOL_KIND[keyword],
+                'range': {'start': {'line': i, 'character': 0},
+                          'end': {'line': end, 'character': len(lines[end])}},
+                'selectionRange': {'start': {'line': i, 'character': col},
+                                   'end': {'line': i, 'character': col + len(name)}},
+            })
+        return symbols
+
+    def handle(self, msg):
+        method = msg.get('method')
+        req_id = msg.get('id')
+        params = msg.get('params') or {}
+
+        if method == 'initialize':
+            respond(req_id, {
+                'capabilities': {
+                    'textDocumentSync': {
+                        'openClose': True,
+                        'change': 1,  # full text sync
+                        'save': {'includeText': False},
+                    },
+                    'documentSymbolProvider': True,
+                },
+                'serverInfo': {'name': 'km-lsp', 'version': '0.1.0'},
+            })
+        elif method == 'initialized':
+            pass
+        elif method == 'textDocument/didOpen':
+            doc = params['textDocument']
+            self.docs[doc['uri']] = doc['text']
+            self.check(doc['uri'])
+        elif method == 'textDocument/didChange':
+            changes = params.get('contentChanges') or []
+            if changes:
+                self.docs[params['textDocument']['uri']] = changes[-1]['text']
+            # no compile here: diagnostics refresh on open and save only
+        elif method == 'textDocument/didSave':
+            uri = params['textDocument']['uri']
+            if 'text' in params:
+                self.docs[uri] = params['text']
+            self.check(uri)
+        elif method == 'textDocument/didClose':
+            uri = params['textDocument']['uri']
+            self.docs.pop(uri, None)
+            self.publish(uri, [])
+        elif method == 'textDocument/documentSymbol':
+            uri = params['textDocument']['uri']
+            respond(req_id, self.document_symbols(uri))
+        elif method == 'shutdown':
+            self.shutdown_requested = True
+            respond(req_id, None)
+        elif method == 'exit':
+            sys.exit(0 if self.shutdown_requested else 1)
+        elif req_id is not None:
+            respond(req_id, error={'code': -32601, 'message': 'method not found: %s' % method})
+
+    def serve(self, stream):
+        while True:
+            msg = read_message(stream)
+            if msg is None:
+                return
+            try:
+                self.handle(msg)
+            except SystemExit:
+                raise
+            except Exception as err:  # keep serving; report to the client
+                log('error handling %s: %s' % (msg.get('method'), err))
+                if msg.get('id') is not None:
+                    respond(msg['id'], error={'code': -32603, 'message': str(err)})
+
+
+def main():
+    Server().serve(sys.stdin.buffer)
+
+
+if __name__ == '__main__':
+    main()
