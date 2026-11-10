@@ -247,6 +247,7 @@ a `[Statement]` of mixed concrete subclasses. A hand-written clone with one
 conventions **[tested]** on a mini AST (abstract base, subclasses with
 defaulted fields, `Expr?` children, list children):
 
+<!-- doc-skip -->
 ```km
 // must be `mut`: a pure `fn` may not mutate even a fresh local object
 // ("pure `fn` ... mutates state" — tested)

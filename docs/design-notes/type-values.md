@@ -599,3 +599,11 @@ warning, and removal would be a separate approved step.
     standard `14695981039346656037` (it looks like a transposed digit).
     Harmless for hashing but ids are forever; confirm freezing the existing
     function rather than "fixing" it.
+
+## Maintainer decisions (answers to the open questions)
+
+1. **Generic type application:** `Box<int>` in type positions; value position uses `type(Box<int>)`. `[int]` stays an array.
+2. **Id input:** hash the qualified `module::Name`, not the bare name.
+3. **Inference:** `new Box(7)` infers `Box<int>` from the arguments; `new Box<int>(7)` stays available.
+4. **Object header:** keep the existing dense-index header and vtable; the 64-bit hash is a second public id served from a table (zero cost when unused).
+5. Standing constraints: additive only, within the perf budgets. Still open: questions 4 to 7 and 9 to 10 of the note (variance, Map key hashing, `typeof` on untyped values, bounded type values, contextual `type`, freezing the hash constants).
