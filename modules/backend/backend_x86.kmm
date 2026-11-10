@@ -1418,8 +1418,8 @@ fn asmHas(line: string, sub: string): bool
 
 extern fn km_str_starts(s: string, p: string): int
 extern fn km_str_ends(s: string, p: string): int
-extern fn km_str_byte(s: string, i: int): int
 extern fn km_asm_spanbad(s: string): int
+extern fn km_asm_peepstart(s: string): int
 
 fn asmStarts(line: string, p: string): bool
     return km_str_starts(line, p) == 1
@@ -1512,12 +1512,7 @@ mut X86Backend::peepholeAt(src: [string], i: int): [string]
     let n = #src
     let a = src[i]
     m_pSpan = 1
-    // every pattern below opens with "    m…", "    p…", "    c…", "    u…" or "    s…"
-    if a.length > 5 then
-        let c4 = km_str_byte(a, 4)
-        if c4 != 109 and c4 != 112 and c4 != 99 and c4 != 117 and c4 != 115 then
-            return []
-    else
+    if km_asm_peepstart(a) == 0 then
         return []
 
     // store then reload of the same slot: the reload is a no-op
