@@ -1413,11 +1413,14 @@ extern fn km_str_find(s: string, sub: string): int
 fn asmHas(line: string, sub: string): bool
     return km_str_find(line, sub) >= 0
 
+extern fn km_str_starts(s: string, p: string): int
+extern fn km_str_ends(s: string, p: string): int
+
 fn asmStarts(line: string, p: string): bool
-    return line.length >= p.length and line[0 to p.length] == p
+    return km_str_starts(line, p) == 1
 
 fn asmEnds(line: string, p: string): bool
-    return line.length >= p.length and line[line.length - p.length to line.length] == p
+    return km_str_ends(line, p) == 1
 
 // A line that may sit inside a spill span: straight-line code only.
 fn spanSafe(line: string): bool

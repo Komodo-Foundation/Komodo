@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+# km-prof — sample-profile kmc (perf/ptrace unavailable).  Not part of the product build.
+#   tools/km-prof [RUNS] [-- kmc args...]    default: 30 runs of `kmc main.km x86`
+# Links a throwaway ./.build/kmc.prof with tools/km-prof.c, runs it RUNS times,
+# and prints self time per function plus a per-phase split.
+set -euo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"; cd "$here"
+runs="${1:-30}"; [[ "$runs" == -- ]] && runs=30
+args=(main.km x86); if [[ " $* " == *" -- "* ]]; then args=("${@:$(( $(printf '%s\n' "$@" | grep -nx -- '--' | cut -d: -f1) + 1 ))}"); fi
+out=".build/kmc.prof"
+gcc -O1 -c tools/km-prof.c -o .build/km-prof.o
+gcc -no-pie -o "$out" .build/asm/*.o .build/obj/*.o .build/km-prof.o -lm -l:libgc.so.1
+nm -n "$out" | grep -E ' [TtW] ' | grep -vE '\.L[0-9]+$' > .build/prof.syms
+log=.build/prof.raw; rm -f "$log"
+for ((i = 0; i < runs; i++)); do KM_PROF_OUT="$log" "$out" "${args[@]}" >/dev/null; done
+python3 -I - "$log" .build/prof.syms <<'PY'
+import sys, struct, bisect, collections
+raw = open(sys.argv[1], 'rb').read()
+syms = [(int(l.split()[0], 16), l.split()[2]) for l in open(sys.argv[2])]
+addrs = [a for a, _ in syms]
+lo, hi = addrs[0], addrs[-1] + 0x10000
+def name(a):
+    if a < lo or a > hi: return None
+    i = bisect.bisect_right(addrs, a) - 1
+    return syms[i][1] if i >= 0 else None
+PH = [('Lexer', 'lex'), ('Parser', 'parse'), ('Analyzer', 'analyze'), ('Optimizer', 'optimize'),
+      ('Codegen', 'codegen'), ('X86Backend', 'backend'), ('CBackend', 'backend'), ('StackVMBackend', 'backend')]
+def phase(f):
+    for p, ph in PH:
+        if f.startswith(p + '__'): return ph
+    return None
+self_ = collections.Counter(); inc = collections.Counter(); byph = collections.defaultdict(collections.Counter)
+owner = collections.Counter(); tot = 0; pos = 0
+while pos < len(raw):
+    n = struct.unpack_from('<Q', raw, pos)[0]; pos += 8
+    fr = struct.unpack_from('<%dQ' % n, raw, pos); pos += 8 * n
+    tot += 1
+    leaf = name(fr[0]); tag = leaf
+    if leaf is None:                       # libc / GC leaf: charge the caller
+        cand = name(fr[1]) if len(fr) > 1 else None
+        if cand is None and len(fr) > 2: cand = name(fr[2])
+        tag = (cand or '?') + ' [libc]'
+    chain = [name(a) for a in fr[2:]] + ([name(fr[1])] if leaf else [])
+    chain = [c for c in chain if c]
+    ph = None
+    for c in [tag.replace(' [libc]', '')] + chain:
+        ph = phase(c)
+        if ph: break
+    if ph is None: ph = 'driver/other'
+    own = None
+    for c in [tag.replace(' [libc]', '')] + chain:
+        if c and not c.startswith('km_') and c != '?': own = c; break
+    owner[own or '?'] += 1
+    self_[tag] += 1; byph[ph][tag] += 1
+    for c in set(chain + [tag]): inc[c] += 1
+print('samples: %d (~%.0f ms/run assuming 1kHz over runs)' % (tot, 0))
+print('\nphase split:')
+for ph, c in sorted(byph.items(), key=lambda x: -sum(x[1].values())):
+    print('  %-14s %5.1f%%' % (ph, 100.0 * sum(c.values()) / tot))
+for ph, c in sorted(byph.items(), key=lambda x: -sum(x[1].values())):
+    print('\n[%s] top self:' % ph)
+    for f, k in c.most_common(15): print('  %5.1f%%  %s' % (100.0 * k / tot, f))
+print('\ntop 25 by owner (runtime helpers charged to their nearest compiler caller):')
+for f, k in owner.most_common(25): print('  %5.1f%%  %s' % (100.0 * k / tot, f))
+print('\noverall top 15 self:')
+for f, k in self_.most_common(15): print('  %5.1f%%  %s' % (100.0 * k / tot, f))
+PY

@@ -38,6 +38,7 @@ public
         m_strict = strict
         m_typeIdx = new StrIndex()
         m_fnIdx = new StrIndex()
+        m_ownIdx = new StrIndex()
 
     mut setSourceMap(files: [string], starts: [int])
         m_srcFiles = files
@@ -294,12 +295,14 @@ public
         let ti = typeIndex(d.name)
         for f in d.fields do
             m_ownMembers += [d.name + "." + f.name]
+            m_ownIdx.add(d.name + "." + f.name, 0)
             if f.visibility == "private" then
                 m_privMembers += [d.name + "." + f.name]
         for m in d.methods do
             if not m.isConstructor then
                 m_typeOwnMethods[ti] += [m.name]
                 m_ownMembers += [d.name + "." + m.name]
+                m_ownIdx.add(d.name + "." + m.name, 0)
                 if m.visibility == "private" then
                     m_privMembers += [d.name + "." + m.name]
 
@@ -416,7 +419,7 @@ public
         let cur = typeName
         let guard = 0
         while cur != "" do
-            if (cur + "." + field) in m_ownMembers then
+            if m_ownIdx.has(cur + "." + field) then
                 return cur
             cur = typeParentOf(cur)
             guard += 1
@@ -1096,6 +1099,7 @@ private
     // class members: "Class.member" for each own field and method, and the
     // subset declared under a `private` section
     m_ownMembers: [string] = []
+    m_ownIdx: StrIndex            // hashes m_ownMembers
     m_privMembers: [string] = []
     m_fnMod: [string] = []       // owning module name ("" for the program)
     // module of the function body currently being checked (for privacy)

@@ -686,6 +686,19 @@ int64_t km_str_find(const char *s, const char *sub)
     return p ? (int64_t)(p - s) : -1;
 }
 
+/* s starts / ends with p — no slice, no allocation (the x86 peephole asks
+ * this of every asm line many times over). */
+int64_t km_str_starts(const char *s, const char *p)
+{
+    while (*p) if (*s++ != *p++) return 0;
+    return 1;
+}
+int64_t km_str_ends(const char *s, const char *p)
+{
+    size_t n = strlen(s), m = strlen(p);
+    return n >= m && memcmp(s + n - m, p, m) == 0;
+}
+
 /* `s[start to end]` for a caller that already knows `n == #s` — the same
  * clamping as km_str_slice, without re-measuring `s`.  The lexer cuts
  * every token out of a source of hundreds of KB; measuring up to `end`
