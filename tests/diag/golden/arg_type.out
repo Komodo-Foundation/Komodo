@@ -1,0 +1,14 @@
+error[K0020]: argument 1 to 'add': type 'string' is not assignable to 'int'
+ --> arg_type.km:7:19
+  |
+5 | 
+6 | void main()
+7 |     console.print(add("x", 2))
+  |                   ^^^ argument 1 to 'add': type 'string' is not assignable to 'int'
+  = help: Pass a value of type 'int', or convert it first (for example `string(x)` or `int(x)`).
+  = why: Each argument must have the type the function declared for that parameter. A value of type
+         'string' cannot stand in for 'int', because the function body would then treat it as the
+         wrong kind of value.
+  = explain: run `komodo explain K0020` for more detail
+
+error: aborting due to previous error

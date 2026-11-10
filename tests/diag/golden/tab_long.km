@@ -1,0 +1,3 @@
+void main()
+	let s = "a very long string literal that goes on and on and on and on and on and on and on"
+	print(sx)

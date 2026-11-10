@@ -141,11 +141,15 @@ static int km_sym_usable(const Elf64_Sym *s)
         return 0;
     if (s->st_name == 0 || s->st_name >= km_symstr_len)
         return 0;
-    const char *n = km_symstr + s->st_name;
-    size_t len = strlen(n);
-    if (len > 2 && n[len - 2] == '$' && n[len - 1] == 'f')
+    const char *nm = km_symstr + s->st_name;
+    /* the KM_DEBUG extent markers share an address with the first function;
+     * which of the two the linker lists first must not decide the name */
+    if (strcmp(nm, "km_text_begin") == 0 || strcmp(nm, "km_text_end") == 0)
+        return 0;
+    size_t len = strlen(nm);
+    if (len > 2 && nm[len - 2] == '$' && nm[len - 1] == 'f')
         return 0;               /* a function's register-argument entry */
-    return strchr(n, '.') == NULL;
+    return strchr(nm, '.') == NULL;
 }
 
 static void km_idx_sift(KmSymIdx *a, size_t root, size_t n)
@@ -256,6 +260,17 @@ static const char *km_exe_symbol(uintptr_t pc, int *komodo)
         if (lo == 0)
             return NULL;
         best = &km_sym[km_idx[lo - 1].sym];
+        /* equal addresses (km_text_begin and the first function): the
+         * heap sort is unstable, so prefer a sized function symbol */
+        for (size_t j = lo - 1; ; j--) {
+            const Elf64_Sym *c = &km_sym[km_idx[j].sym];
+            if (ELF64_ST_TYPE(c->st_info) == STT_FUNC && c->st_size) {
+                best = c;
+                break;
+            }
+            if (j == 0 || km_idx[j - 1].addr != km_idx[lo - 1].addr)
+                break;
+        }
     } else {
         for (size_t i = 0; i < km_nsym; i++) {
             const Elf64_Sym *s = &km_sym[i];

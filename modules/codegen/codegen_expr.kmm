@@ -91,6 +91,9 @@ void Codegen::genExpr(e: Expression?)
     else if e is CharLiteral then
         // a char literal is a one-character string; `'a'` → `"a"`
         m_backend.loadStrLit("\"" + e.value[1 to (#e.value - 1)] + "\"")
+    // an f32 value is a double rounded to single precision
+    if e != null and e.numKind == "f32" then
+        m_backend.roundF32()
 
 // `throw expr` — evaluate the message string into the accumulator and
 // hand it to the runtime, which longjmps to the innermost protected call
@@ -152,6 +155,8 @@ void Codegen::genUnary(e: UnaryOp)
             m_backend.negFloat()
         else
             m_backend.negInt()
+            if e.numKind != "" and e.numKind != "f32" then
+                m_backend.normInt(e.numKind)
     else if e.op == "not" then
         genExpr(e.operand)
         m_backend.notBool()
@@ -256,7 +261,10 @@ void Codegen::genCompare(e: BinaryOp)
     genExpr(e.left)
     m_backend.pushAcc()
     genExpr(e.right)
-    m_backend.compareInt(e.op)
+    if nk(e.left) != "" or nk(e.right) != "" then
+        m_backend.compareIntK(e.op, nk(e.left) or nk(e.right))
+    else
+        m_backend.compareInt(e.op)
 
 // `s1 < s2` etc. — lexicographic, via km_str_cmp (like C strcmp).
 void Codegen::genStrCompare(e: BinaryOp)
@@ -313,7 +321,25 @@ void Codegen::genIntArith(e: BinaryOp)
     genExpr(e.left)
     m_backend.pushAcc()
     genExpr(e.right)
-    m_backend.binaryInt(e.op)
+    intOp(e.op, e.numKind)
+
+mut Codegen::nk(x: Expression?): string
+    if x == null then
+        return ""
+    return x.numKind
+
+// `binaryInt`, plus width / unsigned handling when the result type has a
+// narrow kind (`k` = "" for plain int).
+void Codegen::intOp(op: string, k: string)
+    if k == "" or k == "f32" then
+        m_backend.binaryInt(op)
+    else
+        m_backend.binaryIntK(op, k)
+
+void Codegen::floatOp(op: string, k: string)
+    m_backend.binaryFloat(op)
+    if k == "f32" then
+        m_backend.roundF32()
 
 void Codegen::genFloatArith(e: BinaryOp)
     genOperandAsFloat(e.left)
@@ -324,7 +350,10 @@ void Codegen::genFloatArith(e: BinaryOp)
 void Codegen::genOperandAsFloat(e: Expression?)
     genExpr(e)
     if exprType(e) != "float" then
-        m_backend.cvtIntToFloat()
+        if nk(e) == "u64" or nk(e) == "uint" then
+            m_backend.cvtUIntToFloat()
+        else
+            m_backend.cvtIntToFloat()
 
 // Array literal → target-defined  [ len | cap | elems… ]  handle.
 // A `[float]` literal widens any integer element (`[1, 2.5]` ⇒ [float]).
@@ -368,6 +397,10 @@ mut Codegen::argTag(a: Expression?): int
     if a is BoolLiteral then
         return 3
     let t = exprType(a)
+    if nk(a) == "u64" or nk(a) == "uint" then
+        return 5
+    if nk(a) == "f32" then
+        return 6
     if isArrayType(t) then
         return arrayTag(t)
     if t == "float" then
@@ -497,6 +530,20 @@ void Codegen::genCall(e: CallExpr)
         genExpr(e.args[0])
         if exprType(e.args[0]) == "float" then
             m_backend.cvtFloatToInt()
+        return
+
+    // `u8(x)` … `i32(x)` / `f32(x)` — truncating (wrapping) conversion.
+    if isConvName(e.name) and #e.args == 1 and not hasFn(e.name) then
+        let a = e.args[0]
+        if e.name == "f32" then
+            genOperandAsFloat(a)
+            m_backend.roundF32()
+            return
+        genExpr(a)
+        if exprType(a) == "float" then
+            m_backend.cvtFloatToInt()
+        if intBits(e.name) < 64 then
+            m_backend.normInt(e.name)
         return
 
     // `expr.method(args)` on a computed receiver (a field of a field, an
@@ -685,6 +732,10 @@ void Codegen::genExternCall(e: CallExpr)
     // every `float` value is inside Komodo.
     if rawRetType(e.name) == "f32" then
         m_backend.cvtF32ToDouble()
+    // a narrow integer return leaves the upper bits of rax undefined
+    let rr = rawRetType(e.name)
+    if rr != "" and rr != "f32" and narrowKind(rr) != "" then
+        m_backend.normInt(rr)
 
     let retStruct = externRetStructName(e.name)
     if retStruct != "" then

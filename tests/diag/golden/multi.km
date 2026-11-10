@@ -1,0 +1,9 @@
+fn a(): int
+    return "x"
+
+fn b(): int
+    return zz
+
+void main()
+    break
+    print(a() + b())

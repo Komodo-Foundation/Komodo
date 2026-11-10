@@ -272,6 +272,28 @@ mut CBackend::binaryInt(op_: string)
         o = "^"
     stmt("acc = " + a + " " + o + " acc;")
 
+mut CBackend::normInt(k: string)
+    let ct = k + "_t"
+    if k[0] == "i" then
+        ct = "int" + k[1 to #k] + "_t"
+    else
+        ct = "uint" + k[1 to #k] + "_t"
+    stmt("acc = (" + ct + ")acc;")
+
+mut CBackend::binaryIntU(op_: string)
+    let a = popTmp()
+    stmt("acc = (int64_t)((uint64_t)" + a + " " + op_ + " (uint64_t)acc);")
+
+mut CBackend::compareIntU(op_: string)
+    let a = popTmp()
+    stmt("acc = ((uint64_t)" + a + " " + op_ + " (uint64_t)acc);")
+
+mut CBackend::cvtUIntToFloat()
+    stmt("acc = km_from_float((double)(uint64_t)acc);")
+
+mut CBackend::roundF32()
+    stmt("acc = km_from_float((double)(float)KF(acc));")
+
 mut CBackend::compareInt(op_: string)
     let a = popTmp()
     stmt("acc = (" + a + " " + op_ + " acc);")
