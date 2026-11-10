@@ -1,0 +1,13 @@
+error[K0064]: function 'pick' must return a value on every path
+ --> missing_return.km:1:1
+  |
+1 | / fn pick(n: int): int
+2 | |     if n > 0 then
+3 | |         return 1
+  | |________________^ function 'pick' must return a value on every path
+  = help: Add a final `return`, or an `else` branch that returns.
+  = why: A function with a return type must end in a `return` (or `throw`) no matter which branch
+         runs. Here control can reach the end of 'pick' without returning anything.
+  = explain: run `komodo explain K0064` for more detail
+
+error: aborting due to previous error

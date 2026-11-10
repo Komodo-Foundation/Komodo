@@ -1,0 +1,4 @@
+void main()
+    let big: int = 70000
+    let s: u16 = big
+    print(s)

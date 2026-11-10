@@ -1,0 +1,4 @@
+void main()
+    let y = 3
+    if y == y then
+        print("same")

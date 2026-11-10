@@ -1,0 +1,455 @@
+module km_compiler
+
+// ═══════════════════════════════════════════════════════════════════════
+//  Diagnostics renderer — the rustc-style layout.
+//
+//  The analyser, parser and driver still produce one line each, exactly as
+//  they always did:
+//
+//      file.km:5:19: error: undefined name 'cont' (did you mean 'count'?)
+//
+//  This file turns such a line (plus the source file it points into) into
+//
+//      error[K0001]: undefined name 'cont'
+//       --> file.km:5:19
+//        |
+//      5 |     print(cont)
+//        |           ^^^^ undefined name 'cont'
+//        = help: did you mean 'count'?
+//        = why: ...
+//
+//  The code, the `why` text and the `help` template come from the catalog
+//  (diag_catalog.kmm, generated from docs/errors/catalog.txt by
+//  tools/gen-diag.py).  A message the catalog does not know still gets the
+//  snippet, just without a code.  Nothing here runs unless the driver was
+//  asked for the rich layout (`rich` argument), so the default output stays
+//  the machine-parseable one-liner that tools and tests read.
+// ═══════════════════════════════════════════════════════════════════════
+
+let diagRich = false
+let diagColor = false
+let diagWidth = 100
+let diagEsc = ""
+let diagGut = 1
+let diagSrcName = ""
+let diagSrc: [string] = []
+
+void diagSetMode(rich: bool, color: bool, width: int)
+    diagRich = rich
+    diagColor = color
+    if width >= 40 then
+        diagWidth = width
+
+// One diagnostic line, already mapped to its file: "file:L:C: sev: msg"
+// or "sev: msg" when it has no position.
+struct DiagItem
+    file: string = ""
+    line: int = 0
+    col: int = 0
+    sev: string = "error"
+    msg: string = ""
+    ok: bool = false
+
+fn dgIsDigit(c: char): bool
+    return c >= "0" and c <= "9"
+
+fn dgIndexFrom(s: string, sub: string, from: int): int
+    let n = s.length
+    let m = sub.length
+    let i = from
+    while i + m <= n do
+        if s[i to (i + m)] == sub then
+            return i
+        i += 1
+    return 0 - 1
+
+fn dgStarts(s: string, p: string): bool
+    return s.length >= p.length and s[0 to p.length] == p
+
+fn dgEnds(s: string, p: string): bool
+    return s.length >= p.length and s[(s.length - p.length) to s.length] == p
+
+fn dgSplit(s: string, sep: string): [string]
+    let out: [string] = []
+    let i = 0
+    while true do
+        let j = dgIndexFrom(s, sep, i)
+        if j < 0 then
+            out += [s[i to s.length]]
+            return out
+        out += [s[i to j]]
+        i = j + sep.length
+    return out
+
+fn dgNum(s: string): int
+    let v = 0
+    let i = 0
+    while i < s.length do
+        v = v * 10 + digitVal(s[i])
+        i += 1
+    return v
+
+fn dgRepeat(s: string, n: int): string
+    let out = ""
+    let i = 0
+    while i < n do
+        out += s
+        i += 1
+    return out
+
+fn dgPad(s: string, n: int): string
+    return dgRepeat(" ", n - s.length) + s
+
+// "file:L:C: error: msg" or "error: msg" → DiagItem (ok=false: not a diagnostic)
+fn dgParse(text: string): DiagItem
+    let sevs = ["error", "warning"]
+    for sv in sevs do
+        if dgStarts(text, sv + ": ") then
+            return new DiagItem("", 0, 0, sv, text[(sv.length + 2) to text.length], true)
+    let i = 0
+    let n = text.length
+    while i < n do
+        if text[i] == ":" and i + 1 < n and dgIsDigit(text[i + 1]) then
+            let j = i + 1
+            while j < n and dgIsDigit(text[j]) do
+                j += 1
+            if j < n and text[j] == ":" and j + 1 < n and dgIsDigit(text[j + 1]) then
+                let k = j + 1
+                while k < n and dgIsDigit(text[k]) do
+                    k += 1
+                for sv in sevs do
+                    if dgStarts(text[k to n], ": " + sv + ": ") then
+                        return new DiagItem(text[0 to i], dgNum(text[(i + 1) to j]), dgNum(text[(j + 1) to k]), sv, text[(k + sv.length + 4) to n], true)
+        i += 1
+    return new DiagItem("", 0, 0, "error", "", false)
+
+// ── pattern matching: `*` stands for any text; returns ["ok", cap1, ...] ──
+fn dgGlob(pat: string, s: string): [string]
+    let segs = dgSplit(pat, "*")
+    let fail: [string] = []
+    let caps = ["ok"]
+    let first = segs[0]
+    if not dgStarts(s, first) then
+        return fail
+    let pos = first.length
+    if #segs == 1 then
+        if s.length == pos then
+            return caps
+        return fail
+    let k = 1
+    while k < #segs do
+        let seg = segs[k]
+        if k == #segs - 1 then
+            // the tail must be a suffix, and must not overlap what is consumed
+            if s.length - seg.length < pos or not dgEnds(s, seg) then
+                return fail
+            caps += [s[pos to (s.length - seg.length)]]
+            return caps
+        let at = dgIndexFrom(s, seg, pos)
+        if at < 0 then
+            return fail
+        caps += [s[pos to at]]
+        pos = at + seg.length
+        k += 1
+    return caps
+
+// "text (did you mean 'x'?)" → ["text", "x"]; otherwise [text, ""]
+fn dgSplitSuggest(msg: string): [string]
+    let tag = " (did you mean '"
+    let at = dgIndexFrom(msg, tag, 0)
+    if at >= 0 and dgEnds(msg, "'?)") then
+        let sug = msg[(at + tag.length) to (msg.length - 3)]
+        return [msg[0 to at], sug]
+    return [msg, ""]
+
+// ── colour ──
+fn dgPaint(style: string, s: string): string
+    if not diagColor then
+        return s
+    return diagEsc + "[" + style + "m" + s + diagEsc + "[0m"
+
+// ── source access ──
+mut dgSource(path: string): [string]
+    if path == diagSrcName then
+        return diagSrc
+    let lines: [string] = []
+    let t = file::read_all(path)?
+    if t != null then
+        let all: string = t or ""
+        lines = dgSplit(all, "\n")
+    diagSrcName = path
+    diagSrc = lines
+    return lines
+
+fn dgExpand(s: string): string
+    let out = ""
+    let i = 0
+    while i < s.length do
+        if s[i] == "\t" then
+            out += "    "
+        else if s[i] != "\r" then
+            out += s[i to (i + 1)]
+        i += 1
+    return out
+
+// columns on screen taken by the first `n` characters of `s` (tab = 4)
+fn dgWidthOf(s: string, n: int): int
+    let w = 0
+    let i = 0
+    while i < n and i < s.length do
+        if s[i] == "\t" then
+            w += 4
+        else
+            w += 1
+        i += 1
+    return w
+
+fn dgIsWord(c: char): bool
+    return (c >= "a" and c <= "z") or (c >= "A" and c <= "Z") or dgIsDigit(c) or c == "_"
+
+// how many characters the token starting at `at` (0-based) covers
+fn dgTokLen(line: string, at: int): int
+    let n = line.length
+    if at >= n then
+        return 1
+    let c = line[at]
+    let i = at + 1
+    if dgIsWord(c) then
+        while i < n and dgIsWord(line[i]) do
+            i += 1
+        return i - at
+    if c == "\"" or c == "`" or c == "'" then
+        while i < n and line[i] != c do
+            if line[i] == "\\" then
+                i += 1
+            i += 1
+        if i < n then
+            i += 1
+        return i - at
+    if c == "=" or c == "!" or c == "<" or c == ">" or c == "+" or c == "-" or c == "*" or c == "/" or c == "%" then
+        if i < n and line[i] == "=" then
+            return 2
+        return 1
+    return 1
+
+fn dgIndentOf(s: string): int
+    let i = 0
+    while i < s.length and (s[i] == " " or s[i] == "\t") do
+        i += 1
+    return i
+
+fn dgBlank(s: string): bool
+    return dgIndentOf(s) >= s.length
+
+// clip a displayed line to `avail` columns, keeping column `keep` visible;
+// returns [clipped text, columns removed from the left + marker width]
+fn dgClip(e: string, avail: int, keep: int): [string]
+    if e.length <= avail then
+        return [e, "0"]
+    let start = 0
+    if keep > avail - 12 then
+        start = keep - avail / 3
+    let stop = start + avail
+    let pre = ""
+    let post = ""
+    if start > 0 then
+        pre = "..."
+    if stop < e.length then
+        post = "..."
+    else
+        stop = e.length
+    let body = e[(start + pre.length) to (stop - post.length)]
+    return [pre + body + post, string(start - pre.length)]
+
+// one `NNN | text` row
+fn dgRow(num: string, w: int, text: string): string
+    return dgPaint("1;34", dgPad(num, w) + " |") + " " + text + "\n"
+
+fn dgBar(w: int): string
+    return dgPaint("1;34", dgRepeat(" ", w + 1) + "|") + "\n"
+
+// The snippet for a diagnostic at d.file:d.line:d.col.  `span` "block"
+// underlines the whole indented block that starts on that line.
+mut dgSnippet(d: DiagItem, label: string, span: string): string
+    let lines = dgSource(d.file)
+    let ln = d.line
+    let sevStyle = "1;31"
+    if d.sev == "warning" then
+        sevStyle = "1;33"
+    let loc = d.file + ":" + string(ln) + ":" + string(d.col)
+    diagGut = 1
+    if ln < 1 or ln > #lines then
+        return dgPaint("1;34", " -->") + " " + loc + "\n"
+
+    // end of a multi-line span
+    let last = ln
+    if span == "block" then
+        let ind = dgIndentOf(lines[ln - 1])
+        let j = ln + 1
+        while j <= #lines and (dgBlank(lines[j - 1]) or dgIndentOf(lines[j - 1]) > ind) do
+            if not dgBlank(lines[j - 1]) then
+                last = j
+            j += 1
+
+    let first = ln - 2
+    if first < 1 then
+        first = 1
+    let w = string(last).length
+    diagGut = w
+    let avail = diagWidth - w - 5
+    let out = dgPaint("1;34", dgRepeat(" ", w) + "-->") + " " + loc + "\n"
+    out += dgBar(w)
+    let k = first
+    while k < ln do
+        let ctx = dgClip(dgExpand(lines[k - 1]), avail, 0)
+        out += dgRow(string(k), w, ctx[0])
+        k += 1
+
+    let srcLine = lines[ln - 1]
+    let e = dgExpand(srcLine)
+    let cs = dgWidthOf(srcLine, d.col - 1)
+    let tl = dgTokLen(srcLine, d.col - 1)
+    let cw = dgWidthOf(srcLine[(d.col - 1) to (d.col - 1 + tl)], tl)
+    if last == ln then
+        let clipped = dgClip(e, avail, cs)
+        let shift = dgNum(clipped[1])
+        let off = cs - shift
+        if cw > avail - off then
+            cw = avail - off
+        if cw < 1 then
+            cw = 1
+        out += dgRow(string(ln), w, clipped[0])
+        out += dgPaint("1;34", dgRepeat(" ", w + 1) + "|") + " " + dgRepeat(" ", off) + dgPaint(sevStyle, dgRepeat("^", cw) + " " + label) + "\n"
+        return out
+    // multi-line span, rustc style
+    let shown = 0
+    k = ln
+    while k <= last do
+        let skip = last - ln > 7 and k > ln + 3 and k < last - 1
+        if skip then
+            if k == ln + 4 then
+                out += dgPaint("1;34", "...") + "\n"
+        else
+            let mark = "| "
+            if k == ln then
+                mark = "/ "
+            let cl2 = dgClip(dgExpand(lines[k - 1]), avail - 2, 0)
+            out += dgPaint("1;34", dgPad(string(k), w) + " |") + " " + dgPaint(sevStyle, mark) + cl2[0] + "\n"
+        k += 1
+    let lastE = dgExpand(lines[last - 1])
+    let under = lastE.length
+    out += dgPaint("1;34", dgRepeat(" ", w + 1) + "|") + " " + dgPaint(sevStyle, "|" + dgRepeat("_", under) + "^ " + label) + "\n"
+    return out
+
+// "{1}" … "{9}" in a template → the captured text
+fn dgFill(tpl: string, caps: [string]): string
+    let out = tpl
+    let i = 1
+    while i < #caps and i < 10 do
+        let tag = "{" + string(i) + "}"
+        let at = dgIndexFrom(out, tag, 0)
+        while at >= 0 do
+            out = out[0 to at] + caps[i] + out[(at + 3) to out.length]
+            at = dgIndexFrom(out, tag, at + caps[i].length)
+        i += 1
+    return out
+
+// word-wrap `text` after a `= tag: ` prefix, continuing under the text
+fn dgNote(w: int, tag: string, text: string, style: string): string
+    let lead = dgRepeat(" ", w + 1) + dgPaint("1;34", "=") + " "
+    let head = dgPaint(style, tag + ":") + " "
+    let indent = dgRepeat(" ", w + 3 + tag.length + 2)
+    let room = diagWidth - (w + 3 + tag.length + 2)
+    if room < 30 then
+        room = 30
+    let words = dgSplit(text, " ")
+    let out = lead + head
+    let col = 0
+    for wd in words do
+        if col > 0 and col + 1 + wd.length > room then
+            out += "\n" + indent
+            col = 0
+        if col > 0 then
+            out += " "
+            col += 1
+        out += wd
+        col += wd.length
+    return out + "\n"
+
+// Find the catalog entry for `msg`; ["code", "why", "help", "span", cap1, ...]
+// or [] when the message is not catalogued.
+fn dgLookup(msg: string): [string]
+    for ent in diagCatalog() do
+        let f = dgSplit(ent, "\t")
+        let caps = dgGlob(f[1], msg)
+        if #caps > 0 then
+            let r = [f[0], dgFill(f[2], caps), dgFill(f[3], caps), f[4]]
+            let i = 1
+            while i < #caps do
+                r += [caps[i]]
+                i += 1
+            return r
+    let none: [string] = []
+    return none
+
+// The code of a message, "" when unknown (used by tests and `explain`).
+fn diagCodeOf(msg: string): string
+    let sp = dgSplitSuggest(msg)
+    let r = dgLookup(sp[0])
+    if #r == 0 then
+        return ""
+    return r[0]
+
+// One diagnostic line → its final text.
+mut diagOne(text: string): string
+    if not diagRich then
+        return text
+    let d = dgParse(text)
+    if not d.ok then
+        return text
+    let sp = dgSplitSuggest(d.msg)
+    let ent = dgLookup(sp[0])
+    let head = d.sev
+    let span = ""
+    let why = ""
+    let help = ""
+    if #ent > 0 then
+        head = d.sev + "[" + ent[0] + "]"
+        why = ent[1]
+        help = ent[2]
+        span = ent[3]
+    let sevStyle = "1;31"
+    if d.sev == "warning" then
+        sevStyle = "1;33"
+    let w = 1
+    let out = dgPaint(sevStyle, head) + dgPaint("1", ": " + sp[0]) + "\n"
+    if d.file != "" then
+        out += dgSnippet(d, sp[0], span)
+        w = diagGut
+    if sp[1] != "" then
+        out += dgNote(w, "help", "did you mean '" + sp[1] + "'?", "1;32")
+    if help != "" then
+        out += dgNote(w, "help", help, "1;32")
+    if why != "" then
+        out += dgNote(w, "why", why, "1")
+    if #ent > 0 then
+        out += dgNote(w, "explain", "run `komodo explain " + ent[0] + "` for more detail", "1;36")
+    return out
+
+// All the diagnostics of one failed compilation (one mapped line each), as
+// the final stderr text.  Machine format: just the lines.  Rich: each one
+// rendered, blank-line separated, then a count.
+mut diagReport(items: [string]): string
+    if not diagRich then
+        return join(items, "\n")
+    let out = ""
+    let errs = 0
+    for it in items do
+        out += diagOne(it) + "\n"
+        if dgStarts(it, "error:") or dgIndexFrom(it, ": error: ", 0) >= 0 then
+            errs += 1
+    if errs > 1 then
+        out += dgPaint("1;31", "error") + dgPaint("1", ": aborting due to " + string(errs) + " errors") + "\n"
+    else
+        out += dgPaint("1;31", "error") + dgPaint("1", ": aborting due to previous error") + "\n"
+    return out[0 to (out.length - 1)]
