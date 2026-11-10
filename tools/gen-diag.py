@@ -14,7 +14,6 @@ from pathlib import Path
 
 root = Path(__file__).resolve().parent.parent
 src = root / 'docs/errors/catalog.txt'
-check = '--check' in sys.argv[1:]
 
 
 def parse():
@@ -72,7 +71,7 @@ def kmm(ents):
 def page(e):
     t = ['# ' + e['code'] + ': ' + e['title'], '',
          'Message: `' + e['match'].replace('*', '…') + '`', '',
-         '## What went wrong', '', e.get('why', ''), '']
+         '## What went wrong', '', re.sub(r'\{\d\}', '…', e.get('why', '')), '']
     if e.get('help'):
         t += ['**How to fix it:** ' + re.sub(r'\{\d\}', '…', e['help']), '']
     if 'bad' in e:
@@ -108,18 +107,24 @@ def index(ents):
     return '\n'.join(t) + '\n'
 
 
-ents = parse()
-outputs = {root / 'modules/support/diag_catalog.kmm': kmm(ents), root / 'docs/errors/README.md': index(ents)}
-for e in ents:
-    outputs[root / 'docs/errors' / (e['code'] + '.md')] = page(e).rstrip('\n') + '\n'
-stale = 0
-for p, text in outputs.items():
-    if p.exists() and p.read_text() == text:
-        continue
-    stale += 1
-    if not check:
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(text)
-if check:
-    sys.exit(1 if stale else 0)
-print('catalog: %d entries, %d files written' % (len(ents), stale))
+def main():
+    check = '--check' in sys.argv[1:]
+    ents = parse()
+    outputs = {root / 'modules/support/diag_catalog.kmm': kmm(ents), root / 'docs/errors/README.md': index(ents)}
+    for e in ents:
+        outputs[root / 'docs/errors' / (e['code'] + '.md')] = page(e).rstrip('\n') + '\n'
+    stale = 0
+    for p, text in outputs.items():
+        if p.exists() and p.read_text() == text:
+            continue
+        stale += 1
+        if not check:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(text)
+    if check:
+        sys.exit(1 if stale else 0)
+    print('catalog: %d entries, %d files written' % (len(ents), stale))
+
+
+if __name__ == '__main__':
+    main()

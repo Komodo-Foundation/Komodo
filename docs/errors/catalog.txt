@@ -159,23 +159,7 @@ fix:
 match: type '*' inherits unknown type '*'
 why: A type can only extend a struct or class that is declared somewhere in the program. '{2}' is not.
 help: Check the spelling of the base type, or declare it.
-bad:
-  struct Circle : Shap
-      r: int
-
-  void main()
-      let c = new Circle(1)
-      print(c.r)
-fix:
-  struct Shape
-      tag: int = 0
-
-  struct Circle : Shape
-      r: int = 0
-
-  void main()
-      let c = new Circle(0, 1)
-      print(c.r)
+note: The compiler normally reports this situation as [K0086](K0086.md), which is checked first.
 
 @ K0009 `is` needs a type
 match: `is` expects a known type name on the right
@@ -275,7 +259,7 @@ note: Run `komodo path/to/file.km` with the path of an existing source file.
 
 @ K0020 wrong argument type
 match: argument * to '*': type '*' is not assignable to '*'
-why: Each argument must have the type the function declared for that parameter. A '{3}' cannot stand in for a '{4}', because the function body would then treat the bytes as the wrong kind of value.
+why: Each argument must have the type the function declared for that parameter. A value of type '{3}' cannot stand in for '{4}', because the function body would then treat it as the wrong kind of value.
 help: Pass a value of type '{4}', or convert it first (for example `string(x)` or `int(x)`).
 bad:
   fn add(a: int, b: int): int
@@ -321,7 +305,7 @@ bad:
   extern fn takes_int(n: int): int
 
   void main()
-      print(takes_int("seven"))
+      print(takes_int(1.5))
 fix:
   extern fn takes_int(n: int): int
 
@@ -402,7 +386,7 @@ fix:
 
   void main()
       let w = make_window()
-      print(w == w)
+      print(w)
 
 @ K0027 `in` with a string
 match: `in` on a string wants a string / char on the left, got '*'
@@ -840,19 +824,19 @@ fix:
       limit = 11
       print(limit)
 
-@ K0071 reassigning an immutable binding
+@ K0071 assignment to a fixed name
 match: cannot reassign immutable binding '*' (declared with `be`)
-why: A name declared with `be` is fixed once and for all. Assigning to it later would change the meaning of code already written.
-help: Declare it with `let {1} = ...` if it must change.
+why: Some names are fixed once and cannot be assigned to: names declared with `be`, `self`, and the counter of a `for` loop, which the loop itself advances. Assigning to one would change something the language relies on.
+help: Use a separate variable for the value that changes: `let {1}2 = ...`.
 bad:
   void main()
-      let n: int be 3
-      n = 4
+      for i = 1 to 3
+          i = 5
 fix:
   void main()
-      let n: int = 3
-      n = 4
-      print(n)
+      for i = 1 to 3
+          let j = i + 1
+          print(j)
 
 @ K0072 pure function mutates state
 match: pure `fn *` mutates state — declare it `mut`
@@ -922,26 +906,9 @@ fix:
 
 @ K0080 duplicate function
 match: duplicate function '*'
-why: Two functions share the name '{1}' and the same parameter types, so a call could not tell them apart.
+why: Two functions share the name '{1}' and the compiler cannot tell them apart.
 help: Rename one of them, or give them different parameter types to overload.
-bad:
-  fn f(): int
-      return 1
-
-  fn f(): int
-      return 2
-
-  void main()
-      print(f())
-fix:
-  fn f(): int
-      return 1
-
-  fn g(): int
-      return 2
-
-  void main()
-      print(f() + g())
+note: Two free functions with the same name are treated as overloads, so the common case is reported as [K0123](K0123.md). This code is for other name collisions.
 
 @ K0081 duplicate type
 match: duplicate type '*'
@@ -1033,25 +1000,22 @@ fix:
   void main()
       print(total)
 
-@ K0086 inheritance cycle
+@ K0086 unknown or cyclic base type
 match: cyclic or unresolved inheritance near '*'
-why: Types may extend each other only in a chain that ends at a base type. Here the chain loops back on itself, or leads to a type that does not exist.
-help: Break the cycle by removing one of the `: Base` clauses.
+why: A type can only extend a struct or class that exists, and a chain of base types must end at one that extends nothing. Here a base type is missing (often a typo), or two types extend each other in a loop.
+help: Check the spelling of the base type after the `:`, declare it, or break the cycle.
 bad:
-  struct A : B
-      x: int
-
-  struct B : A
-      y: int
+  struct Circle : Shap
+      r: int
 
   void main()
       print(1)
 fix:
-  struct B
-      y: int
+  struct Shape
+      tag: int = 0
 
-  struct A : B
-      x: int
+  struct Circle : Shape
+      r: int = 0
 
   void main()
       print(1)
@@ -1386,6 +1350,7 @@ note: Use `komodo --target x86` (the default) for programs that contain `export 
 
 @ K0120 no overload with that arity
 match: no overload of '*' takes * argument(s)
+mode: compile
 why: '{1}' has several definitions, but none of them accepts {2} argument(s).
 help: Call it with the number of arguments one of the overloads declares.
 bad:
@@ -1415,6 +1380,7 @@ note: This error is rare: it appears when two overloads accept the same argument
 
 @ K0122 no matching overload
 match: no overload of '*' matches the argument types
+mode: compile
 why: '{1}' has several definitions, but none of them accepts arguments of these types.
 help: Convert the arguments, or add an overload for these types.
 bad:
@@ -1438,6 +1404,7 @@ fix:
 
 @ K0123 identical overloads
 match: duplicate function '*' — two overloads have identical parameter types
+mode: compile
 why: Overloads are chosen by their parameter types, so two definitions with the same parameter types could never be told apart.
 help: Change a parameter type, or rename one function.
 bad:
@@ -1603,9 +1570,8 @@ fix:
 
   void main()
       let p = new P(1.0)
-      match p
-          case P(x)
-              print(x)
+      if p.x == 1.0 then
+          print("one")
 
 @ K0144 pattern literal type
 match: pattern for field '*': literal of type '*' is not comparable to field type '*'
@@ -1776,20 +1742,22 @@ fix:
 @ K0166 untyped parameter
 match: parameter '*' has no type annotation (implicit any)
 mode: strict
-why: Under `--strict`, parameters must say their type, so mistakes are caught where the function is called.
+why: Under `--strict`, method parameters must say their type, so mistakes are caught where the method is called.
 help: Write `{1}: int` (or the type it should have).
 bad:
-  fn add(a, b): int
-      return 1
+  class C
+      fn f(a): int
+          return 1
 
   void main()
-      print(add(1, 2))
+      print(1)
 fix:
-  fn add(a: int, b: int): int
-      return a + b
+  class C
+      fn f(a: int): int
+          return a
 
   void main()
-      print(add(1, 2))
+      print(1)
 
 @ K0167 mut without mutation
 match: `mut *` has no mutating code — could be `fn` or `void`

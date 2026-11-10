@@ -32,6 +32,7 @@ void main(args)
     let rich = false
     let color = false
     let width = 100
+    let renderText = ""
     let ai = 2
     while ai < #args do
         let a = args[ai]
@@ -47,6 +48,8 @@ void main(args)
             rich = true             // rustc-style diagnostics (see diag.kmm)
             if a == "color" then
                 color = true
+        else if a.length > 7 and a[0 to 7] == "render=" then
+            renderText = a[7 to a.length]       // test hook: render this one line
         else if a.length > 6 and a[0 to 6] == "width=" then
             width = km_compiler::dgNum(a[6 to a.length])
         ai += 1
@@ -57,6 +60,9 @@ void main(args)
     // `file::find` walks recursively, so the executable's directory is
     // enough whether `stdlib/` is a subdirectory or holds kmc itself.
     km_compiler::diagSetMode(rich, color, width)
+    if renderText != "" then
+        print(km_compiler::diagReport([renderText]))
+        return
     let stdlibProbe = dirOf(selfPath) + "/probe.km"
 
     let gathered = gather(fileName, stdlibProbe)
@@ -207,7 +213,7 @@ fn gather(rootPath: string, stdlibProbe: string) : GatherResult
             if resolved == null then
                 resolved = file::find(name, stdlibProbe)
             if resolved == null then
-                km_fail(p + ":" + importPos(src, name) + ": error: cannot find module '" + name + "'")
+                km_fail(km_compiler::diagReport([p + ":" + importPos(src, name) + ": error: cannot find module '" + name + "'"]))
             if resolved != null and not (resolved in seen) then
                 queue += [resolved]
 
