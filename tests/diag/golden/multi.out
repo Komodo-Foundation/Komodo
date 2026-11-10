@@ -1,0 +1,36 @@
+error[K0024]: return value of 'a': type 'string' is not assignable to 'int'
+ --> multi.km:2:5
+  |
+1 | fn a(): int
+2 |     return "x"
+  |     ^^^^^^ return value of 'a': type 'string' is not assignable to 'int'
+  = help: Use a value of type 'int', or convert it explicitly (`string(x)`, `int(x)`).
+  = why: A value was used where a different type is required. Komodo does not convert between types
+         silently, because that hides bugs.
+  = explain: run `komodo explain K0024` for more detail
+
+error[K0001]: undefined name 'zz'
+ --> multi.km:5:12
+  |
+3 | 
+4 | fn b(): int
+5 |     return zz
+  |            ^^ undefined name 'zz'
+  = help: Check the spelling, or declare 'zz' with `let zz = ...` before this line.
+  = why: The compiler looked for a variable, parameter, macro or function called 'zz' and found none
+         in scope. Names must be declared with `let` (or as parameters) before the line that uses
+         them.
+  = explain: run `komodo explain K0001` for more detail
+
+error[K0060]: `break` outside a loop
+ --> multi.km:8:5
+  |
+6 | 
+7 | void main()
+8 |     break
+  |     ^^^^^ `break` outside a loop
+  = help: Put the `break` inside a loop, or use `return` to leave a function.
+  = why: `break` leaves the nearest enclosing `while` or `for` loop, so it needs one around it.
+  = explain: run `komodo explain K0060` for more detail
+
+error: aborting due to 3 errors

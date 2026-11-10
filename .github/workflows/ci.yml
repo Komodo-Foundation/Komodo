@@ -25,6 +25,8 @@ jobs:
         run: KM_PERF_SLACK=3 tools/perf-budget.sh
       - name: Binding generator
         run: bash tests/bind/run.sh
+      - name: Rich diagnostics, error codes and komodo explain
+        run: bash tests/diag/run.sh
       - name: The compiler reproduces itself
         run: ./build-self.sh --force
 

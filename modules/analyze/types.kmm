@@ -86,6 +86,116 @@ fn isIntKind(k: string): bool
 fn isFloatKind(k: string): bool
     return k == "float" or k == "f32"
 
+// ── fixed-width integer facts ───────────────────────────────────────
+// `uint` is an unsigned 64-bit; `int` / `i64` are signed 64-bit.
+fn intBits(k: string): int
+    if k == "u8" or k == "i8" then
+        return 8
+    if k == "u16" or k == "i16" then
+        return 16
+    if k == "u32" or k == "i32" then
+        return 32
+    return 64
+
+fn intSigned(k: string): bool
+    return not (k == "u8" or k == "u16" or k == "u32" or k == "u64" or k == "uint")
+
+// Kinds whose values need width / unsigned handling in codegen ("" for
+// int / i64 and everything else).  `f32` rounds to single precision.
+fn narrowKind(k: string): string
+    if k == "u8" or k == "u16" or k == "u32" or k == "u64" or k == "uint" then
+        return k
+    if k == "i8" or k == "i16" or k == "i32" or k == "f32" then
+        return k
+    return ""
+
+// every value of `s` fits `d` (implicit widening)
+fn intWidens(s: string, d: string): bool
+    if intSigned(s) == intSigned(d) then
+        return intBits(s) <= intBits(d)
+    if not intSigned(s) then
+        return intBits(s) < intBits(d)
+    return false
+
+// decimal / 0x literal text `v` (optionally "-"-prefixed) fits kind `k`
+fn litFits(v: string, k: string): bool
+    let neg = #v > 0 and v[0] == "-"
+    let m = v
+    if neg then
+        m = v[1 to #v]
+    let hex = #m > 2 and m[0] == "0" and (m[1] == "x" or m[1] == "X")
+    let lim = ""
+    let bits = intBits(k)
+    let sg = intSigned(k)
+    if neg and not sg then
+        return false
+    // limit magnitude as decimal text
+    if bits == 8 then
+        lim = "255"
+        if sg and neg then
+            lim = "128"
+        else if sg then
+            lim = "127"
+    else if bits == 16 then
+        lim = "65535"
+        if sg and neg then
+            lim = "32768"
+        else if sg then
+            lim = "32767"
+    else if bits == 32 then
+        lim = "4294967295"
+        if sg and neg then
+            lim = "2147483648"
+        else if sg then
+            lim = "2147483647"
+    else
+        lim = "18446744073709551615"
+        if sg and neg then
+            lim = "9223372036854775808"
+        else if sg then
+            lim = "9223372036854775807"
+    if hex then
+        // compare hex digit count against the limit's: nibbles = bits / 4
+        let d = m[2 to #m]
+        while #d > 1 and d[0] == "0" do
+            d = d[1 to #d]
+        let nib = bits / 4
+        if #d < nib then
+            return true
+        if #d > nib then
+            return false
+        return not sg or d[0] <= "7"
+    while #m > 1 and m[0] == "0" do
+        m = m[1 to #m]
+    if #m != #lim then
+        return #m < #lim
+    return m <= lim
+
+// a literal's Type carries its text in `name` ("lit:300" / "lit"), so
+// assignment can range-check it; `delit` forgets that.
+fn isLit(t: Type): bool
+    return (t.kind == "int" or t.kind == "float") and #t.name >= 3 and t.name[0 to 3] == "lit"
+
+fn delit(t: Type): Type
+    if isLit(t) then
+        return tPrim(t.kind)
+    return t
+
+fn litText(t: Type): string
+    return t.name[4 to #t.name]
+
+fn canonInt(k: string): string
+    if k == "uint" then
+        return "u64"
+    if k == "i64" then
+        return "int"
+    return k
+
+// `u8(x)` … `i64(x)` / `f32(x)` conversion spellings (`int` and `float`
+// have their own handling)
+fn isConvName(n: string): bool
+    return n == "f32" or (isIntKind(n) and n != "int")
+
 fn isNumeric(t: Type): bool
     if isFloatKind(t.kind) then
         return true

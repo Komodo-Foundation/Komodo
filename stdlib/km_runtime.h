@@ -57,7 +57,9 @@ enum {
     KM_TAG_FLOAT = 1,
     KM_TAG_STR   = 2,
     KM_TAG_BOOL  = 3,
-    KM_TAG_ARRAY = 4
+    KM_TAG_ARRAY = 4,
+    KM_TAG_U64   = 5,   /* unsigned 64-bit integer */
+    KM_TAG_F32   = 6    /* single-precision float (double bits) */
 };
 
 /*
@@ -162,6 +164,7 @@ int64_t        km_in_array(KmArray *a, int64_t v, int64_t leaf);
 const char *km_to_string(int64_t tag, int64_t value);
 /* "%g" for a double, but integral values keep a ".0" (Komodo float text) */
 void        km_fmt_double(char *buf, unsigned long cap, double d);
+void        km_fmt_f32(char *buf, unsigned long cap, double d);
 
 /* ── module: console ── */
 void console_print(int64_t argc, KmArg *items);

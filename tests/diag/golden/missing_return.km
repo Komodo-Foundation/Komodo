@@ -1,0 +1,6 @@
+fn pick(n: int): int
+    if n > 0 then
+        return 1
+
+void main()
+    print(pick(3))
