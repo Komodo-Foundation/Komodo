@@ -549,3 +549,17 @@ Open questions I cannot decide from the code:
 - **Q8** Latent L12 (macro stamps overwritten per use) is untested; confirm
   whether scoped macros can legitimately reference names whose types differ
   between uses.
+
+## Maintainer decisions (answers to the open questions)
+
+1. **Several `return`s of different types in a generic function:** all returns must
+   agree, otherwise a compile error; recursive generics must annotate their return type.
+2. **Overloads by numeric width / bool / char:** distinct. `f(u8)` and `f(int)` are
+   separate overloads and instances. Consequence to handle: a `bool` result of a
+   generic instance may print as `true`/`false` instead of `1`/`0`; audit the
+   examples' `.expected` files when this lands.
+3. **Uncalled generic functions:** skipped until used (today's behavior). No
+   opaque-type check of uninstantiated bodies.
+4. **Layering:** move `Type` (and its helpers) from `modules/analyze/types.kmm` to
+   `modules/support/` so `ast.kmm` and the analyzer both depend on it.
+5. **Constraint:** additive only — extend the existing AST/sema/codegen; no rewrites.
