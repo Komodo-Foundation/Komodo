@@ -1,0 +1,21 @@
+import console
+import dbgutil
+
+class Box
+    constructor(v: int)
+        m_v = v
+    fn scaled(): int
+        let t = dbgutil.triple(m_v)
+        return t + 1
+    m_v: int
+
+fn square(n: int): int
+    let r = n * n
+    if r > 50 then
+        r = r - 1
+    return r
+
+void main()
+    let b = new Box(4)
+    console.print("square:", square(6))
+    console.print("box:", b.scaled())

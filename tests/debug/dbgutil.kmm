@@ -1,0 +1,5 @@
+module dbgutil
+public
+    fn triple(n: int): int
+        let r = n * 3
+        return r

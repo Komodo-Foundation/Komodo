@@ -95,7 +95,9 @@ fn compileMapped(source: string, target: string, strict: bool, opt: string, file
     let optimizer = new Optimizer(opt)
     optimizer.run(ast)
 
-    let gen = new Codegen(selectBackend(target))
+    let backend = selectBackend(target)
+    backend.setDebugInfo(files, starts)
+    let gen = new Codegen(backend)
     return gen.compileProgram(ast)
 
 extern fn km_error_message(): string?

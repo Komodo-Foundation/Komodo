@@ -1,0 +1,4 @@
+Komodo: crash - integer division by zero in divide (crash.km:4)
+Komodo call stack (innermost first):
+    divide (crash.km:4)
+    main (crash.km:11)
