@@ -385,10 +385,14 @@ mut Analyzer::widenForBinding(t: Type): Type
         return tNullable(tPrim("int"))
     if t.kind == "never" then
         return tPrim("int")
+    if isLit(t) then
+        return tPrim(t.kind)
     if t.kind == "array" then
         let el = t.elem or tPrim("int")
         if el.kind == "never" then
             return tArray(tPrim("int"))
+        if isLit(el) then
+            return tArray(tPrim(el.kind))
     return t
 
 mut Analyzer::checkAssign(s: AssignStmt)
@@ -399,6 +403,8 @@ mut Analyzer::checkAssign(s: AssignStmt)
     if not scopeHas(s.name) and isCurField(s.name) then
         checkFieldAccess(s, m_curClass, s.name)
         pathClear("self." + s.name)
+        s.numKind = narrowKind(stripNull(curClassFieldType(s.name)).kind)
+        adoptF32(s.numKind, s.value)
         if s.op == "=" then
             checkAssignable(s, curClassFieldType(s.name), vt, "field '" + s.name + "'")
         // `field += v` (array append or numeric) / `field -= v` — permissive,
@@ -408,6 +414,8 @@ mut Analyzer::checkAssign(s: AssignStmt)
 
     // assignment to a top-level variable (always mutable — no `be` form)
     if not scopeHas(s.name) and not isCurField(s.name) and isGlobalVar(s.name) then
+        s.numKind = narrowKind(stripNull(globalVarType(s.name)).kind)
+        adoptF32(s.numKind, s.value)
         if s.op == "=" then
             let gt = globalVarType(s.name)
             checkAssignable(s, gt, vt, "'" + s.name + "'")
@@ -432,6 +440,8 @@ mut Analyzer::checkAssign(s: AssignStmt)
             lint(s, "self-assignment of '" + s.name + "' has no effect")
 
     let decl = scopeDeclType(s.name)
+    s.numKind = narrowKind(stripNull(decl).kind)
+    adoptF32(s.numKind, s.value)
     if s.op == "+=" or s.op == "-=" then
         // numeric `-=`, or array/string append `+=` — permissive, matches
         // codegen's two lowerings.
@@ -461,17 +471,28 @@ mut Analyzer::checkFieldAssign(s: FieldAssignStmt)
     if op != "" then
         pathClear(op + "." + s.field)
     let vt = inferExpr(s.value)
+    if s.op != "=" then
+        s.numKind = narrowKind(stripNull(fieldReadType(base.name, s.field)).kind)
+        adoptF32(s.numKind, s.value)
     if s.op == "=" then
         checkAssignable(s, fieldReadType(base.name, s.field), vt, "field '" + s.field + "'")
     // `field += v` (append or numeric) / `field -= v` — permissive.
     // storing into a field takes ownership of a `unique` value
     consumeMove(s.value, vt)
 
+// a float literal assigned to an f32 target is itself an f32 (rounded)
+mut Analyzer::adoptF32(k: string, v: Expression?)
+    if k == "f32" and v is FloatLiteral then
+        v.numKind = "f32"
+
 mut Analyzer::checkIndexAssign(s: IndexAssignStmt)
     let ot = inferExpr(s.object)
     inferExpr(s.index)
     let vt = inferExpr(s.value)
     let base = stripNull(ot)
+    if s.op != "=" and base.kind == "array" then
+        s.numKind = narrowKind(stripNull(base.elem or tPrim("int")).kind)
+        adoptF32(s.numKind, s.value)
     if s.op == "=" and base.kind == "array" then
         checkAssignable(s, base.elem or tPrim("int"), vt, "array element")
     // `arr[i] += v` (append or numeric) / `arr[i] -= v` — permissive.
@@ -828,6 +849,13 @@ mut Analyzer::lastDot(s: string): int
 mut Analyzer::checkAssignable(node: ASTNode, dst: Type, src: Type, what: string)
     if isAssignable(dst, src) then
         return
+    let db = stripNull(dst)
+    if isLit(src) and isIntKind(db.kind) and src.kind == "int" then
+        err(node, what + ": literal " + litText(src) + " does not fit in " + db.kind)
+        return
+    if isIntKind(db.kind) and isIntKind(stripNull(src).kind) then
+        err(node, what + ": type '" + typeToString(src) + "' is not assignable to '" + typeToString(dst) + "' — convert explicitly with " + db.kind + "(x)")
+        return
     err(node, what + ": type '" + typeToString(src) + "' is not assignable to '" + typeToString(dst) + "'")
 
 mut Analyzer::isAssignable(dst: Type, src: Type): bool
@@ -859,7 +887,11 @@ mut Analyzer::isAssignable(dst: Type, src: Type): bool
         // only narrowed to 32 bits at a struct / C-FFI boundary.
         if isFloatKind(dst.kind) then
             return true
-        return isIntKind(src.kind) and isIntKind(dst.kind)
+        if not (isIntKind(src.kind) and isIntKind(dst.kind)) then
+            return false
+        if isLit(src) then
+            return litFits(litText(src), dst.kind)
+        return intWidens(canonInt(src.kind), canonInt(dst.kind)) or canonInt(src.kind) == canonInt(dst.kind)
 
     if dst.kind == "bool" and src.kind == "bool" then
         return true

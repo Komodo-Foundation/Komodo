@@ -286,6 +286,28 @@ void km_fmt_double(char *buf, unsigned long cap, double d)
     }
 }
 
+/* An f32 value: the shortest %g text that reads back as the same float. */
+void km_fmt_f32(char *buf, unsigned long cap, double d)
+{
+    float f = (float)d;
+    int p = 1;
+    for (; p < 9; p++) {
+        snprintf(buf, cap, "%.*e", p - 1, (double)f);
+        if ((float)strtod(buf, 0) == f)
+            break;
+    }
+    snprintf(buf, cap, "%.*g", p < 6 ? 6 : p, (double)f);
+    for (const char *q = buf; *q; q++)
+        if (*q == '.' || *q == 'e' || *q == 'E' || *q == 'n' || *q == 'i')
+            return;
+    unsigned long len = strlen(buf);
+    if (len + 3 <= cap) {
+        buf[len] = '.';
+        buf[len + 1] = '0';
+        buf[len + 2] = '\0';
+    }
+}
+
 /* `needle in haystack` for strings — a substring test. */
 int64_t km_in_str(const char *haystack, const char *needle)
 {
@@ -564,6 +586,15 @@ const char *km_to_string(int64_t tag, int64_t value)
         double d;
         __builtin_memcpy(&d, &value, sizeof d);
         km_fmt_double(buf, sizeof buf, d);
+        break;
+    }
+    case 5:
+        snprintf(buf, sizeof buf, "%" PRIu64 "", (uint64_t)value);
+        break;
+    case 6: {
+        double d;
+        __builtin_memcpy(&d, &value, sizeof d);
+        km_fmt_f32(buf, sizeof buf, d);
         break;
     }
     case 2:

@@ -242,7 +242,7 @@ void Codegen::genAssign(s: AssignStmt)
             genExpr(s.value)
             if exprType(s.value) != "float" then
                 m_backend.cvtIntToFloat()
-            m_backend.binaryFloat(compoundOp(s.op))
+            floatOp(compoundOp(s.op), s.numKind)
             m_backend.floatToBits()
             m_backend.storeField(idx)
             return
@@ -252,7 +252,7 @@ void Codegen::genAssign(s: AssignStmt)
         m_backend.loadField(idx)
         m_backend.pushAcc()
         genExpr(s.value)
-        m_backend.binaryInt(compoundOp(s.op))
+        intOp(compoundOp(s.op), s.numKind)
         m_backend.storeField(idx)
         return
     if not hasLocal(s.name) and isGlobalVar(s.name) then
@@ -279,9 +279,9 @@ void Codegen::genAssign(s: AssignStmt)
         genExpr(s.value)
         if exprType(s.value) != "float" then
             m_backend.cvtIntToFloat()
-        m_backend.binaryFloat(compoundOp(s.op))
+        floatOp(compoundOp(s.op), s.numKind)
         m_backend.storeLocal(slotOf(s.name), "float")
-    else if s.op == "-=" then
+    else if s.op == "-=" and s.numKind == "" then
         genExpr(s.value)
         m_backend.subFromLocal(slotOf(s.name))
     else if isCompoundAssign(s.op) then
@@ -293,7 +293,7 @@ void Codegen::genAssign(s: AssignStmt)
         if st and s.op == "+=" then
             m_backend.strBinOp("km_str_concat")
         else
-            m_backend.binaryInt(compoundOp(s.op))
+            intOp(compoundOp(s.op), s.numKind)
         storeVar(s.name)
     else
         genExpr(s.value)
@@ -333,7 +333,7 @@ void Codegen::genGlobalAssign(s: AssignStmt)
         genExpr(s.value)
         if exprType(s.value) != "float" then
             m_backend.cvtIntToFloat()
-        m_backend.binaryFloat(compoundOp(s.op))
+        floatOp(compoundOp(s.op), s.numKind)
         m_backend.storeGlobal(name, "float")
         return
     // numeric / string compound → `g = g <op> v`
@@ -343,7 +343,7 @@ void Codegen::genGlobalAssign(s: AssignStmt)
     if ty == "string" and s.op == "+=" then
         m_backend.strBinOp("km_str_concat")
     else
-        m_backend.binaryInt(compoundOp(s.op))
+        intOp(compoundOp(s.op), s.numKind)
     m_backend.storeGlobal(name, ty)
 
 // `obj.field = value`  /  `obj.field += value`  /  `obj.field -= value`
@@ -389,7 +389,7 @@ void Codegen::genFieldAssign(s: FieldAssignStmt)
         genExpr(s.value)
         if exprType(s.value) != "float" then
             m_backend.cvtIntToFloat()
-        m_backend.binaryFloat(compoundOp(s.op))
+        floatOp(compoundOp(s.op), s.numKind)
         m_backend.floatToBits()
         m_backend.storeField(idx)
         return
@@ -400,7 +400,7 @@ void Codegen::genFieldAssign(s: FieldAssignStmt)
     m_backend.loadField(idx)
     m_backend.pushAcc()          // current field value
     genExpr(s.value)
-    m_backend.binaryInt(compoundOp(s.op))
+    intOp(compoundOp(s.op), s.numKind)
     m_backend.storeField(idx)
 
 // `arr[i] = value`  /  `arr[i] += value`  /  `arr[i] -= value`
@@ -437,7 +437,7 @@ void Codegen::genIndexAssign(s: IndexAssignStmt)
         genExpr(s.value)
         if exprType(s.value) != "float" then
             m_backend.cvtIntToFloat()
-        m_backend.binaryFloat(compoundOp(s.op))
+        floatOp(compoundOp(s.op), s.numKind)
         m_backend.floatToBits()
         m_backend.indexAssign()
         return
@@ -456,7 +456,7 @@ void Codegen::genIndexAssign(s: IndexAssignStmt)
     if s.op == "+=" and elemIsArray then
         m_backend.arrayAppendAcc()
     else
-        m_backend.binaryInt(compoundOp(s.op))
+        intOp(compoundOp(s.op), s.numKind)
     m_backend.indexAssign()
 
 void Codegen::genReturn(s: ReturnStmt)

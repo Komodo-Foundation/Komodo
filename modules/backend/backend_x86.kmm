@@ -447,6 +447,65 @@ void X86Backend::binaryInt(op: string)
     else if op == ">>" then
         ins("sar rax, cl")
 
+mut X86Backend::normInt(k: string)
+    if k == "u8" then
+        ins("movzx eax, al")
+    else if k == "u16" then
+        ins("movzx eax, ax")
+    else if k == "u32" then
+        ins("mov eax, eax")
+    else if k == "i8" then
+        ins("movsx rax, al")
+    else if k == "i16" then
+        ins("movsx rax, ax")
+    else if k == "i32" then
+        ins("movsxd rax, eax")
+
+mut X86Backend::binaryIntU(op: string)
+    ins("mov rcx, rax")
+    ins("pop rax")
+    if op == ">>" then
+        ins("shr rax, cl")
+    else
+        ins("xor edx, edx")
+        ins("div rcx")
+        if op == "%" then
+            ins("mov rax, rdx")
+
+mut X86Backend::compareIntU(op: string)
+    ins("mov rcx, rax")
+    ins("pop rax")
+    ins("cmp rax, rcx")
+    let c = "setae"
+    if op == "<" then
+        c = "setb"
+    else if op == ">" then
+        c = "seta"
+    else if op == "<=" then
+        c = "setbe"
+    ins(c + " al")
+    ins("movzx eax, al")
+
+mut X86Backend::cvtUIntToFloat()
+    let big = newLabel()
+    let done = newLabel()
+    ins("test rax, rax")
+    ins("js " + big)
+    ins("cvtsi2sd xmm0, rax")
+    ins("jmp " + done)
+    label(big)
+    ins("mov rcx, rax")
+    ins("shr rax, 1")
+    ins("and ecx, 1")
+    ins("or rax, rcx")
+    ins("cvtsi2sd xmm0, rax")
+    ins("addsd xmm0, xmm0")
+    label(done)
+
+mut X86Backend::roundF32()
+    ins("cvtsd2ss xmm0, xmm0")
+    ins("cvtss2sd xmm0, xmm0")
+
 void X86Backend::compareInt(op: string)
     ins("mov rcx, rax")
     ins("pop rax")
