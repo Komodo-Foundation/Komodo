@@ -44,7 +44,7 @@ Depends: nasm, gcc, libc6-dev, libgc1, libgc-dev
 Recommends: pkg-config, g++
 Suggests: nodejs, emscripten
 Maintainer: Lukas Perkins <lukasperks@gmail.com>
-Homepage: https://github.com/lrperks/Komodo
+Homepage: https://github.com/Komodo-Foundation/Komodo
 Description: self-hosting systems language with seamless C/C++ interop
  Komodo is a small statically-typed language that compiles to native x86-64
  code (also portable C and WebAssembly). Running 'komodo' in a project builds

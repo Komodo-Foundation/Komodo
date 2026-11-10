@@ -2,7 +2,7 @@
 #
 # install.sh — install the `komodo` command.
 #
-#   curl -fsSL https://raw.githubusercontent.com/lrperks/Komodo/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/Komodo-Foundation/Komodo/main/install.sh | bash
 #   ./install.sh                  from a checkout: symlink ~/.local/bin/komodo to it
 #   ./install.sh --prefix <dir>   install the symlink into <dir> instead
 #
@@ -11,7 +11,7 @@
 # first `komodo` run builds the compiler (~2s) and `komodo upgrade` updates it.
 #
 set -euo pipefail
-repo="${KOMODO_REPO:-https://github.com/lrperks/Komodo.git}"
+repo="${KOMODO_REPO:-https://github.com/Komodo-Foundation/Komodo.git}"
 bindir="$HOME/.local/bin"
 while [[ $# -gt 0 ]]; do
     case "$1" in

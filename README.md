@@ -1,6 +1,6 @@
 # Komodo
 
-[![CI](https://github.com/lrperks/Komodo/actions/workflows/ci.yml/badge.svg)](https://github.com/lrperks/Komodo/actions/workflows/ci.yml)
+[![CI](https://github.com/Komodo-Foundation/Komodo/actions/workflows/ci.yml/badge.svg)](https://github.com/Komodo-Foundation/Komodo/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 **A small, statically-typed, self-hosting language that compiles to native code and talks to C, C++ and the rest of your system with no ceremony.**
@@ -39,11 +39,11 @@ zlib 1.3
 ## Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/lrperks/Komodo/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Komodo-Foundation/Komodo/main/install.sh | bash
 komodo doctor            # checks nasm, gcc and libgc, and says how to install any that are missing
 ```
 
-or as a Debian/Ubuntu package (`packaging/build-deb.sh`, then `sudo apt install ./dist/komodo_*.deb`; each tagged release attaches one), or from a checkout: `git clone https://github.com/lrperks/Komodo && cd Komodo && ./install.sh`. Without installing: `docker build -t komodo . && docker run --rm -it komodo komodo repl`.
+or as a Debian/Ubuntu package (`packaging/build-deb.sh`, then `sudo apt install ./dist/komodo_*.deb`; each tagged release attaches one), or from a checkout: `git clone https://github.com/Komodo-Foundation/Komodo && cd Komodo && ./install.sh`. Without installing: `docker build -t komodo . && docker run --rm -it komodo komodo repl`.
 
 Requirements: Linux x86-64 with `nasm`, `gcc` and the Boehm GC (`libgc`); `g++`, `pkg-config`, `emcc` and `node` are optional (C++ interop, library lookup, the WebAssembly target). The compiler builds itself from a checked-in seed on first run (about 2 seconds); `komodo upgrade` updates the installation.
 
@@ -97,7 +97,7 @@ Komodo is **pre-1.0**: the language and compiler are usable and well tested (exa
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). Bugs and ideas go in [issues](https://github.com/lrperks/Komodo/issues); security reports follow [SECURITY.md](SECURITY.md).
+See [CONTRIBUTING.md](CONTRIBUTING.md). Bugs and ideas go in [issues](https://github.com/Komodo-Foundation/Komodo/issues); security reports follow [SECURITY.md](SECURITY.md).
 
 ## License
 
