@@ -33,6 +33,9 @@ import file
 //      backend.kmm             Backend: the target-independent emit interface
 //      backend_x86.kmm         X86Backend     — System V AMD64, NASM syntax
 //      backend_stackvm.kmm     StackVMBackend — textual stack-VM bytecode
+//      backend_c.kmm           CBackend       — portable C translation unit
+//    support/
+//      strindex.kmm            StrIndex: string → position hash index
 //
 //  The front end and `Codegen` are target-agnostic; picking a target is
 //  just picking a `Backend` (see `selectBackend`).  The x86 output

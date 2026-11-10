@@ -11,11 +11,12 @@ module km_compiler
 //      evaluate right  →  a second value pushed
 //      backend.binaryInt("+")                  pops two, pushes the sum
 //
-//  A concrete backend maps those operations onto its target.  Two ship
-//  today, both `module km_compiler`:
+//  A concrete backend maps those operations onto its target.  Three ship
+//  today, all `module km_compiler`:
 //
 //      backend_x86.kmm     X86Backend      — System V AMD64, NASM syntax
 //      backend_stackvm.kmm StackVMBackend  — textual stack-VM bytecode
+//      backend_c.kmm       CBackend        — portable C translation unit
 //
 //  To add a target, write another `<T>Backend : Backend`, implement the
 //  same operation names, and register it in `selectBackend`
