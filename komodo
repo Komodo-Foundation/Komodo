@@ -111,6 +111,8 @@ options:
   -t, --target <name>   x86 (default) | c | wasm | stackvm
   -o <path>             where `build` / `lib` write their output
   -q, --quiet           only print the program's own output
+  -g, --debug            debug build: DWARF line info (gdb shows Komodo lines) and
+                         call-chain traces on uncaught errors (see docs/debugging.md)
   -v, --verbose         show the steps and the nasm / gcc commands
   -h, --help            show this help
   -V, --version         show the version
@@ -172,6 +174,7 @@ lib=0
 emit_header=""
 user_out=""
 quiet=0
+dbg=0
 verbose=0
 show_time=0
 no_cache=0
@@ -220,6 +223,7 @@ while [[ $# -gt 0 ]]; do
             esac
             shift 2 ;;
         --release)    opt=max; shift ;;
+        -g|--debug)   dbg=1; shift ;;
         -O)           need_arg "$@"; set_opt "$2"; shift 2 ;;
         -O*)          set_opt "${1#-O}"; shift ;;
         --opt=*)      set_opt "${1#--opt=}"; shift ;;
@@ -892,6 +896,8 @@ fi
 kmc_target="$target"
 [[ "$mode" == "lib" && "$target" == "x86" ]] && kmc_target="x86pic"
 kmc_fp="$(stat -c '%y:%s' -- "$kmc" 2>/dev/null || echo '?')"
+dbg_nasm=(); dbg_cc=()
+if [[ $dbg -eq 1 ]]; then dbg_nasm=(-g -F dwarf); dbg_cc=(-g); export KM_DEBUG=1; else unset KM_DEBUG; fi
 fe_key="$(sha_str "$src_abs|cwd=$PWD|$kmc_target|$opt|$strict|kmc=$kmc_fp")"
 fe_asm="$cache/fe/$fe_key.asm"
 fe_links="$cache/fe/$fe_key.links"
@@ -1198,14 +1204,14 @@ link_files_sig() {
     done
 }
 link_sig="$( { printf '%s\n' "${prefix_ldflags[@]:-}" "${auto_cc[@]:-}" "${extra_cc[@]:-}"; link_files_sig; } | LC_ALL=C sort | sha256sum | cut -d' ' -f1)"
-bin_key="$(sha_str "asm=$(sha_file "$asm")|link=$link_sig|stdlib=$stdlib_sig|nomain=$rt_nomain|$tool_id")"
+bin_key="$(sha_str "dbg=$dbg|asm=$(sha_file "$asm")|link=$link_sig|stdlib=$stdlib_sig|nomain=$rt_nomain|$tool_id")"
 bin_hit="$cache/bin/$bin_key"
 
 # ── lib: an object + a static archive, nothing linked ─────────────
 if [[ "$mode" == "lib" ]]; then
     t=$(now_ms)
-    vlog nasm -f elf64 "$asm" -o "$obj"
-    nasm -f elf64 "$asm" -o "$obj" || exit 1
+    vlog nasm "${dbg_nasm[@]}" -f elf64 "$asm" -o "$obj"
+    nasm "${dbg_nasm[@]}" -f elf64 "$asm" -o "$obj" || exit 1
     stdlib_nomain_objs
     libname="$(basename "$out")"
     libdir="$(dirname "$out")"
@@ -1258,8 +1264,8 @@ if [[ $cache_ok -eq 1 && -f "$bin_hit" ]]; then
 else
     # 2. assemble
     t=$(now_ms)
-    vlog nasm -f elf64 "$asm" -o "$obj"
-    nasm -f elf64 "$asm" -o "$obj" || exit 1
+    vlog nasm "${dbg_nasm[@]}" -f elf64 "$asm" -o "$obj"
+    nasm "${dbg_nasm[@]}" -f elf64 "$asm" -o "$obj" || exit 1
     report "assemble" "$t"
 
     # 3. link — stdlib/*.c is compiled once into $cache/obj and reused.
@@ -1282,10 +1288,10 @@ else
         stdlib_inputs=( "$here"/stdlib/*.c )
     fi
 
-    vlog gcc -no-pie -I"$here/stdlib" -o "$out" "$obj" "${stdlib_inputs[@]}" \
+    vlog gcc "${dbg_cc[@]}" -no-pie -I"$here/stdlib" -o "$out" "$obj" "${stdlib_inputs[@]}" \
         ${prefix_ldflags[@]+"${prefix_ldflags[@]}"} \
         ${auto_cc[@]+"${auto_cc[@]}"} ${extra_cc[@]+"${extra_cc[@]}"} -lm -l:libgc.so.1
-    gcc -no-pie -I"$here/stdlib" -o "$out" "$obj" "${stdlib_inputs[@]}" \
+    gcc "${dbg_cc[@]}" -no-pie -I"$here/stdlib" -o "$out" "$obj" "${stdlib_inputs[@]}" \
         ${prefix_ldflags[@]+"${prefix_ldflags[@]}"} \
         ${auto_cc[@]+"${auto_cc[@]}"} ${extra_cc[@]+"${extra_cc[@]}"} -lm -l:libgc.so.1 || { gcc_fail_hint; exit 1; }
     report "link" "$t"
