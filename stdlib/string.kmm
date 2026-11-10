@@ -1,5 +1,10 @@
 module string
 
+// String helpers, called as string.NAME(...). Lengths, offsets and substring
+// bounds count bytes, not characters. The case functions change only ASCII
+// letters. Predicates return 1 or 0, and index_of returns -1 when nothing
+// matches.
+
 // The string library.  Bodies are linked from stdlib/string.c; these
 // prototypes give the compiler the call signatures.  Reached as
 // `string.NAME(...)`, which the compiler mangles to the flat linker
@@ -11,21 +16,48 @@ module string
 // Predicates return int (1 / 0), matching `algorithm` and `file`.
 // Offsets are byte offsets; -1 means "not found".
 
+// Length of s in bytes, not characters: length("é") is 2.
 fn string_length(s: string): int
+// Splits s at each occurrence of sep. Empty pieces are kept, so "a,,b" gives 3
+// items. An empty s gives one empty item, and an empty sep does not split: the
+// result is just [s].
 fn string_split(s: string, sep: string): [string]
+// Joins the parts with sep between each pair. An empty array gives an empty string.
 fn string_join(parts: [string], sep: string): string
+// Removes leading and trailing space, tab and newline characters.
 fn string_trim(s: string): string
+// Like string_trim, but only at the start.
 fn string_trim_start(s: string): string
+// Like string_trim, but only at the end.
 fn string_trim_end(s: string): string
+// Replaces every occurrence of from in s with to. An empty from leaves s unchanged.
 fn string_replace(s: string, from: string, to: string): string
+// Byte offset of the first occurrence of sub in s, or -1 if there is none.
+// An empty sub gives 0.
 fn string_index_of(s: string, sub: string): int
+// 1 if sub occurs in s, else 0. An empty sub gives 1.
 fn string_contains(s: string, sub: string): int
+// 1 if s begins with prefix, else 0.
 fn string_starts_with(s: string, prefix: string): int
+// 1 if s ends with suffix, else 0. An empty suffix gives 1.
 fn string_ends_with(s: string, suffix: string): int
+// s with ASCII letters upper-cased. Other bytes, such as the e-acute in "héllo",
+// are unchanged.
 fn string_to_upper(s: string): string
+// s with ASCII letters lower-cased. Other bytes, such as a capital E-acute,
+// are unchanged.
 fn string_to_lower(s: string): string
+// s repeated n times. An n of 0 or less gives an empty string.
 fn string_repeat(s: string, n: int): string
+// The bytes of s in reverse order. This breaks multi-byte UTF-8 characters:
+// reverse("hé") is not valid UTF-8.
 fn string_reverse(s: string): string
+// The bytes from start up to but not including end. An end past the length is
+// cut to the length. A start at or after end, or a negative start, gives "".
 fn string_substring(s: string, start: int, end: int): string
+// Adds pad at the start until s is width bytes long. pad is repeated and cut to
+// fit, and an empty pad pads with spaces. A longer s is returned unchanged.
 fn string_pad_start(s: string, width: int, pad: string): string
+// Adds pad at the end until s is width bytes long. pad is repeated and cut to
+// fit, and an empty pad pads with spaces. A longer s is returned unchanged.
 fn string_pad_end(s: string, width: int, pad: string): string

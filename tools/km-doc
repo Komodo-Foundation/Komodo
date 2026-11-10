@@ -1,0 +1,675 @@
+#!/usr/bin/env python3
+"""km-doc -- API reference generator for Komodo modules (.kmm and .km).
+
+    km-doc [-o outdir] [--format md|html] paths...
+
+Each path is a file or a directory (scanned recursively for *.kmm and *.km).
+One page is written per module, plus an index page. Default output is ./doc,
+default format is md.
+
+Doc comment convention (defined here, used by stdlib/*.kmm):
+
+  * A run of `//` lines written directly above a declaration, with no blank
+    line between them and the declaration, documents that declaration. This
+    covers fn / void / mut / extern / export functions, `let` globals and
+    `let NAME be EXPR` constants, struct / class / enum, class constructors
+    and methods, struct and class fields, and enum variants.
+  * The first `//` block after the `module NAME` line describes the module.
+    It must be followed by a blank line (or end of file), so that it is not
+    taken as the doc comment of the declaration below it.
+  * Members in a `private` section (or an indented `private` block) are not
+    shown. Visibility sections work as the compiler reads them: a `public` or
+    `private` line applies to the declarations after it, until the next such
+    line or the end of its indented block.
+
+Signatures are copied from the source as written (trailing `//` comments
+removed). Known type names in a signature link to that type's entry.
+"""
+
+import argparse
+import html
+import os
+import re
+import sys
+
+BLOCK_COMMENT_RE = re.compile(r'/\*.*?\*/', re.S)
+MODULE_RE = re.compile(r'^module\s+([A-Za-z_]\w*)\s*$')
+TYPE_RE = re.compile(r'^((?:(?:abstract|shared)\s+)*)(struct|class)\s+([A-Za-z_]\w*)'
+                     r'\s*(?::\s*([A-Za-z_]\w*))?\s*$')
+ENUM_RE = re.compile(r'^enum\s+([A-Za-z_]\w*)\s*$')
+FN_RE = re.compile(r'^(?:(?:export|extern)\s+)*(fn|void|mut)\s+([A-Za-z_]\w*)\s*\(')
+CTOR_RE = re.compile(r'^constructor\s*\(')
+LET_RE = re.compile(r'^let\s+([A-Za-z_]\w*)\b')
+MACRO_RE = re.compile(r'^let\s+[A-Za-z_]\w*(?:\s*:\s*[^\s=]+)?\s+be\s')
+FIELD_RE = re.compile(r'^([A-Za-z_]\w*)\s*:\s*\S')
+VARIANT_RE = re.compile(r'^([A-Za-z_]\w*)\s*(?:\(.*\))?$')
+TOKEN_RE = re.compile(r'[A-Za-z_]\w*')
+TYPE_KINDS = ('struct', 'class', 'enum')
+LABELS = ('public', 'private', 'extern')
+GROUPS = (('Types', TYPE_KINDS), ('Functions', ('fn',)), ('Constants', ('let', 'macro')))
+
+
+def strip_line_comment(s):
+    """Return the code part of one line: the text before a `//` outside strings."""
+    quote = None
+    i = 0
+    while i < len(s):
+        c = s[i]
+        if quote:
+            if c == '\\':
+                i += 2
+                continue
+            if c == quote:
+                quote = None
+        elif c in '"\'`':
+            quote = c
+        elif s.startswith('//', i):
+            return s[:i].rstrip()
+        i += 1
+    return s.rstrip()
+
+
+class Item(object):
+    """One declaration or member. kind: struct, class, enum, fn, let, macro,
+    ctor, method, field, variant."""
+
+    def __init__(self, kind, name, sig, vis, doc):
+        self.kind = kind
+        self.name = name
+        self.sig = sig
+        self.vis = vis
+        self.doc = doc
+        self.parent = None       # struct/class: name of the base type
+        self.abstract = False
+        self.children = []       # members of struct / class / enum
+        self.anchor = name
+
+
+class Module(object):
+    def __init__(self, name, path):
+        self.name = name
+        self.path = path
+        self.doc = ''
+        self.items = []          # top-level items, public and private
+        self.slug = slugify(name)
+
+    def public_items(self):
+        return [it for it in self.items if it.vis == 'public']
+
+
+def slugify(name):
+    return re.sub(r'[^A-Za-z0-9_.-]+', '-', name).strip('-') or 'module'
+
+
+class SourceParser(object):
+    def __init__(self, text):
+        text = text.replace('\r\n', '\n')
+        text = BLOCK_COMMENT_RE.sub(lambda m: re.sub(r'[^\n]', ' ', m.group(0)), text)
+        self.raw = text.split('\n')
+        self.code = [strip_line_comment(line) for line in self.raw]
+        self.n = len(self.raw)
+
+    def indent(self, i):
+        line = self.raw[i]
+        return len(line) - len(line.lstrip(' \t'))
+
+    def next_code(self, i):
+        while i < self.n and not self.code[i].strip():
+            i += 1
+        return i
+
+    def body_end(self, j, base):
+        """Index of the first code line after j whose indent is <= base."""
+        k = self.next_code(j + 1)
+        while k < self.n and self.indent(k) > base:
+            k = self.next_code(k + 1)
+        return k
+
+    def doc_above(self, i):
+        """The `//` block directly above line i (no blank line between)."""
+        lines = []
+        k = i - 1
+        while k >= 0 and self.raw[k].strip().startswith('//'):
+            lines.append(self.raw[k].strip()[2:])
+            k -= 1
+        lines.reverse()
+        text = ' '.join(l[1:] if l.startswith(' ') else l for l in lines)
+        return text.strip()
+
+    def module_header(self):
+        """Return (name, doc) from the `module NAME` line and the block after it."""
+        for i in range(self.n):
+            if not self.code[i].strip():
+                continue
+            m = MODULE_RE.match(self.code[i])
+            if not m:
+                continue
+            k = i + 1
+            while k < self.n and not self.raw[k].strip():
+                k += 1
+            start = k
+            while k < self.n and self.raw[k].strip().startswith('//'):
+                k += 1
+            if k > start and (k >= self.n or not self.raw[k].strip()):
+                lines = [self.raw[x].strip()[2:] for x in range(start, k)]
+                text = ' '.join(l[1:] if l.startswith(' ') else l for l in lines)
+                return m.group(1), text.strip()
+            return m.group(1), ''
+        return None, ''
+
+    def parse_block(self, i, base, owner, vis='public'):
+        """Parse the declarations of one block: lines indented more than base.
+        owner is 'module', 'struct', 'class' or 'enum'. Returns (items, next).
+        In a type body a `public` / `private` label may also sit at the type's
+        own column, as in docs/language/types.md."""
+        items = []
+        mind = None
+        while True:
+            j = self.next_code(i)
+            if j >= self.n:
+                return items, j
+            ind = self.indent(j)
+            text = self.code[j].strip()
+            if ind <= base:
+                label_here = owner != 'module' and ind == base and text in LABELS
+                if not label_here:
+                    return items, j
+            elif mind is None:
+                mind = ind
+            if text in LABELS:
+                k = self.next_code(j + 1)
+                if k < self.n and self.indent(k) > ind:
+                    label_vis = vis if text == 'extern' else text
+                    sub, i = self.parse_block(k, ind, owner, label_vis)
+                    items.extend(sub)
+                    continue
+                if text != 'extern':
+                    vis = text
+                i = j + 1
+                continue
+            if ind != mind:
+                i = j + 1
+                continue
+            item = self.parse_decl(j, text, owner, vis)
+            if item is None:
+                i = self.body_end(j, mind)
+                continue
+            if item.kind in TYPE_KINDS:
+                item.children, i = self.parse_block(j + 1, mind, item.kind)
+            else:
+                i = self.body_end(j, mind)
+            items.append(item)
+        return items, i
+
+    def parse_decl(self, j, text, owner, vis):
+        doc = self.doc_above(j)
+        if owner == 'module':
+            m = TYPE_RE.match(text)
+            if m:
+                item = Item(m.group(2), m.group(3), text, vis, doc)
+                item.parent = m.group(4)
+                item.abstract = 'abstract' in m.group(1)
+                return item
+            m = ENUM_RE.match(text)
+            if m:
+                return Item('enum', m.group(1), text, vis, doc)
+            m = FN_RE.match(text)
+            if m:
+                return Item('fn', m.group(2), text, vis, doc)
+            if MACRO_RE.match(text):
+                return Item('macro', LET_RE.match(text).group(1), text, vis, doc)
+            m = LET_RE.match(text)
+            if m:
+                return Item('let', m.group(1), text, vis, doc)
+            return None
+        if owner == 'enum':
+            m = VARIANT_RE.match(text)
+            if m:
+                return Item('variant', m.group(1), text, vis, doc)
+            return None
+        if CTOR_RE.match(text):
+            return Item('ctor', 'constructor', text, vis, doc)
+        m = FN_RE.match(text)
+        if m:
+            return Item('method', m.group(2), text, vis, doc)
+        m = FIELD_RE.match(text)
+        if m:
+            return Item('field', m.group(1), text, vis, doc)
+        return None
+
+
+def load_module(path):
+    with open(path, encoding='utf-8') as fh:
+        text = fh.read()
+    parser = SourceParser(text)
+    name, doc = parser.module_header()
+    if name is None:
+        name = os.path.splitext(os.path.basename(path))[0]
+    mod = Module(name, path)
+    mod.doc = doc
+    mod.items, _ = parser.parse_block(0, -1, 'module')
+    # Public members only, and assign unique anchors.
+    seen = set()
+    for it in mod.items:
+        it.anchor = unique(it.name, seen)
+        if it.kind in TYPE_KINDS:
+            it.children = [c for c in it.children if c.vis == 'public']
+            for c in it.children:
+                c.anchor = unique(it.name + '.' + c.name, seen)
+    mod.items = [it for it in mod.items if it.vis == 'public']
+    return mod
+
+
+def unique(base, seen):
+    cand, n = base, 2
+    while cand in seen:
+        cand = '%s-%d' % (base, n)
+        n += 1
+    seen.add(cand)
+    return cand
+
+
+def discover(paths):
+    files = []
+    for p in paths:
+        if os.path.isdir(p):
+            for dirpath, dirnames, filenames in os.walk(p):
+                dirnames.sort()
+                for f in sorted(filenames):
+                    if f.endswith('.kmm') or f.endswith('.km'):
+                        files.append(os.path.join(dirpath, f))
+        elif os.path.isfile(p):
+            files.append(p)
+        else:
+            raise IOError('no such file or directory: %s' % p)
+    return files
+
+
+class Context(object):
+    """Cross-module information: type names, inheritance and page names."""
+
+    def __init__(self, modules, fmt):
+        self.modules = modules
+        self.fmt = fmt
+        self.ext = '.' + fmt if fmt == 'html' else '.md'
+        self.types = {}          # type name -> [Module, ...]
+        self.subtypes = {}       # base name -> [(Module, Item), ...]
+        for mod in modules:
+            for it in mod.items:
+                if it.kind in TYPE_KINDS:
+                    self.types.setdefault(it.name, []).append(mod)
+        for mod in modules:
+            for it in mod.items:
+                if it.kind in ('struct', 'class') and it.parent:
+                    self.subtypes.setdefault(it.parent, []).append((mod, it))
+
+    def resolve(self, name, mod):
+        cands = self.types.get(name)
+        if not cands:
+            return None
+        for m in cands:
+            if m is mod:
+                return m
+        return cands[0]
+
+    def href(self, name, mod):
+        """Link target of the type `name` as seen from module `mod`."""
+        target = self.resolve(name, mod)
+        if target is None:
+            return None
+        anchor = [it for it in target.items if it.name == name and it.kind in TYPE_KINDS][0].anchor
+        if target is mod:
+            return '#' + anchor
+        return page_name(target, self.fmt) + '#' + anchor
+
+
+def page_name(mod, fmt):
+    return mod.slug + ('.html' if fmt == 'html' else '.md')
+
+
+def first_sentence(text, limit=140):
+    m = re.match(r'(.+?[.!?])(\s|$)', text)
+    s = m.group(1) if m else text
+    if len(s) > limit:
+        s = s[:limit - 3].rstrip() + '...'
+    return s
+
+
+def referenced_types(sig, own, mod, ctx):
+    """Known type names in sig, in order, without repeats (own name excluded)."""
+    out = []
+    for tok in TOKEN_RE.findall(sig):
+        if tok != own and tok not in out and ctx.resolve(tok, mod) is not None:
+            out.append(tok)
+    return out
+
+
+# ---------------------------------------------------------------- markdown
+
+def md_fence(sig):
+    return '```km\n' + sig + '\n```'
+
+
+def md_types_line(sig, own, mod, ctx):
+    names = referenced_types(sig, own, mod, ctx)
+    if not names:
+        return ''
+    links = []
+    for name in names:
+        links.append('[`%s`](%s)' % (name, ctx.href(name, mod)))
+    return 'Types: ' + ', '.join(links)
+
+
+def md_entry(it, mod, ctx, level):
+    h = '#' * level
+    out = ['<a id="%s"></a>' % it.anchor, '', '%s `%s`' % (h, it.name), '']
+    if it.kind not in ('field', 'variant'):
+        out += [md_fence(it.sig), '']
+        types = md_types_line(it.sig, it.name, mod, ctx)
+        if types:
+            out += [types, '']
+    if it.doc:
+        out += [it.doc, '']
+    return out
+
+
+def md_module(mod, mods, ctx):
+    out = ['# `%s`' % mod.name, '']
+    if mod.doc:
+        out += [mod.doc, '']
+    out += ['Source: `%s` | [Index](index.md)' % mod.path, '']
+    for title, kinds in GROUPS:
+        group = [it for it in mod.items if it.kind in kinds]
+        if group:
+            out += ['**%s:** ' % title + ', '.join('[`%s`](#%s)' % (it.name, it.anchor) for it in group), '']
+    for title, kinds in GROUPS:
+        group = [it for it in mod.items if it.kind in kinds]
+        if not group:
+            continue
+        out += ['## %s' % title, '']
+        for it in group:
+            if it.kind in TYPE_KINDS:
+                out += md_type(it, mod, ctx)
+            else:
+                out += md_entry(it, mod, ctx, 3)
+    return '\n'.join(out) + '\n'
+
+
+def md_type(it, mod, ctx):
+    out = ['<a id="%s"></a>' % it.anchor, '', '## `%s`' % it.name, '', md_fence(it.sig), '']
+    facts = []
+    if it.parent:
+        target = ctx.href(it.parent, mod)
+        facts.append('Extends [`%s`](%s).' % (it.parent, target) if target else 'Extends `%s`.' % it.parent)
+    subs = ctx.subtypes.get(it.name, [])
+    if subs:
+        links = ['[`%s`](%s)' % (sit.name, ('#' + sit.anchor) if m is mod else page_name(m, 'md') + '#' + sit.anchor)
+                 for m, sit in subs]
+        facts.append('Subtypes: ' + ', '.join(links) + '.')
+    if it.kind == 'enum':
+        facts.append('Variants are written `%s::Name`.' % it.name)
+    if it.abstract:
+        facts.append('Abstract: it cannot be instantiated.')
+    if facts:
+        out += [' '.join(facts), '']
+    if it.doc:
+        out += [it.doc, '']
+    fields = [c for c in it.children if c.kind == 'field']
+    variants = [c for c in it.children if c.kind == 'variant']
+    members = [c for c in it.children if c.kind in ('ctor', 'method')]
+    if fields:
+        out += ['### Fields', '']
+        for c in fields:
+            out += ['- <a id="%s"></a>`%s`%s' % (c.anchor, c.sig, (' -- ' + c.doc) if c.doc else '')]
+        out += ['']
+    if variants:
+        out += ['### Variants', '']
+        for c in variants:
+            out += ['- <a id="%s"></a>`%s`%s' % (c.anchor, c.name, (' -- ' + c.doc) if c.doc else '')]
+        out += ['']
+    if members:
+        out += ['### Constructor and methods', '']
+        for c in members:
+            out += md_entry(c, mod, ctx, 4)
+    return out
+
+
+def md_index(mods, ctx):
+    out = ['# Komodo API reference', '',
+           'One page per module. Private members are not listed.', '']
+    out += ['| Module | Summary |', '| --- | --- |']
+    for mod in mods:
+        summary = first_sentence(mod.doc) if mod.doc else ''
+        out.append('| [`%s`](%s) | %s |' % (mod.name, page_name(mod, 'md'), summary.replace('|', '\\|')))
+    out += ['']
+    return '\n'.join(out) + '\n'
+
+
+# -------------------------------------------------------------------- html
+
+CSS = """:root{--fg:#1d1f21;--bg:#fff;--muted:#60646b;--code:#f3f4f6;--link:#0b5cad}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--fg:#e6e6e6;--bg:#16181b;--muted:#9aa0a6;--code:#24282d;--link:#8cc4ff}}
+:root[data-theme="dark"]{--fg:#e6e6e6;--bg:#16181b;--muted:#9aa0a6;--code:#24282d;--link:#8cc4ff}
+body{font:16px/1.5 system-ui,sans-serif;color:var(--fg);background:var(--bg);max-width:52rem;margin:0 auto;padding:1rem}
+a{color:var(--link)}
+code,pre{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);border-radius:4px}
+code{padding:0 .25em}
+pre{padding:.6rem .8rem;overflow-x:auto}
+pre a{color:inherit}
+.sym{margin:1.4rem 0}
+.doc{margin:.3rem 0 .5rem}
+.meta{color:var(--muted);font-size:.9em}
+.sub li{margin:.25rem 0}
+input[type=search]{width:100%;box-sizing:border-box;padding:.5rem;font:inherit;margin:.5rem 0 1rem}
+.hidden{display:none}
+"""
+
+JS = """(function(){var q=document.getElementById('q');if(!q)return;
+q.addEventListener('input',function(){var t=q.value.trim().toLowerCase();
+var els=document.querySelectorAll('[data-s]');
+for(var i=0;i<els.length;i++){var s=els[i].getAttribute('data-s');
+els[i].classList.toggle('hidden',t!==''&&s.indexOf(t)<0);}});})();"""
+
+
+def e(text):
+    return html.escape(text, quote=True)
+
+
+def html_page(title, body, search=False):
+    search_box = ('<input type="search" id="q" placeholder="Search names" '
+                  'aria-label="Search names">') if search else ''
+    return ('<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n'
+            '<meta name="viewport" content="width=device-width,initial-scale=1">\n'
+            '<title>%s</title>\n<style>%s</style>\n</head>\n<body>\n%s%s\n'
+            '<script>%s</script>\n</body>\n</html>\n') % (
+                e(title), CSS, search_box, body, JS if search else '')
+
+
+def html_sig(sig, own, mod, ctx):
+    """Escaped signature with type names linked to their entries."""
+    out = []
+    pos = 0
+    for m in TOKEN_RE.finditer(sig):
+        out.append(e(sig[pos:m.start()]))
+        tok = m.group(0)
+        target = ctx.href(tok, mod) if tok != own else None
+        if target:
+            out.append('<a href="%s">%s</a>' % (e(target), e(tok)))
+        else:
+            out.append(e(tok))
+        pos = m.end()
+    out.append(e(sig[pos:]))
+    return ''.join(out)
+
+
+def html_doc(text):
+    parts = re.split(r'`([^`]+)`', text)
+    out = []
+    for i, part in enumerate(parts):
+        out.append('<code>%s</code>' % e(part) if i % 2 else e(part))
+    return ''.join(out)
+
+
+def html_entry(it, mod, ctx, tag):
+    search = ' '.join([it.name, it.kind, mod.name, it.doc]).lower()
+    out = ['<section class="sym" id="%s" data-s="%s">' % (e(it.anchor), e(search)),
+           '<%s>%s</%s>' % (tag, e(it.name), tag)]
+    if it.kind not in ('field', 'variant'):
+        out.append('<pre>%s</pre>' % html_sig(it.sig, it.name, mod, ctx))
+    if it.doc:
+        out.append('<p class="doc">%s</p>' % html_doc(it.doc))
+    out.append('</section>')
+    return out
+
+
+def html_type(it, mod, ctx):
+    search = ' '.join([it.name, it.kind, mod.name, it.doc]).lower()
+    out = ['<section class="sym" id="%s" data-s="%s">' % (e(it.anchor), e(search)),
+           '<h2>%s</h2>' % e(it.name), '<pre>%s</pre>' % html_sig(it.sig, it.name, mod, ctx)]
+    facts = []
+    if it.parent:
+        target = ctx.href(it.parent, mod)
+        if target:
+            facts.append('Extends <a href="%s">%s</a>.' % (e(target), e(it.parent)))
+        else:
+            facts.append('Extends %s.' % e(it.parent))
+    subs = ctx.subtypes.get(it.name, [])
+    if subs:
+        links = []
+        for m, sit in subs:
+            href = ('#' + sit.anchor) if m is mod else page_name(m, 'html') + '#' + sit.anchor
+            links.append('<a href="%s">%s</a>' % (e(href), e(sit.name)))
+        facts.append('Subtypes: ' + ', '.join(links) + '.')
+    if it.kind == 'enum':
+        facts.append('Variants are written <code>%s::Name</code>.' % e(it.name))
+    if it.abstract:
+        facts.append('Abstract: it cannot be instantiated.')
+    if facts:
+        out.append('<p class="meta">%s</p>' % ' '.join(facts))
+    if it.doc:
+        out.append('<p class="doc">%s</p>' % html_doc(it.doc))
+    fields = [c for c in it.children if c.kind == 'field']
+    variants = [c for c in it.children if c.kind == 'variant']
+    members = [c for c in it.children if c.kind in ('ctor', 'method')]
+    if fields:
+        out.append('<h3>Fields</h3><ul class="sub">')
+        for c in fields:
+            out.append('<li id="%s" data-s="%s"><code>%s</code>%s</li>' % (
+                e(c.anchor), e((it.name + ' ' + c.name + ' ' + c.doc).lower()), e(c.sig),
+                (' &mdash; ' + html_doc(c.doc)) if c.doc else ''))
+        out.append('</ul>')
+    if variants:
+        out.append('<h3>Variants</h3><ul class="sub">')
+        for c in variants:
+            out.append('<li id="%s" data-s="%s"><code>%s</code>%s</li>' % (
+                e(c.anchor), e((it.name + ' ' + c.name + ' ' + c.doc).lower()), e(c.name),
+                (' &mdash; ' + html_doc(c.doc)) if c.doc else ''))
+        out.append('</ul>')
+    for c in members:
+        out.extend(html_entry(c, mod, ctx, 'h4'))
+    out.append('</section>')
+    return out
+
+
+def html_module(mod, ctx):
+    body = ['<p><a href="index.html">&larr; All modules</a></p>',
+            '<h1><code>%s</code></h1>' % e(mod.name)]
+    if mod.doc:
+        body.append('<p class="doc">%s</p>' % html_doc(mod.doc))
+    body.append('<p class="meta">Source: <code>%s</code></p>' % e(mod.path))
+    for title, kinds in GROUPS:
+        group = [it for it in mod.items if it.kind in kinds]
+        if not group:
+            continue
+        body.append('<h2>%s</h2>' % title)
+        for it in group:
+            if it.kind in TYPE_KINDS:
+                body.extend(html_type(it, mod, ctx))
+            else:
+                body.extend(html_entry(it, mod, ctx, 'h3'))
+    return html_page(mod.name + ' - Komodo API', '\n'.join(body), search=True)
+
+
+def html_index(mods, ctx):
+    body = ['<h1>Komodo API reference</h1>',
+            '<p class="meta">One page per module. Private members are not listed. '
+            'Type in the box to filter the symbol list.</p>',
+            '<h2>Modules</h2>', '<ul class="sub">']
+    for mod in mods:
+        summary = (' &mdash; ' + html_doc(first_sentence(mod.doc))) if mod.doc else ''
+        body.append('<li><a href="%s"><code>%s</code></a>%s</li>' % (
+            e(page_name(mod, 'html')), e(mod.name), summary))
+    body.append('</ul><h2>All public symbols</h2><ul class="sub">')
+    for mod in mods:
+        for it in mod.items:
+            label = it.name
+            body.append('<li data-s="%s"><a href="%s#%s"><code>%s</code></a> <span class="meta">%s, %s</span></li>' % (
+                e((it.name + ' ' + it.kind + ' ' + mod.name).lower()), e(page_name(mod, 'html')),
+                e(it.anchor), e(label), e(it.kind), e(mod.name)))
+            for c in it.children:
+                body.append('<li data-s="%s"><a href="%s#%s"><code>%s</code></a> <span class="meta">%s, %s</span></li>' % (
+                    e((c.name + ' ' + it.name + ' ' + mod.name).lower()), e(page_name(mod, 'html')),
+                    e(c.anchor), e(it.name + '.' + c.name), e(c.kind), e(mod.name)))
+    body.append('</ul>')
+    return html_page('Komodo API reference', '\n'.join(body), search=True)
+
+
+# -------------------------------------------------------------------- main
+
+def write(path, text):
+    with open(path, 'w', encoding='utf-8') as fh:
+        fh.write(text)
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(
+        prog='km-doc',
+        description='Generate API reference pages for Komodo modules.')
+    ap.add_argument('-o', '--out', default='doc', metavar='outdir',
+                    help='output directory (default: ./doc)')
+    ap.add_argument('--format', choices=('md', 'html'), default='md',
+                    help='page format (default: md)')
+    ap.add_argument('paths', nargs='+', help='.kmm/.km files or directories')
+    args = ap.parse_args(argv)
+
+    modules = []
+    names = {}
+    try:
+        files = discover(args.paths)
+    except IOError as err:
+        sys.stderr.write('km-doc: %s\n' % err)
+        return 1
+    for path in files:
+        try:
+            mod = load_module(path)
+        except (IOError, OSError) as err:
+            sys.stderr.write('km-doc: cannot read %s: %s\n' % (path, err))
+            return 1
+        if mod.name in names:
+            sys.stderr.write('km-doc: warning: module %s from %s repeats %s; skipped\n'
+                             % (mod.name, path, names[mod.name]))
+            continue
+        names[mod.name] = path
+        modules.append(mod)
+    modules.sort(key=lambda m: m.name)
+    if not modules:
+        sys.stderr.write('km-doc: no modules found\n')
+        return 1
+
+    ctx = Context(modules, args.format)
+    os.makedirs(args.out, exist_ok=True)
+    for mod in modules:
+        fname = os.path.join(args.out, page_name(mod, args.format))
+        if args.format == 'html':
+            write(fname, html_module(mod, ctx))
+        else:
+            write(fname, md_module(mod, modules, ctx))
+    if args.format == 'html':
+        write(os.path.join(args.out, 'index.html'), html_index(modules, ctx))
+    else:
+        write(os.path.join(args.out, 'index.md'), md_index(modules, ctx))
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

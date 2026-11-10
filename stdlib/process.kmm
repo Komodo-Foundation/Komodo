@@ -1,8 +1,15 @@
 module process
 
+// Runs shell commands through sh -c. Not available on the wasm target.
+
 // Linked from stdlib/process.c.  Reached as `process.NAME(...)`, which the
 // compiler mangles to the flat symbol `process_NAME`.  Commands run through
 // `sh -c`.  Not available on the wasm target (no fork / popen there).
 
+// Runs cmd through sh -c, waits for it, and returns its exit status (0 on
+// success). The command's output goes straight to this program's output.
 fn process_run(cmd: string): int
+// Runs cmd through sh -c and returns what it wrote to standard output, including
+// any trailing newline. The exit status is not reported (use process_run for
+// it), and the output of a failing command is still returned.
 fn process_output(cmd: string): string
