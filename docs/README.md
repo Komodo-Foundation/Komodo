@@ -10,3 +10,4 @@
 | [C FFI reference](ffi.md) | `extern fn`, handles, callbacks, structs by value, the runtime ABI |
 | [Roadmap to 1.0](ROADMAP.md) | what is left before a stable release |
 | [Compiler internals](internals.md) | pipeline, backends, bootstrap, how to add a feature or target |
+| [Editor support](../editors/README.md) | VS Code, Vim and Emacs modes; the `km-lsp` language server |
