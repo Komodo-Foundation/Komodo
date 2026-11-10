@@ -415,8 +415,9 @@ void main()
 1 -1 4 -4 9 2
 ```
 
-The compiler does not check that a literal fits its width (`let x: u8 = 300`
-is accepted). See [Open questions](#open-questions-for-the-maintainer).
+Literals are range-checked: `let x: u8 = 300` is an error
+(`literal 300 does not fit in u8`). Arithmetic on the narrow types wraps; see
+[Integers and `f32`](integers.md) for every width.
 
 ### 4.2 Floats
 
@@ -4796,17 +4797,7 @@ void main()
     print(u)
 ```
 
-**8. Integer literals are not range-checked.** `let x: u8 = 300` prints `300`.
-
-```km
-void main()
-    let x: u8 = 300
-    print(x)
-```
-
-```text
-300
-```
+**8. (Resolved.)** Integer literals are now range-checked; see [Integers and `f32`](integers.md).
 
 **9. Explicit enum values are ignored.** `Low = 1` and `High = 10` print as `0`
 and `3`; `High` is not the value written.
