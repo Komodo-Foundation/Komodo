@@ -1,0 +1,19 @@
+import ffilib
+
+void main()
+    let a: u8 = 255
+    print(ffilib::w_inc8(a))
+    print(ffilib::w_inc8(41))
+    let n: i32 = -2147483647
+    print(ffilib::w_neg32(n))
+    print(ffilib::w_neg32(-2147483647 - 1))
+    let x: u32 = 4000000000
+    print(ffilib::w_add32(x, 500000000))
+    let u: u64 = 18446744073709551615
+    print(ffilib::w_big(u))
+    print(ffilib::w_big(u - 1))
+    let r = ffilib::w_inc8(255) + 7
+    print(r)
+    let h: f32 = 3.0
+    print(ffilib::w_half(h))
+    print(ffilib::w_add32(1, 2) * 2)

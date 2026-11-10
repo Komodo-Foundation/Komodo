@@ -6,6 +6,7 @@
 | [The `komodo` command](cli.md) | running, building, testing, targets, `new`, `watch`, `doctor`, `lib` |
 | [Language basics](language/basics.md) | variables, types, control flow, functions, modules, the standard library |
 | [Language reference](language/reference.md) | every syntax form and rule of the language, each backed by a checked example |
+| [Integers and `f32`](language/integers.md) | every width: range, wrap-around, conversions, printing |
 | [Types and objects](language/types.md) | structs, classes, enums, `match`, generics, errors, ownership |
 | [Using C and C++ libraries](interop.md) | `import zlib`, `native/`, binding generator, exporting Komodo to C/C++ |
 | [C FFI reference](ffi.md) | `extern fn`, handles, callbacks, structs by value, the runtime ABI |

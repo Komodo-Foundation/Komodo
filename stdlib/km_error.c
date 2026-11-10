@@ -257,6 +257,17 @@ static const char *km_exe_symbol(uintptr_t pc, int *komodo)
         if (lo == 0)
             return NULL;
         best = &km_sym[km_idx[lo - 1].sym];
+        /* equal addresses (km_text_begin and the first function): the
+         * heap sort is unstable, so prefer a sized function symbol */
+        for (size_t j = lo - 1; ; j--) {
+            const Elf64_Sym *c = &km_sym[km_idx[j].sym];
+            if (ELF64_ST_TYPE(c->st_info) == STT_FUNC && c->st_size) {
+                best = c;
+                break;
+            }
+            if (j == 0 || km_idx[j - 1].addr != km_idx[lo - 1].addr)
+                break;
+        }
     } else {
         for (size_t i = 0; i < km_nsym; i++) {
             const Elf64_Sym *s = &km_sym[i];
