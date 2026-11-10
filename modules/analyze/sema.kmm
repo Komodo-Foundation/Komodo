@@ -38,6 +38,7 @@ public
         m_strict = strict
         m_typeIdx = new StrIndex()
         m_fnIdx = new StrIndex()
+        m_ownIdx = new StrIndex()
 
     mut setSourceMap(files: [string], starts: [int])
         m_srcFiles = files
@@ -88,19 +89,14 @@ public
             for m in cl.methods do
                 registerFn(methodSym(cl.name, m), cl.name, m)
 
-        // ── Pass 1b: default parameter values (see sema_stmt.kmm) ──
+        // ── Pass 1b/1c: default parameter values (see sema_stmt.kmm) and
+        //  `export fn` / `extern fn … = "sym"` rules; one error per
+        //  declaration is recorded and the rest are still checked ──
         for fd in prog.functions do
-            checkParamDefaults(fd, "")
+            checkDeclKeepGoing(fd, "")
         for cl in prog.classes do
             for m in cl.methods do
-                checkParamDefaults(m, cl.name)
-
-        // ── Pass 1c: `export fn` / `extern fn … = "sym"` rules ──────
-        for fd in prog.functions do
-            if fd.isExport then
-                checkExport(fd)
-            if fd.isExtern and fd.symbol != null then
-                checkExternSymbol(fd)
+                checkDeclKeepGoing(m, cl.name)
 
         // ── Pass 2: top-level macros ──────────────────────────────
         for mac in prog.macros do
@@ -118,22 +114,57 @@ public
         //  Templates are skipped: their parameter types are known only
         //  per call site, so codegen type-checks each monomorphised copy.
         //  Overload members are ordinary functions — checked normally.
+        //  An error inside one body does not stop the others: it is
+        //  recorded and the next function is checked (up to 20 errors),
+        //  then they are all thrown together, one per line.
         for fd in prog.functions do
             if fnIsTemplate(fd) then
                 continue
-            checkFunction(fd, "")
+            checkFunctionKeepGoing(fd, "")
         for cl in prog.classes do
             for m in cl.methods do
-                checkFunction(m, cl.name)
+                checkFunctionKeepGoing(m, cl.name)
+        if #m_errors > 0 then
+            throw join(m_errors, "\n")
 
         // non-fatal bad-practice warnings, in source order
         for w in m_lints do
-            print(locate(w, m_srcFiles, m_srcStarts))
+            print(diagOne(locate(w, m_srcFiles, m_srcStarts)))
 
         prog.analyzed = true
         prog.usesCopy = m_usesCopy
 
     // ── diagnostics ───────────────────────────────────────────────
+
+    // `checkFunction` with the error caught at the function boundary.
+    // `checkFunction` resets all per-function state (scopes, macros,
+    // loop depth) on entry, so continuing with the next body is safe.
+    mut checkFunctionKeepGoing(fd: FunctionDecl, owner: string)
+        if #m_errors >= 20 then
+            return
+        let ok = checkFunctionOk(fd, owner)?
+        if ok == null then
+            m_errors += [km_error_message() or "internal error"]
+
+    mut checkDeclKeepGoing(fd: FunctionDecl, owner: string)
+        if #m_errors >= 20 then
+            return
+        let ok = checkDeclOk(fd, owner)?
+        if ok == null then
+            m_errors += [km_error_message() or "internal error"]
+
+    mut checkDeclOk(fd: FunctionDecl, owner: string): int
+        checkParamDefaults(fd, owner)
+        if owner == "" then
+            if fd.isExport then
+                checkExport(fd)
+            if fd.isExtern and fd.symbol != null then
+                checkExternSymbol(fd)
+        return 1
+
+    mut checkFunctionOk(fd: FunctionDecl, owner: string): int
+        checkFunction(fd, owner)
+        return 1
 
     void err(node: ASTNode, msg: string)
         throw (string(node.line) + ":" + string(node.column) + ": " + msg)
@@ -293,15 +324,17 @@ public
         registerType(d.name, d.parent, d, true, d.isAbstract, false, names, types, hasDef)
         let ti = typeIndex(d.name)
         for f in d.fields do
-            m_ownMembers.add(d.name + "." + f.name, 0)
+            m_ownMembers += [d.name + "." + f.name]
+            m_ownIdx.add(d.name + "." + f.name, 0)
             if f.visibility == "private" then
-                m_privMembers.add(d.name + "." + f.name, 0)
+                m_privMembers += [d.name + "." + f.name]
         for m in d.methods do
             if not m.isConstructor then
                 m_typeOwnMethods[ti] += [m.name]
-                m_ownMembers.add(d.name + "." + m.name, 0)
+                m_ownMembers += [d.name + "." + m.name]
+                m_ownIdx.add(d.name + "." + m.name, 0)
                 if m.visibility == "private" then
-                    m_privMembers.add(d.name + "." + m.name, 0)
+                    m_privMembers += [d.name + "." + m.name]
 
     mut registerType(name: string, parent: string?, node: ASTNode, isClass: bool, isAbs: bool, isUniq: bool, fnames: [string], ftypes: [string], fdef: [bool])
         if (name in m_typeNames) then
@@ -416,7 +449,7 @@ public
         let cur = typeName
         let guard = 0
         while cur != "" do
-            if m_ownMembers.has(cur + "." + field) then
+            if m_ownIdx.has(cur + "." + field) then
                 return cur
             cur = typeParentOf(cur)
             guard += 1
@@ -429,7 +462,7 @@ public
     mut checkMemberAccess(node: ASTNode, owner: string, member: string)
         if owner == "" or m_curClass == owner then
             return
-        if m_privMembers.has(owner + "." + member) then
+        if (owner + "." + member) in m_privMembers then
             err(node, "'" + member + "' is private to class '" + owner + "'")
 
     mut checkFieldAccess(node: ASTNode, typeName: string, field: string)
@@ -1062,6 +1095,7 @@ private
     m_srcStarts: [int] = []
     // non-fatal warnings collected during analysis (see `lint`)
     m_lints: [string] = []
+    m_errors: [string] = []
 
     // type registry (`m_typeIdx` hashes m_typeNames — see StrIndex)
     m_typeNames: [string] = []
@@ -1100,8 +1134,9 @@ private
     m_fnVis: [string] = []       // "public" / "private" (module section)
     // class members: "Class.member" for each own field and method, and the
     // subset declared under a `private` section
-    m_ownMembers: StrIndex = new StrIndex()
-    m_privMembers: StrIndex = new StrIndex()
+    m_ownMembers: [string] = []
+    m_ownIdx: StrIndex            // hashes m_ownMembers
+    m_privMembers: [string] = []
     m_fnMod: [string] = []       // owning module name ("" for the program)
     // module of the function body currently being checked (for privacy)
     m_curModuleOwner: string = ""

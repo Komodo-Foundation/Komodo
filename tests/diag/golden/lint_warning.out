@@ -1,0 +1,10 @@
+warning[K0164]: '==' compares a value with itself
+ --> lint_warning.km:3:8
+  |
+1 | void main()
+2 |     let y = 3
+3 |     if y == y then
+  |        ^ '==' compares a value with itself
+  = help: Compare against a different value.
+  = why: Comparing a value with itself always gives the same answer, so it is almost always a typo.
+  = explain: run `komodo explain K0164` for more detail
