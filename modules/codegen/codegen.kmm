@@ -209,6 +209,8 @@ public
             let fdef = prog.functions[pi1]
             if not fdef.isExtern and not fdef.isPrototype then
                 m_backend.declareFn(m_fnLink[pi1])
+                if fastEntry(fdef) then
+                    m_backend.declareFastFn(m_fnLink[pi1], #fdef.params)
             if fdef.isExport then
                 m_backend.declareExport(fdef.name)
             if fdef.isExtern and fdef.symbol != null then

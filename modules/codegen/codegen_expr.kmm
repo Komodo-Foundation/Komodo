@@ -582,21 +582,7 @@ void Codegen::genCall(e: CallExpr)
         if m_curKind == "fn" and kind == "void" then
             throw ("a pure `fn` cannot call the void procedure '" + e.name + "'")
 
-    let n = #e.args
-    if n == 0 then
-        m_backend.call0(e.name)
-        return
-
-    m_backend.callFrameBegin(n)
-    let j = 0
-    for a in e.args do
-        m_backend.callArgTag(j, argTag(a))
-        genExpr(a)
-        if exprType(a) == "float" then
-            m_backend.floatToBits()
-        m_backend.callArgStore(j)
-        j += 1
-    m_backend.callFrameEnd(e.name, n)
+    genDirectCall(e.name, e.args)
 
 // `extern fn` — the native System V AMD64 C ABI.  A scalar argument fills
 // the next integer (rdi..r9) or SSE (xmm0..7) register, then spills to
@@ -734,6 +720,14 @@ void Codegen::genDirectCall(sym: string, args: [Expression])
     let n = #args
     if n == 0 then
         m_backend.call0(sym)
+        return
+    if m_backend.isFastFn(sym, n) then
+        for a in args do
+            genExpr(a)
+            if exprType(a) == "float" then
+                m_backend.floatToBits()
+            m_backend.pushAcc()
+        m_backend.callFast(sym, n)
         return
     m_backend.callFrameBegin(n)
     let j = 0

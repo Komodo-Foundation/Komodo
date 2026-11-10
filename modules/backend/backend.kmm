@@ -154,6 +154,19 @@ public
     mut isLocalFn(mangledSym: string): bool
         return m_fnIdx.has(mangledSym)
 
+    // ── fast direct calls ──────────────────────────────────────────
+    // A backend that sets `fastCalls()` lets Codegen declare a function
+    // with `declareFastFn(name, nparams)`: a call that names it with
+    // exactly that many arguments may use the backend's register
+    // convention (`callFast`) instead of the (tag,value)[] frame.  Every
+    // other caller still uses the ordinary entry.
+    mut fastCalls(): bool
+        return false
+    mut declareFastFn(name: string, nparams: int)
+        m_fastIdx.add(mangle(name), nparams)
+    mut isFastFn(name: string, nargs: int): bool
+        return m_fastIdx.first(mangle(name)) == nargs
+
     // `module.member` → `module_member`; a plain name is unchanged.
     fn mangle(name: string): string
         let out = ""
@@ -169,3 +182,4 @@ public
 private
     m_labelId: int = 0
     m_fnIdx: StrIndex = new StrIndex()   // declared function symbols
+    m_fastIdx: StrIndex = new StrIndex() // fast-entry functions → parameter count

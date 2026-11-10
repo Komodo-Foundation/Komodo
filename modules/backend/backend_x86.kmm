@@ -239,12 +239,24 @@ void X86Backend::begin()
 // every other function receives  rsi = &(tag,value)[argc].
 void X86Backend::beginFunction(name: string, frame: int, paramOffsets: [int], isMain: bool)
     m_idxFail = ""
+    let fast = false
     if isMain then
         m_hasMain = true
         m_curSym = "km_program_main"
     else
         m_curSym = asmSym(name)
+        fast = isFastFn(name, #paramOffsets)
     label(m_curSym)
+    if fast then
+        // (`$name$f`: the `$` keeps tools/asm-split.awk from cutting here.)
+        // The ordinary entry unpacks the (tag,value)[] frame into the
+        // argument registers and falls into the fast entry below.
+        ins("mov r10, rsi")
+        let k = 0
+        while k < #paramOffsets do
+            ins("mov " + fastArgReg(k) + ", [r10 + " + string(16 * k + 8) + "]")
+            k += 1
+        label(m_curSym + "$f")
     ins("push rbp")
     ins("mov rbp, rsp")
     ins("push rbx")
@@ -254,9 +266,47 @@ void X86Backend::beginFunction(name: string, frame: int, paramOffsets: [int], is
     // `main` (which may take `args`) as for everything else.
     let i = 0
     while i < #paramOffsets do
-        ins("mov rax, [rsi + " + string(16 * i + 8) + "]")
+        // The body's first statement may reuse rax as "the last parameter",
+        // so both entries leave it there.
+        if fast then
+            ins("mov rax, " + fastArgReg(i))
+        else
+            ins("mov rax, [rsi + " + string(16 * i + 8) + "]")
         ins("mov [rbp - " + string(paramOffsets[i]) + "], rax")
         i += 1
+
+// ── fast direct calls ──────────────────────────────────────────────
+// System V integer argument registers; arguments are 64-bit words (a
+// float travels as its bit pattern, exactly as in the frame ABI).
+fn fastArgReg(k: int): string
+    if k == 0 then
+        return "rdi"
+    if k == 1 then
+        return "rsi"
+    if k == 2 then
+        return "rdx"
+    if k == 3 then
+        return "rcx"
+    if k == 4 then
+        return "r8"
+    return "r9"
+
+// Off for `-g` builds: gdb reads a function's frame from its first
+// instructions, and the register-argument wrapper sits in front of them.
+mut X86Backend::fastCalls(): bool
+    return not m_dbgOn
+
+// The n arguments were spilled with pushAcc() in order; pop them into
+// the argument registers and call the function's fast entry.
+mut X86Backend::callFast(name: string, n: int)
+    let k = n - 1
+    while k >= 0 do
+        ins("pop " + fastArgReg(k))
+        k -= 1
+    ins("mov rbx, rsp")
+    ins("and rsp, -16")
+    ins("call " + asmSym(mangle(name)) + "$f")
+    ins("mov rsp, rbx")
 
 void X86Backend::endFunction()
     ins("xor eax, eax")
