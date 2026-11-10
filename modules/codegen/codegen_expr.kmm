@@ -737,6 +737,10 @@ void Codegen::genExternCall(e: CallExpr)
     // every `float` value is inside Komodo.
     if rawRetType(e.name) == "f32" then
         m_backend.cvtF32ToDouble()
+    // a narrow integer return leaves the upper bits of rax undefined
+    let rr = rawRetType(e.name)
+    if rr != "" and rr != "f32" and narrowKind(rr) != "" then
+        m_backend.normInt(rr)
 
     let retStruct = externRetStructName(e.name)
     if retStruct != "" then

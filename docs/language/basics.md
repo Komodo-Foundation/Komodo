@@ -163,14 +163,14 @@ A `let` with `be` may also carry a type: `let limit: int be 10`.
 | Type     | What it holds | Example |
 |----------|---------------|---------|
 | `int`    | 64-bit signed integer | `-42` |
-| `uint`   | unsigned integer | `7` |
+| `uint`   | unsigned 64-bit integer (same as `u64`); `u8`..`u64` and `i8`..`i64` are the fixed widths, see [Integers](integers.md) | `7` |
 | `float`  | IEEE-754 double | `3.14` |
-| `f32`    | single-precision float; computed as a double, 4 bytes only in C struct layouts | `2.5` |
+| `f32`    | single-precision float; every `f32` result is rounded to single precision | `2.5` |
 | `bool`   | truth value; prints as `1` or `0` | `true` |
 | `char`   | one character | `'K'` |
 | `string` | text | `"Komodo"` |
 
-`f32` and `float` mix freely. Nullable types are written `T?`, for example
+`f32` and `float` mix freely (a plain `float` operand makes the result `float`). Nullable types are written `T?`, for example
 `int?` or `string?`, and the value `null` fills them.
 
 ```km
