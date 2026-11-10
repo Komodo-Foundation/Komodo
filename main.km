@@ -23,6 +23,7 @@ void main(args)
 
     // Trailing arguments, in any order:
     //   x86 | stackvm | c | wasm  code-generation target      (default x86)
+    //   check                    analyse only: diagnostics, no output file
     //   strict                   analyser lint-level checks   (default off)
     //   none | low | medium | max   optimisation level        (default none)
     let target = "x86"
@@ -31,7 +32,7 @@ void main(args)
     let ai = 2
     while ai < #args do
         let a = args[ai]
-        if a == "x86" or a == "x86pic" or a == "stackvm" or a == "c" or a == "wasm" then
+        if a == "x86" or a == "x86pic" or a == "stackvm" or a == "c" or a == "wasm" or a == "check" then
             target = a
         else if a == "header" then
             target = a              // C header for the `export fn`s -> <file>.h
@@ -49,14 +50,18 @@ void main(args)
     let stdlibProbe = dirOf(selfPath) + "/probe.km"
 
     let gathered = gather(fileName, stdlibProbe)
-    file::write_all(fileName + ".deps", join(gathered.deps, "\n"))
-    file::write_all(fileName + ".links", join(gathered.links, "\n"))
+    // `check` writes nothing: no .deps / .links / output file
+    if target != "check" then
+        file::write_all(fileName + ".deps", join(gathered.deps, "\n"))
+        file::write_all(fileName + ".links", join(gathered.links, "\n"))
     let compiled = km_compiler::compileMapped(gathered.source, target, strict, opt, gathered.deps, gathered.starts)?
     if compiled == null then
         // report as `file:line:col: error: …`, against the file the
         // problem is actually in rather than the merged unit
         let raw = km_error_message() or "compilation failed"
         km_fail(km_compiler::locate(errorLine(raw), gathered.deps, gathered.starts))
+    if target == "check" then
+        return                        // analysed clean; diagnostics already printed
     let asm = compiled or ""          // km_fail above does not return
 
     let outputPath = fileName + ".asm"
@@ -187,6 +192,8 @@ fn gather(rootPath: string, stdlibProbe: string) : GatherResult
             let resolved = file::find(name, rootPath)
             if resolved == null then
                 resolved = file::find(name, stdlibProbe)
+            if resolved == null then
+                km_fail(p + ":" + importPos(src, name) + ": error: cannot find module '" + name + "'")
             if resolved != null and not (resolved in seen) then
                 queue += [resolved]
 
@@ -360,6 +367,33 @@ fn externOnLine(line: string) : string
             return name
         k += 1
     return "-l" + name
+
+// "line:col" of the first `import <name>` line in `src` (col is the
+// column of the name), for a diagnostic.  "1:1" when there is none.
+fn importPos(src: string, name: string) : string
+    let line = 1
+    let i = 0
+    let lineStart = 0
+    let n = src.length              // a strlen — measure once, not per char
+    while i <= n do
+        if i == n or src[i] == "\n" then
+            let text = src[lineStart to i]
+            if importOnLine(text) == name then
+                return string(line) + ":" + string(importNameCol(text))
+            line += 1
+            lineStart = i + 1
+        i += 1
+    return "1:1"
+
+// 1-based column at which the module name starts on an `import` line.
+fn importNameCol(line: string) : int
+    let a = 0
+    while a < line.length and (line[a] == " " or line[a] == "\t") do
+        a += 1
+    let b = a + 7                   // past "import"
+    while b < line.length and line[b] == " " do
+        b += 1
+    return b + 1
 
 // Names on `import <name>` lines, in source order.
 fn importNames(src: string) : [string]

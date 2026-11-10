@@ -92,6 +92,7 @@ commands:
   run         build incrementally and run (the default)
   build       build an executable: ./<name>, or -o <path>
   test        run *_test.km files and tests/*.km programs that define main()
+  check       analyse only: print diagnostics (file:line:col: error: ...), no build
   repl        interactive prompt
   new <name>  create a project
   bind        generate Komodo bindings from a C header
@@ -101,6 +102,7 @@ commands:
   doctor      check that the toolchain is installed
   upgrade     update this installation (git pull)
   self        work on the compiler itself: self build | test | seed
+  completions shell completion script: completions bash | zsh
 
 options:
       --release         optimise (slower to build, faster to run)
@@ -116,7 +118,7 @@ Older flags still work; see docs/cli.md#legacy-flags.
 EOF
 }
 
-commands="run build test repl new bind watch clean doctor lib self upgrade"
+commands="run build test check repl new bind watch clean doctor lib self upgrade completions"
 is_command() { local c; for c in $commands; do [[ "$c" == "$1" ]] && return 0; done; return 1; }
 
 # Levenshtein distance, for "did you mean".
@@ -241,7 +243,7 @@ while [[ $# -gt 0 ]]; do
             if [[ -z "$cmd" && -z "$src" ]] && is_command "$1"; then
                 cmd="$1"; shift
                 case "$cmd" in
-                    new|bind|self|repl) rest_args=( "$@" ); break ;;
+                    new|bind|self|repl|completions) rest_args=( "$@" ); break ;;
                 esac
                 continue
             fi
@@ -333,6 +335,107 @@ void main()
 EOF
     printf '.komodo/\nkomodo_bindings/\n/%s\n' "$name" > "$name/.gitignore"
     echo "created $name/ — next:  cd $name && komodo"
+    exit 0
+fi
+
+# ── completions: print a shell completion script ────────────────────
+if [[ "$cmd" == "completions" ]]; then
+    case "${rest_args[0]:-}" in
+        bash)
+cat <<'EOF'
+# komodo bash completion. Install with:
+#   source <(komodo completions bash)        # or save it to a file sourced from ~/.bashrc
+_komodo() {
+    local cur prev cmds opts
+    COMPREPLY=()
+    cur="${COMP_WORDS[COMP_CWORD]}"
+    prev="${COMP_WORDS[COMP_CWORD-1]}"
+    cmds="run build test check repl new bind watch clean doctor lib self upgrade completions"
+    opts="--release -t --target -o --output -q --quiet -v --verbose -O --strict --no-cache -S --emit-asm -c --compile -k --kmc --time -h --help -V --version"
+    case "$prev" in
+        -t|--target) COMPREPLY=( $(compgen -W "x86 c wasm stackvm" -- "$cur") ); return 0 ;;
+        -O)          COMPREPLY=( $(compgen -W "none low medium max 0 1 2 3" -- "$cur") ); return 0 ;;
+        -o|--output|-k|--kmc) COMPREPLY=( $(compgen -f -- "$cur") ); return 0 ;;
+        completions) COMPREPLY=( $(compgen -W "bash zsh" -- "$cur") ); return 0 ;;
+        self)        COMPREPLY=( $(compgen -W "build test seed" -- "$cur") ); return 0 ;;
+    esac
+    if [[ "$cur" == -* ]]; then
+        COMPREPLY=( $(compgen -W "$opts" -- "$cur") ); return 0
+    fi
+    if [[ $COMP_CWORD -eq 1 ]]; then
+        COMPREPLY=( $(compgen -W "$cmds" -- "$cur") $(compgen -f -X '!*.km' -- "$cur") $(compgen -d -- "$cur") )
+        return 0
+    fi
+    COMPREPLY=( $(compgen -f -- "$cur") )
+    return 0
+}
+complete -o default -F _komodo komodo
+EOF
+            ;;
+        zsh)
+cat <<'EOF'
+#compdef komodo
+# komodo zsh completion. Install with:
+#   komodo completions zsh > "${fpath[1]}/_komodo"    # then restart the shell
+_komodo() {
+    local -a cmds
+    cmds=(
+        'run:build incrementally and run (the default)'
+        'build:build an executable'
+        'test:run *_test.km files and tests/ programs'
+        'check:analyse only, print diagnostics'
+        'repl:interactive prompt'
+        'new:create a project'
+        'bind:generate bindings from a C header'
+        'watch:rerun on every change'
+        'clean:delete build products'
+        'doctor:check the toolchain'
+        'lib:build a library for C, C++, Rust or Python'
+        'self:work on the compiler itself'
+        'upgrade:update this installation'
+        'completions:print a shell completion script'
+    )
+    _arguments -s -C \
+        '(-h --help)'{-h,--help}'[show help]' \
+        '(-V --version)'{-V,--version}'[show the version]' \
+        '--release[optimise]' \
+        '(-t --target)'{-t,--target}'[code-generation target]:target:(x86 c wasm stackvm)' \
+        '(-o --output)'{-o,--output}'[output path]:path:_files' \
+        '(-q --quiet)'{-q,--quiet}'[only the program output]' \
+        '(-v --verbose)'{-v,--verbose}'[show the steps and commands]' \
+        '-O[optimisation level]:level:(none low medium max 0 1 2 3)' \
+        '--strict[make analyser warnings fatal]' \
+        '--no-cache[ignore the build cache]' \
+        '-S[write the generated code and stop]' \
+        '-c[build without running]' \
+        '1: :->first' \
+        '*:: :->args' && return 0
+    # (-C above sets $state; the case below fills in the two states)
+    case $state in
+        first)
+            _describe -t commands 'komodo command' cmds
+            _files -g '*.km(-.)'
+            ;;
+        args)
+            case $words[1] in
+                self) _values 'self command' build test seed ;;
+                completions) _values 'shell' bash zsh ;;
+                new) ;;
+                *) _files ;;
+            esac
+            ;;
+    esac
+}
+# autoloaded from $fpath, the file is the function body; sourced, register it
+if [[ $zsh_eval_context[-1] == loadautofunc ]]; then
+    _komodo "$@"
+else
+    compdef _komodo komodo
+fi
+EOF
+            ;;
+        *) die "usage: komodo completions bash|zsh" "e.g. source <(komodo completions bash)" 2 ;;
+    esac
     exit 0
 fi
 
@@ -618,7 +721,12 @@ if [[ "$mode" != "emit-asm" ]]; then
 fi
 [[ "$cmd" == "lib" && -z "$emit_header" ]] && emit_header="$out.h"
 
-asm="$wd/$base.asm"
+# The generated code: NASM for x86, C for the c and wasm targets (named .c so
+# gcc / emcc need no -x flag), stack-VM text for stackvm.
+case "$target" in
+    c|wasm) asm="$wd/$base.c" ;;
+    *)      asm="$wd/$base.asm" ;;
+esac
 obj="$wd/$base.o"
 linkfile="$wd/$base.links"
 depfile="$wd/$base.deps"
@@ -656,10 +764,14 @@ done
 # bindings are reused as-is; a failed lookup is not an error here — the
 # compiler reports the missing module and we add a hint.
 unresolved_imports=()
+hint_fd=2                           # `komodo check` sends hints to stdout
+# import_hints <kmc-output-file>: after a failed kmc run, a hint for each
+# unresolved import that kmc actually reported (its "cannot find module" line).
 import_hints() {
     local n
     for n in ${unresolved_imports[@]+"${unresolved_imports[@]}"}; do
-        echo "$prog: no C library '$n' found (try: sudo apt install lib$n-dev, or write a binding with \`komodo bind\`)" >&2
+        grep -qF "cannot find module '$n'" "$1" 2>/dev/null || continue
+        echo "$prog: no C library '$n' found (try: sudo apt install lib$n-dev, or write a binding with \`komodo bind\`)" >&"$hint_fd"
     done
 }
 auto_bind_imports() {
@@ -687,6 +799,22 @@ auto_bind_imports() {
     return 0
 }
 auto_bind_imports
+
+# ── check: diagnostics only (no .km.asm, no link, no run) ───────────
+# kmc's `check` target stops after the analyser: diagnostics go to stdout,
+# one per line, exactly as the compiler words them; a clean program prints
+# nothing. Exit 1 on any error.
+if [[ "$cmd" == "check" ]]; then
+    hint_fd=1
+    chk_out="$("$kmc" "$src" check $strict 2>&1)"; chk_rc=$?
+    [[ -n "$chk_out" ]] && printf '%s\n' "$chk_out"
+    if [[ $chk_rc -ne 0 ]]; then
+        printf '%s\n' "$chk_out" > "$wd/check.err"
+        import_hints "$wd/check.err"
+        exit 1
+    fi
+    exit 0
+fi
 
 # kmc resolves every `link` declaration reachable from the program into
 # ready linker tokens and writes them, one per line, to $linkfile. Here
@@ -797,7 +925,7 @@ else
     kmc_rc=${PIPESTATUS[0]}
     cat "$kmc_err" >&2
     if [[ $kmc_rc -ne 0 ]]; then
-        import_hints
+        import_hints "$kmc_err"
         rm -f "$src.asm" "$src.deps" "$src.links"
         exit 1
     fi
@@ -815,7 +943,12 @@ else
 fi
 
 if [[ "$mode" == "emit-asm" ]]; then
-    cp -f "$asm" "$src.asm"
+    # C output lands next to the source as <name>.c; x86 and stackvm keep
+    # the historical <file>.km.asm
+    case "$target" in
+        c|wasm) cp -f "$asm" "${src%.km}.c" ;;
+        *)      cp -f "$asm" "$src.asm" ;;
+    esac
     exit 0
 fi
 if [[ "$target" != "x86" && "$target" != "c" && "$target" != "wasm" ]]; then
@@ -968,7 +1101,6 @@ run_binary() {  # run_binary <path> [runner...]
 record_output() { [[ "$cmd" == "build" || "$cmd" == "lib" ]] && echo "$1" >> "$wd/outputs"; return 0; }
 
 gcc_fail_hint() {
-    import_hints
     have gcc && ! echo 'int main(void){return 0;}' | gcc -x c - -l:libgc.so.1 -o /dev/null 2>/dev/null \
         && echo "$prog: the link failed and libgc is missing — Debian/Ubuntu: sudo apt install libgc-dev" >&2
     return 0
