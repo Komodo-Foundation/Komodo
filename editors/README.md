@@ -42,7 +42,7 @@ needed. Set the language id to `komodo` and the file pattern to `*.km` and
 Install the grammar by linking the extension folder:
 
 ```bash
-ln -s /path/to/Komodo/editors/vscode ~/.vscode/extensions/lrperks.komodo-lang-0.1.0
+ln -s /path/to/Komodo/editors/vscode ~/.vscode/extensions/komodo-foundation.komodo-lang-0.1.0
 ```
 
 Reload the window (Developer: Reload Window). `.km` and `.kmm` files now
