@@ -103,6 +103,7 @@ commands:
   build       build an executable: ./<name>, or -o <path>
   test        run *_test.km files and tests/*.km programs that define main()
   check       analyse only: print diagnostics (file:line:col: error: ...), no build
+  explain     explain an error code: komodo explain K0001 (see docs/diagnostics.md)
   repl        interactive prompt
   new <name>  create a project
   bind        generate Komodo bindings from a C header
@@ -124,6 +125,9 @@ options:
   -g, --debug            debug build: DWARF line info (gdb shows Komodo lines) and
                          call-chain traces on uncaught errors (see docs/debugging.md)
   -v, --verbose         show the steps and the nasm / gcc commands
+      --errors=<mode>   short (file:line:col: error: msg) | rich (source snippets,
+                        codes, explanations) | auto (rich on a terminal; default).
+                        --explain is --errors=rich; env KM_ERRORS and NO_COLOR work too
   -h, --help            show this help
   -V, --version         show the version
 
@@ -132,7 +136,7 @@ Older flags still work; see docs/cli.md#legacy-flags.
 EOF
 }
 
-commands="run build test check fmt doc repl new bind watch clean doctor lib self upgrade completions"
+commands="run build test check explain fmt doc repl new bind watch clean doctor lib self upgrade completions"
 is_command() { local c; for c in $commands; do [[ "$c" == "$1" ]] && return 0; done; return 1; }
 
 # Levenshtein distance, for "did you mean".
@@ -191,6 +195,7 @@ no_cache=0
 do_clean=0
 do_cache_clean=0
 kmc_custom=0
+errors_mode="${KM_ERRORS:-auto}"
 kmc="${KMC:-$here/kmc}"
 [[ -n "${KMC:-}" ]] && kmc_custom=1
 src=""
@@ -238,6 +243,8 @@ while [[ $# -gt 0 ]]; do
         -O*)          set_opt "${1#-O}"; shift ;;
         --opt=*)      set_opt "${1#--opt=}"; shift ;;
         --strict)     strict="strict"; shift ;;
+        --errors=*)   errors_mode="${1#--errors=}"; shift ;;
+        --explain)    errors_mode=rich; shift ;;
         -S|--emit-asm) mode="emit-asm"; mode_set=1; shift ;;
         -c|--compile) mode="compile"; mode_set=1; shift ;;
         --lib)        lib=1; mode_set=1; shift ;;
@@ -259,7 +266,7 @@ while [[ $# -gt 0 ]]; do
             if [[ -z "$cmd" && -z "$src" ]] && is_command "$1"; then
                 cmd="$1"; shift
                 case "$cmd" in
-                    new|bind|fmt|doc|self|repl|completions) rest_args=( "$@" ); break ;;
+                    new|bind|fmt|doc|self|repl|completions|explain) rest_args=( "$@" ); break ;;
                 esac
                 continue
             fi
@@ -299,6 +306,34 @@ sha_str()  { local h; h="$(printf '%s' "$1" | sha256sum)"; echo "${h%% *}"; }
 # ── subcommands that never touch the compiler ───────────────────────
 
 # `komodo repl [options]` — the interactive prompt (see kmrepl)
+# diag_flags <fd>: the kmc arguments that select the diagnostics layout. The
+# plain one-line format stays the default whenever the stream is not a
+# terminal, so scripts, editors and tests keep parsing it.
+diag_flags() {
+    case "$errors_mode" in
+        rich) ;;
+        auto) [[ -t $1 ]] || return 0 ;;
+        short) return 0 ;;
+        *) die "unknown --errors mode '$errors_mode'" "use short, rich or auto" 2 ;;
+    esac
+    if [[ -t $1 && -z "${NO_COLOR:-}" ]]; then printf 'rich color'; else printf 'rich'; fi
+    local w="${COLUMNS:-}"
+    [[ "$w" =~ ^[0-9]+$ ]] || w="$(stty size 2>/dev/null </dev/tty | cut -d' ' -f2)"
+    [[ "$w" =~ ^[0-9]+$ ]] && printf ' width=%s' "$w"
+}
+
+# komodo explain <code>: the long form of an error code (docs/errors/Kxxxx.md)
+if [[ "$cmd" == "explain" ]]; then
+    c="$(printf '%s' "${rest_args[0]:-}" | tr 'a-z' 'A-Z')"
+    c="${c#K}"; [[ "$c" =~ ^[0-9]+$ ]] && c="K$(printf '%04d' "$((10#$c))")"
+    if [[ -z "${rest_args[0]:-}" ]]; then
+        echo "usage: komodo explain <code>   (for example: komodo explain K0001)"
+        echo "all codes: docs/errors/README.md"; exit 2
+    fi
+    [[ -f "$here/docs/errors/$c.md" ]] || die "no such error code '${rest_args[0]}'" "codes look like K0001; see $here/docs/errors/README.md" 2
+    cat "$here/docs/errors/$c.md"; exit 0
+fi
+
 if [[ "$cmd" == "repl" ]]; then
     ra=()
     [[ $opt == max ]] && ra+=( -O max )
@@ -871,7 +906,7 @@ auto_bind_imports
 # nothing. Exit 1 on any error.
 if [[ "$cmd" == "check" ]]; then
     hint_fd=1
-    chk_out="$("$kmc" "$src" check $strict 2>&1)"; chk_rc=$?
+    chk_out="$("$kmc" "$src" check $strict $(diag_flags 1) 2>&1)"; chk_rc=$?
     [[ -n "$chk_out" ]] && printf '%s\n' "$chk_out"
     if [[ $chk_rc -ne 0 ]]; then
         printf '%s\n' "$chk_out" > "$wd/check.err"
@@ -997,7 +1032,7 @@ else
     # kmc's stdout is a "wrote <file>.asm" progress line plus analyser
     # warnings; keep stdout clean (just the program's output) by sending
     # the warnings to stderr and dropping the progress line.
-    "$kmc" "$src" "$kmc_target" $strict $opt 2>"$kmc_err" | { grep -v '^wrote ' || true; } 1>&2
+    "$kmc" "$src" "$kmc_target" $strict $opt $(diag_flags 2) 2>"$kmc_err" | { grep -v '^wrote ' || true; } 1>&2
     kmc_rc=${PIPESTATUS[0]}
     cat "$kmc_err" >&2
     if [[ $kmc_rc -ne 0 ]]; then

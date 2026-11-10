@@ -42,6 +42,7 @@ Everything after the file is passed to your program:
 | `komodo build [file]` | Build an executable: `./<project name>` (or the file name without `.km`), or `-o <path>`. Does not run it. |
 | `komodo test [path...]` | Build and run every `*_test.km` file, plus every `.km` under a `tests/` directory that defines `void main()`. Exit status 0 means pass. Prints one `ok` / `FAIL` line per file (output shown for failures) and a summary; exits 1 if any failed. Paths may be files or directories (default `.`). |
 | `komodo check [file\|dir]` | Analyse only. Prints the compiler's diagnostics to stdout, one per line, as `file:line:col: error: …` (or `warning: …`), and exits 1 if there is an error. A clean program prints nothing and exits 0. Nothing is linked or run. It writes only the work directory `.komodo/` and `komodo_bindings/` (auto-bound imports), as a normal run does. Honours `--strict`. See [Checking](#checking). |
+| `komodo explain <code>` | The long explanation of an error code such as `K0001`, with a wrong example and its fix. See [Diagnostics](diagnostics.md). |
 | `komodo repl` | The interactive prompt, see [REPL](#repl). |
 | `komodo new <name>` | Create `<name>/` with `main.km`, `tests/smoke_test.km` and a `.gitignore`. |
 | `komodo bind ...` | Generate Komodo `extern` bindings from a C header (`tools/km-bind`). Arguments go to that tool. |
@@ -63,6 +64,7 @@ A mistyped command gets a suggestion (`komodo biuld` -> `did you mean 'build'?`)
 | `-o <path>` | Where `build` writes its executable, or the output prefix for `lib`. The directory must exist. |
 | `-q, --quiet` | Only the program's own output (plus diagnostics and errors). |
 | `-v, --verbose` | Show the steps and every `nasm` / `gcc` command. |
+| `--errors=short\|rich\|auto` | How diagnostics are printed: `short` is the one-line `file:line:col: error: …`, `rich` adds a source snippet, a code and an explanation, `auto` (the default) is `rich` on a terminal and `short` otherwise. `--explain` means `--errors=rich`; `KM_ERRORS` sets the default. See [Diagnostics](diagnostics.md). |
 | `-h, --help`, `-V, --version` | Help and version. |
 
 Errors are one line with a hint, for example

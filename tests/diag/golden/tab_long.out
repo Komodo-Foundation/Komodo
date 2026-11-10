@@ -1,0 +1,17 @@
+error[K0001]: undefined name 'sx'
+ --> tab_long.km:3:8
+  |
+1 | void main()
+2 |     let s = "a very long string literal that goes o...
+3 |     print(sx)
+  |           ^^ undefined name 'sx'
+  = help: did you mean 's'?
+  = help: Check the spelling, or declare 'sx' with `let sx =
+          ...` before this line.
+  = why: The compiler looked for a variable, parameter,
+         macro or function called 'sx' and found none in
+         scope. Names must be declared with `let` (or as
+         parameters) before the line that uses them.
+  = explain: run `komodo explain K0001` for more detail
+
+error: aborting due to previous error
