@@ -686,6 +686,72 @@ int64_t km_str_find(const char *s, const char *sub)
     return p ? (int64_t)(p - s) : -1;
 }
 
+/* s starts / ends with p — no slice, no allocation (the x86 peephole asks
+ * this of every asm line many times over). */
+int64_t km_str_starts(const char *s, const char *p)
+{
+    while (*p) if (*s++ != *p++) return 0;
+    return 1;
+}
+/* Line scanning for the driver (main.km `gather`): index of the next '\n' at
+ * or after `start` (strlen when none), and whether the line starting at
+ * `start` opens (after blanks) with `kw`. */
+int64_t km_str_nl(const char *s, int64_t start)
+{
+    const char *p = strchr(s + start, '\n');
+    return p ? (int64_t)(p - s) : (int64_t)(start + strlen(s + start));
+}
+int64_t km_str_kw(const char *s, int64_t start, const char *kw)
+{
+    s += start;
+    while (*s == ' ' || *s == '\t') s++;
+    return km_str_starts(s, kw);
+}
+
+/* x86 peephole: may this asm line sit inside a spill span?  (straight-line
+ * code only: no label, jump, call, push/pop, stack-pointer use or %-directive).
+ * One pass over the line instead of eight substring scans. */
+int64_t km_asm_spanbad(const char *l)
+{
+    size_t n = strlen(l);
+    if (n == 0 || l[0] == '%' || l[n - 1] == ':') return 1;
+    if (n >= 5 && l[0] == ' ' && l[1] == ' ' && l[2] == ' ' && l[3] == ' ' && l[4] == 'j') return 1;
+    return strstr(l, "rsp") || strstr(l, "call") || strstr(l, "push") || strstr(l, "pop");
+}
+
+/* Character classes for the lexer: `c` is a one-char string (or NULL). */
+int64_t km_ch_alpha(const char *c)
+{
+    unsigned char x = c ? (unsigned char)*c : 0;
+    return (x >= 'a' && x <= 'z') || (x >= 'A' && x <= 'Z') || x == '_';
+}
+int64_t km_ch_digit(const char *c)
+{
+    return c && *c >= '0' && *c <= '9';
+}
+
+/* x86 peephole: can any rewrite start at this line?  (the patterns open with
+ * mov [, movsd [, push rax, cmp , ucomisd , sub rsp, 16) */
+int64_t km_asm_peepstart(const char *l)
+{
+    if (strncmp(l, "    ", 4) != 0) return 0;
+    l += 4;
+    switch (*l) {
+    case 'm': return strncmp(l, "mov [", 5) == 0 || strncmp(l, "movsd [", 7) == 0;
+    case 'p': return strcmp(l, "push rax") == 0;
+    case 'c': return strncmp(l, "cmp ", 4) == 0;
+    case 'u': return strncmp(l, "ucomisd ", 8) == 0;
+    case 's': return strcmp(l, "sub rsp, 16") == 0;
+    }
+    return 0;
+}
+
+int64_t km_str_ends(const char *s, const char *p)
+{
+    size_t n = strlen(s), m = strlen(p);
+    return n >= m && memcmp(s + n - m, p, m) == 0;
+}
+
 /* `s[start to end]` for a caller that already knows `n == #s` — the same
  * clamping as km_str_slice, without re-measuring `s`.  The lexer cuts
  * every token out of a source of hundreds of KB; measuring up to `end`

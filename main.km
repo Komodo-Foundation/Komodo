@@ -70,6 +70,8 @@ void main(args)
     km_compiler::save(asm, outputPath)
 
 extern void km_fail(msg: string)
+extern fn km_str_nl(s: string, start: int): int
+extern fn km_str_kw(s: string, start: int, kw: string): int
 
 // "3:7: msg" → "3:7: error: msg" (the position is mapped to its file
 // afterwards); a message with no leading position becomes "error: msg".
@@ -125,16 +127,15 @@ fn isSource(name: string) : bool
 
 // The name on the first `module <name>` line of `src`, or "".
 fn moduleOf(src: string) : string
-    let i = 0
     let lineStart = 0
     let n = src.length              // a strlen — measure once, not per char
-    while i <= n do
-        if i == n or src[i] == "\n" then
+    while lineStart <= n do
+        let i = km_str_nl(src, lineStart)
+        if km_str_kw(src, lineStart, "module ") == 1 then
             let m = moduleOnLine(src[lineStart to i])
             if m != "" then
                 return m
-            lineStart = i + 1
-        i += 1
+        lineStart = i + 1
     return ""
 
 fn moduleOnLine(line: string) : string
@@ -261,7 +262,8 @@ fn newlines(src: string) : int
     let i = 0
     let n = src.length
     while i < n do
-        if src[i] == "\n" then
+        i = km_str_nl(src, i)
+        if i < n then
             c += 1
         i += 1
     return c
@@ -285,16 +287,15 @@ fn sourceTree(dir: string) : [string]
 // how the real keyword is parsed (parser.kmm's `parseLink`).
 fn linkTargets(src: string) : [string]
     let out: [string] = []
-    let i = 0
     let lineStart = 0
     let n = src.length              // a strlen — measure once, not per char
-    while i <= n do
-        if i == n or src[i] == "\n" then
+    while lineStart <= n do
+        let i = km_str_nl(src, lineStart)
+        if km_str_kw(src, lineStart, "link ") == 1 then
             let t = linkOnLine(src[lineStart to i])
             if t != "" then
                 out += [t]
-            lineStart = i + 1
-        i += 1
+        lineStart = i + 1
     return out
 
 fn linkOnLine(line: string) : string
@@ -327,16 +328,15 @@ fn linkOnLine(line: string) : string
 // `externLibIsPath`.
 fn externLinkTargets(src: string) : [string]
     let out: [string] = []
-    let i = 0
     let lineStart = 0
     let n = src.length              // a strlen — measure once, not per char
-    while i <= n do
-        if i == n or src[i] == "\n" then
+    while lineStart <= n do
+        let i = km_str_nl(src, lineStart)
+        if km_str_kw(src, lineStart, "extern ") == 1 then
             let t = externOnLine(src[lineStart to i])
             if t != "" then
                 out += [t]
-            lineStart = i + 1
-        i += 1
+        lineStart = i + 1
     return out
 
 fn externOnLine(line: string) : string
@@ -398,16 +398,15 @@ fn importNameCol(line: string) : int
 // Names on `import <name>` lines, in source order.
 fn importNames(src: string) : [string]
     let names: [string] = []
-    let i = 0
     let lineStart = 0
     let n = src.length              // a strlen — measure once, not per char
-    while i <= n do
-        if i == n or src[i] == "\n" then
+    while lineStart <= n do
+        let i = km_str_nl(src, lineStart)
+        if km_str_kw(src, lineStart, "import ") == 1 then
             let name = importOnLine(src[lineStart to i])
             if name != "" then
                 names += [name]
-            lineStart = i + 1
-        i += 1
+        lineStart = i + 1
     return names
 
 fn importOnLine(line: string) : string

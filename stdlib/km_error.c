@@ -141,7 +141,12 @@ static int km_sym_usable(const Elf64_Sym *s)
         return 0;
     if (s->st_name == 0 || s->st_name >= km_symstr_len)
         return 0;
-    return strchr(km_symstr + s->st_name, '.') == NULL;
+    const char *nm = km_symstr + s->st_name;
+    /* the KM_DEBUG extent markers share an address with the first function;
+     * which of the two the linker lists first must not decide the name */
+    if (strcmp(nm, "km_text_begin") == 0 || strcmp(nm, "km_text_end") == 0)
+        return 0;
+    return strchr(nm, '.') == NULL;
 }
 
 static void km_idx_sift(KmSymIdx *a, size_t root, size_t n)
