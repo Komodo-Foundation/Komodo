@@ -1,0 +1,5 @@
+import console
+
+void main()
+    let count = 10
+    console.print(cont)

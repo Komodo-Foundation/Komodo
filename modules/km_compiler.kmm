@@ -74,6 +74,11 @@ fn compileMapped(source: string, target: string, strict: bool, opt: string, file
     analyzer.setSourceMap(files, starts)
     analyzer.analyze(ast)
 
+    // `check` stops here: the analyser has run (diagnostics are printed),
+    // and no optimiser or code generation is needed
+    if target == "check" then
+        return ""
+
     // `header` is a pseudo-target: the C prototypes of the `export fn`s.
     if target == "header" then
         let hsrc = ""
@@ -90,7 +95,9 @@ fn compileMapped(source: string, target: string, strict: bool, opt: string, file
     let optimizer = new Optimizer(opt)
     optimizer.run(ast)
 
-    let gen = new Codegen(selectBackend(target))
+    let backend = selectBackend(target)
+    backend.setDebugInfo(files, starts)
+    let gen = new Codegen(backend)
     return gen.compileProgram(ast)
 
 extern fn km_error_message(): string?

@@ -56,6 +56,7 @@ komodo -q hello.km       # run without the compiler's progress lines
 string array: `args[0]` is the program path and `args[1]` is the first user
 argument. `#args` is the count.
 
+<!-- doc-skip -->
 ```km
 void main(args)
     print("program: " + args[0])
@@ -162,14 +163,14 @@ A `let` with `be` may also carry a type: `let limit: int be 10`.
 | Type     | What it holds | Example |
 |----------|---------------|---------|
 | `int`    | 64-bit signed integer | `-42` |
-| `uint`   | unsigned integer | `7` |
+| `uint`   | unsigned 64-bit integer (same as `u64`); `u8`..`u64` and `i8`..`i64` are the fixed widths, see [Integers](integers.md) | `7` |
 | `float`  | IEEE-754 double | `3.14` |
-| `f32`    | single-precision float; computed as a double, 4 bytes only in C struct layouts | `2.5` |
+| `f32`    | single-precision float; every `f32` result is rounded to single precision | `2.5` |
 | `bool`   | truth value; prints as `1` or `0` | `true` |
 | `char`   | one character | `'K'` |
 | `string` | text | `"Komodo"` |
 
-`f32` and `float` mix freely. Nullable types are written `T?`, for example
+`f32` and `float` mix freely (a plain `float` operand makes the result `float`). Nullable types are written `T?`, for example
 `int?` or `string?`, and the value `null` fills them.
 
 ```km
@@ -610,6 +611,7 @@ A module file (`.kmm`) begins with `module <name>`. Members are reached with
 sections. A `private` member can be called from inside its own module but
 not from another one.
 
+<!-- doc-skip -->
 ```km
 module greet
 
@@ -784,6 +786,11 @@ module's functions are declared in `stdlib/<name>.kmm` and implemented in
 | `string` | `length`, `split`, `join`, `trim`, `trim_start`, `trim_end`, `replace`, `index_of`, `contains`, `starts_with`, `ends_with`, `to_upper`, `to_lower`, `repeat`, `reverse`, `substring`, `pad_start`, `pad_end` |
 | `algorithm` | `sort`, `reverse`, `sum`, `max`, `min`, `index_of`, `contains`, `fill`. Each works on `[int]` and on `[float]` |
 | `file` | `exists`, `is_dir`, `read_all`, `read_lines`, `write_all`, `append_all`, `find`, `list_dir` |
+| `os` | `args(): [string]` (argv, argv[0] included), `getenv(name): string?` (null when unset), `setenv(name, value)`, `exit(code)`, `cwd(): string`, `pid(): int`, `platform(): string` (`linux`, `darwin`, `windows`, `wasm`) |
+| `time` | `now(): int` (unix seconds), `millis(): int` (monotonic milliseconds), `sleep_ms(ms)`, `format(secs: int, fmt: string): string` (strftime, UTC) |
+| `random` | `seed(n)`, `int(lo, hi): int` (inclusive), `float(): float` in [0, 1), `shuffle(xs: [int])` in place. splitmix64: a seed gives the same sequence on every platform |
+| `path` | `join(a, b)`, `dirname(p)`, `basename(p)`, `ext(p)` (with the dot), `abs(p)` (lexical, against the cwd), `exists(p): int` (any file or directory) |
+| `process` | `run(cmd): int` (exit status, stdio inherited; 128+n for a signal, -1 if it cannot start), `output(cmd): string` (captured stdout). Run through `sh -c`; no-ops on wasm (`-1` and `""`) |
 | `sdl2`, `raylib` | C library bindings; see `stdlib/sdl2.kmm` and `stdlib/raylib.kmm` |
 
 Calls to `math`, `string` and `algorithm` use a dot, as in `math.abs(x)`,
@@ -849,7 +856,9 @@ argument, recursively, and returns `null` when nothing matches. Check for
 ## Diagnostics
 
 The analyser checks a program before it is built. It reports three kinds of
-message.
+message. The examples below show the one-line form, which is what tools read;
+on a terminal the compiler prints a richer layout with a source snippet and an
+explanation, see [Diagnostics](../diagnostics.md).
 
 **Errors** stop compilation with a non-zero exit status. Most carry a
 location in the form `file:line:col: error: message`:

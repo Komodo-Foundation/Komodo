@@ -1,0 +1,17 @@
+join: a/b/c.txt
+join slash: a/c
+join absolute: /y
+join empty: rel
+dirname: /usr/lib
+dirname bare: .
+dirname root child: /
+dirname trailing: a
+basename: libm.so.6
+basename trailing: dir
+ext: .gz
+ext dotfile: 1
+ext none: 1
+abs: /usr/bin
+abs relative: 1
+exists root: 1
+exists missing: 0

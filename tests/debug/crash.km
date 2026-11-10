@@ -1,0 +1,11 @@
+import console
+
+fn divide(a: int, b: int): int
+    return a / b
+
+fn zero(): int
+    return 0
+
+void main()
+    console.print("start")
+    console.print(divide(10, zero()))

@@ -53,8 +53,62 @@ private
     m_xgSyms: [string] = []
     m_xgTypes: [string] = []
     m_usesExportInit: bool = false  // reserve the once-flag in .bss
+    m_keepIdx: StrIndex = new StrIndex()   // hashes m_keepJumps
     m_keepJumps: [string] = []      // targets of `and`/`or` branches whose rax is read at the join
     m_pic: bool = false             // position-independent output (shared libraries only)
+    m_dbgFiles: [string] = []       // KM_DEBUG: source file of each merged part
+    m_dbgStarts: [int] = []         // KM_DEBUG: merged line at which each part begins
+    m_dbgOn: bool = false           // emit `%line` directives
+    m_curSym: string = ""         // label of the function being emitted
+    m_dbgN: int = 0
+    m_dbgTab: [string] = []         // line-table rows (see markLine)
+    m_dbgLast: string = ""          // last `file:line` marked (no repeats)
+
+// ── debug line info ────────────────────────────────────────────────
+//
+//  With KM_DEBUG set, a `%line N+0 file` directive precedes each
+//  statement's code, so `nasm -g -F dwarf` records the original Komodo
+//  file and line (not the .asm's) in the object's DWARF line table.
+//  `+0` keeps every following assembly line on N until the next one.
+//  Default output has no such lines.
+
+extern fn km_debug_info(): int
+
+mut X86Backend::setDebugInfo(files: [string], starts: [int])
+    if km_debug_info() != 0 and #files > 0 then
+        m_dbgOn = true
+        m_dbgFiles = files
+        m_dbgStarts = starts
+
+mut X86Backend::markLine(line: int)
+    if not m_dbgOn or line <= 0 then
+        return
+    let k = 0
+    let at = 0 - 1
+    while k < #m_dbgStarts do
+        if m_dbgStarts[k] <= line then
+            at = k
+        k += 1
+    if at < 0 then
+        return
+    let local = line - m_dbgStarts[at] + 1
+    let mark = m_dbgFiles[at] + ":" + string(local)
+    if mark == m_dbgLast then
+        return
+    m_dbgLast = mark
+    emit("%line " + string(local) + "+0 " + m_dbgFiles[at])
+    // the runtime's own line table (km_error.c): code offset, line, file
+    m_dbgN += 1
+    emit("..@D" + string(m_dbgN) + ":")
+    m_dbgTab += ["    dd ..@D" + string(m_dbgN) + " - km_text_begin, " + string(local) + ", " + string(at) + "\n"]
+
+// In a debug build, jump targets are `..@Ln` labels: NASM keeps those out
+// of the object's symbol table, so a debugger resolves every address in a
+// function to the function itself rather than to a `fn.L3` pseudo-symbol.
+mut X86Backend::labelPrefix(): string
+    if m_dbgOn then
+        return "..@L"
+    return ".L"
 
 // ── line buffer ────────────────────────────────────────────────────
 
@@ -188,9 +242,10 @@ void X86Backend::beginFunction(name: string, frame: int, paramOffsets: [int], is
     m_idxFail = ""
     if isMain then
         m_hasMain = true
-        label("km_program_main")
+        m_curSym = "km_program_main"
     else
-        label(asmSym(name))
+        m_curSym = asmSym(name)
+    label(m_curSym)
     ins("push rbp")
     ins("mov rbp, rsp")
     ins("push rbx")
@@ -215,6 +270,12 @@ void X86Backend::endFunction()
         ins("mov rsi, rax")
         ins("and rsp, -16")
         ins("call " + callTarget("km_index_error"))
+    m_dbgLast = ""
+    if m_dbgOn then
+        // a sized FUNC symbol, so a debugger names every address in the
+        // function after the function (see docs/debugging.md)
+        emit(m_curSym + ".end:")
+        emit("global " + m_curSym + ":function " + m_curSym + ".end - " + m_curSym)
     emit("")
 
 void X86Backend::epilogue()
@@ -386,6 +447,65 @@ void X86Backend::binaryInt(op: string)
         ins("shl rax, cl")
     else if op == ">>" then
         ins("sar rax, cl")
+
+mut X86Backend::normInt(k: string)
+    if k == "u8" then
+        ins("movzx eax, al")
+    else if k == "u16" then
+        ins("movzx eax, ax")
+    else if k == "u32" then
+        ins("mov eax, eax")
+    else if k == "i8" then
+        ins("movsx rax, al")
+    else if k == "i16" then
+        ins("movsx rax, ax")
+    else if k == "i32" then
+        ins("movsxd rax, eax")
+
+mut X86Backend::binaryIntU(op: string)
+    ins("mov rcx, rax")
+    ins("pop rax")
+    if op == ">>" then
+        ins("shr rax, cl")
+    else
+        ins("xor edx, edx")
+        ins("div rcx")
+        if op == "%" then
+            ins("mov rax, rdx")
+
+mut X86Backend::compareIntU(op: string)
+    ins("mov rcx, rax")
+    ins("pop rax")
+    ins("cmp rax, rcx")
+    let c = "setae"
+    if op == "<" then
+        c = "setb"
+    else if op == ">" then
+        c = "seta"
+    else if op == "<=" then
+        c = "setbe"
+    ins(c + " al")
+    ins("movzx eax, al")
+
+mut X86Backend::cvtUIntToFloat()
+    let big = newLabel()
+    let done = newLabel()
+    ins("test rax, rax")
+    ins("js " + big)
+    ins("cvtsi2sd xmm0, rax")
+    ins("jmp " + done)
+    label(big)
+    ins("mov rcx, rax")
+    ins("shr rax, 1")
+    ins("and ecx, 1")
+    ins("or rax, rcx")
+    ins("cvtsi2sd xmm0, rax")
+    ins("addsd xmm0, xmm0")
+    label(done)
+
+mut X86Backend::roundF32()
+    ins("cvtsd2ss xmm0, xmm0")
+    ins("cvtss2sd xmm0, xmm0")
 
 void X86Backend::compareInt(op: string)
     ins("mov rcx, rax")
@@ -759,10 +879,12 @@ void X86Backend::branchIfNonzero(name: string)
 // the "keep" forms are identical to the plain ones on x86.
 void X86Backend::branchIfZeroKeep(name: string)
     m_keepJumps += [name]
+    m_keepIdx.add(name, 0)
     branchIfZero(name)
 
 void X86Backend::branchIfNonzeroKeep(name: string)
     m_keepJumps += [name]
+    m_keepIdx.add(name, 0)
     branchIfNonzero(name)
 
 // loop-variable in rax spilled by pushAcc(), bound in rax; exit when the
@@ -1353,25 +1475,20 @@ extern fn km_str_find(s: string, sub: string): int
 fn asmHas(line: string, sub: string): bool
     return km_str_find(line, sub) >= 0
 
+extern fn km_str_starts(s: string, p: string): int
+extern fn km_str_ends(s: string, p: string): int
+extern fn km_asm_spanbad(s: string): int
+extern fn km_asm_peepstart(s: string): int
+
 fn asmStarts(line: string, p: string): bool
-    return line.length >= p.length and line[0 to p.length] == p
+    return km_str_starts(line, p) == 1
 
 fn asmEnds(line: string, p: string): bool
-    return line.length >= p.length and line[line.length - p.length to line.length] == p
+    return km_str_ends(line, p) == 1
 
 // A line that may sit inside a spill span: straight-line code only.
 fn spanSafe(line: string): bool
-    if line.length == 0 then
-        return false
-    if line[line.length - 1] == ':' then
-        return false
-    if asmStarts(line, "    j") then
-        return false
-    if asmHas(line, "rsp") or asmHas(line, "call") then
-        return false
-    if asmHas(line, "push") or asmHas(line, "pop") then
-        return false
-    return true
+    return km_asm_spanbad(line) == 0
 
 // Index of the first line at or after `start` equal to `stop`, provided
 // every line before it is span-safe; -1 otherwise.
@@ -1454,6 +1571,8 @@ mut X86Backend::peepholeAt(src: [string], i: int): [string]
     let n = #src
     let a = src[i]
     m_pSpan = 1
+    if km_asm_peepstart(a) == 0 then
+        return []
 
     // store then reload of the same slot: the reload is a no-op
     if i + 1 < n then
@@ -1491,7 +1610,7 @@ mut X86Backend::peepholeAt(src: [string], i: int): [string]
                 off = 12
             let target = br[off to br.length]
             let cc = jccOf(src[i + 1])
-            if cc != "" and src[i + 2] == "    movzx eax, al" and src[i + 3] == "    test rax, rax" and not (target in m_keepJumps) then
+            if cc != "" and src[i + 2] == "    movzx eax, al" and src[i + 3] == "    test rax, rax" and not m_keepIdx.has(target) then
                 let jump = cc
                 if isJe then
                     jump = jccInverse(cc)
@@ -1589,7 +1708,10 @@ mut X86Backend::finish(): string
     peephole()
     if m_pic then
         unPltLocalCalls()
-    return header() + join(m_lines, "\n") + "\n" + footer()
+    let tail = ""
+    if m_dbgOn then
+        tail = "global km_text_end\nkm_text_end:\n"
+    return header() + join(m_lines, "\n") + "\n" + tail + footer()
 
 mut X86Backend::header(): string
     let h = "; generated by the Komodo compiler — NASM x86-64\n"
@@ -1629,6 +1751,8 @@ mut X86Backend::header(): string
         h = h + "extern " + ex + "\n"
         i += 1
     h = h + "\nsection .text\n\n"
+    if m_dbgOn then
+        h = h + "global km_text_begin\nkm_text_begin:\n"
     return h
 
 fn X86Backend::footer(): string
@@ -1644,6 +1768,18 @@ fn X86Backend::footer(): string
     if m_usesExportInit then
         r = r + "\nsection .bss\nkm_export_ready: resb 8\n"
     r = r + "\nsection .rodata\nkm_abi_gc: dq 1\n" + join(m_rodata, "")
+    if m_dbgOn then
+        // KM_DEBUG: line table for the runtime's call-chain reports.
+        // `dd count`, then count rows of `dd offset-in-.text, line, file`
+        // (sorted by offset), and the file names as NUL-separated strings.
+        r = r + "global km_dbg_lines\nglobal km_dbg_files\nalign 4\nkm_dbg_lines: dd " + string(m_dbgN) + "\n"
+        r = r + join(m_dbgTab, "")
+        r = r + "km_dbg_files:\n"
+        let fi = 0
+        while fi < #m_dbgFiles do
+            r = r + "    db \"" + m_dbgFiles[fi] + "\", 0\n"
+            fi += 1
+
     if m_vtabCount > 0 then
         // vtables hold absolute function addresses: in PIC output they
         // belong in a relocated (writable at load time) section

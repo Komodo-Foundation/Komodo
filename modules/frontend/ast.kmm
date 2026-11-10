@@ -17,6 +17,9 @@ module km_compiler
 abstract shared struct ASTNode
     line: int = 0
     column: int = 0
+    // narrow-integer / f32 kind of the value (or of an assignment target)
+    // — set by the analyser; "" for int / float / everything else.
+    numKind: string = ""
 
 // ─── Expressions ──────────────────────────────────────────────────────
 

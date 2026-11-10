@@ -1,0 +1,26 @@
+// Exercises the `os` standard library module.  Only deterministic facts are
+// printed: argv length, env round-trips, and shape checks on cwd / pid.
+
+import console
+import os
+
+void main()
+    let args = os.args()
+    console.print("has argv[0]:", #args >= 1)
+
+    console.print("unset:", os.getenv("KOMODO_OS_DEMO_UNSET_VAR") == null)
+    os.setenv("KOMODO_OS_DEMO", "hello from komodo")
+    let v = os.getenv("KOMODO_OS_DEMO")
+    if v == null then
+        console.print("getenv failed")
+    else
+        console.print("getenv:", v)
+
+    let cwd = os.cwd()
+    console.print("cwd non-empty:", #cwd > 0)
+    console.print("pid positive:", os.pid() > 0)
+    let plat = os.platform()
+    console.print("platform non-empty:", #plat > 0)
+
+    os.exit(0)
+    console.print("not reached")

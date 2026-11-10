@@ -1,0 +1,18 @@
+// Exercises the `time` standard library module.  Prints only deterministic
+// results: formatting of fixed timestamps (UTC), and shape checks on the
+// live clock.
+
+import console
+import time
+
+void main()
+    console.print("epoch:", time.format(0, "%Y-%m-%d %H:%M:%S"))
+    console.print("known:", time.format(1700000000, "%Y-%m-%dT%H:%M:%SZ"))
+    console.print("weekday:", time.format(0, "%A %j"))
+
+    console.print("now is after 2023:", time.now() > 1700000000)
+
+    let t0 = time.millis()
+    time.sleep_ms(30)
+    let elapsed = time.millis() - t0
+    console.print("slept at least 30ms:", elapsed >= 30)

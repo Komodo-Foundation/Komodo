@@ -1,0 +1,62 @@
+module shapes
+
+// Shape geometry used by the km-doc tests.
+// It has two lines of module description.
+
+// The base shape. Every shape has a name.
+abstract struct Shape
+    // Display name of the shape.
+    name: string = "shape"
+
+// A circle of radius `r`, in whole units.
+struct Circle : Shape
+    // Radius in units.
+    r: int
+
+// The colours a Circle may take.
+enum Color
+    // The default colour.
+    Red
+    Green
+
+// Area of a circle, rounded down. Returns 0 for a zero radius.
+fn area(c: Circle): int
+    return c.r * c.r * 3
+
+// Returns the circle with the given radius, as a Circle.
+fn grow(c: Circle, by: int): Circle
+    return new Circle(c.r + by)
+
+// A helper that is not part of the API.
+private
+    fn secret(): int
+        return 1
+
+// Counts up from a start value.
+class Counter
+public
+    // Starts counting from start.
+    constructor(start: int)
+        m_n = start
+
+    // Current value.
+    fn value(): int
+        return m_n
+
+    // Adds one.
+    mut bump()
+        m_n = m_n + 1
+
+private
+    // Hidden internal helper.
+    fn hidden(): int
+        return m_n
+
+    // Internal count.
+    m_n: int
+
+// Upper limit used by the tests.
+let LIMIT = 10
+
+// Largest allowed count.
+let MAX be 99

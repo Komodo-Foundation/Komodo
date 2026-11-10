@@ -1,0 +1,6 @@
+has argv[0]: 1
+unset: 1
+getenv: hello from komodo
+cwd non-empty: 1
+pid positive: 1
+platform non-empty: 1

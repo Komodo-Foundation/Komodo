@@ -1,0 +1,30 @@
+// Exercises the `path` standard library module.  The string functions are
+// lexical; path.exists is checked only against a path that is certain to
+// exist (the root) and one that is certain not to.
+
+import console
+import path
+
+void main()
+    console.print("join:", path.join("a/b", "c.txt"))
+    console.print("join slash:", path.join("a/", "c"))
+    console.print("join absolute:", path.join("/x", "/y"))
+    console.print("join empty:", path.join("", "rel"))
+
+    console.print("dirname:", path.dirname("/usr/lib/libm.so.6"))
+    console.print("dirname bare:", path.dirname("file"))
+    console.print("dirname root child:", path.dirname("/file"))
+    console.print("dirname trailing:", path.dirname("a/b/"))
+
+    console.print("basename:", path.basename("/usr/lib/libm.so.6"))
+    console.print("basename trailing:", path.basename("dir/"))
+
+    console.print("ext:", path.ext("archive.tar.gz"))
+    console.print("ext dotfile:", path.ext(".bashrc") == "")
+    console.print("ext none:", path.ext("README") == "")
+
+    console.print("abs:", path.abs("/tmp/../usr/./bin"))
+    console.print("abs relative:", path.abs("x/../y") == path.join(path.abs("."), "y"))
+
+    console.print("exists root:", path.exists("/"))
+    console.print("exists missing:", path.exists("/definitely/not/a/real/path/komodo"))

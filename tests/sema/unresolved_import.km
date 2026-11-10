@@ -1,0 +1,5 @@
+import console
+import nosuch
+
+void main()
+    console.print("hi")

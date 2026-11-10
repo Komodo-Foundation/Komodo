@@ -1,35 +1,75 @@
 module math
 
+// Math helpers, called as math.NAME(...). The integer functions take and
+// return int; the float functions take and return float (IEEE-754 double).
+// math.pi() and math.e() return the constants.
+
 // Linked from stdlib/math.c.
 
 // integer helpers
+
+// Absolute value of n. The smallest int (-2^63) has no positive
+// counterpart: abs of it wraps and stays -2^63.
 fn math_abs(n: int): int
+// Smaller of a and b.
 fn math_min(a: int, b: int): int
+// Larger of a and b.
 fn math_max(a: int, b: int): int
+// base raised to exp, in integer arithmetic; overflow wraps around.
+// An exp below 0 gives 1, not a fraction: use math_powf for that.
 fn math_pow(base: int, exp: int): int
+// Greatest common divisor of a and b, never negative. gcd(0, 0) is 0.
 fn math_gcd(a: int, b: int): int
+// x limited to lo..hi: lo when x < lo, hi when x > hi, else x.
+// With lo greater than hi the same two tests apply in that order.
 fn math_clamp(x: int, lo: int, hi: int): int
+// -1, 0 or 1 according to the sign of n.
 fn math_sign(n: int): int
 
 // floating-point helpers (argument and result are `float`)
+
+// Square root of x. A negative x gives NaN (printed as nan or -nan).
 fn math_sqrt(x: float): float
+// Largest whole number not greater than x (rounds toward negative infinity).
 fn math_floor(x: float): float
+// Smallest whole number not less than x.
 fn math_ceil(x: float): float
+// x rounded to the nearest whole number, halfway cases away from zero:
+// round(2.5) is 3.0 and round(-2.5) is -3.0. A negative x that rounds to zero
+// keeps its sign: round(-0.4) is -0.0.
 fn math_round(x: float): float
+// x with its fraction dropped, rounding toward zero: trunc(-2.5) is -2.0.
 fn math_trunc(x: float): float
+// Absolute value of float x.
 fn math_fabs(x: float): float
+// Sine of x, with x in radians.
 fn math_sin(x: float): float
+// Cosine of x, with x in radians.
 fn math_cos(x: float): float
+// Tangent of x, with x in radians.
 fn math_tan(x: float): float
+// Arc tangent of x, in radians, between -pi/2 and pi/2.
 fn math_atan(x: float): float
+// Angle in radians, from -pi to pi, of the point (x, y) measured from the
+// positive x axis. The y argument comes first: atan2(1.0, 0.0) is pi/2.
 fn math_atan2(y: float, x: float): float
+// e raised to the power x.
 fn math_exp(x: float): float
+// Natural logarithm of x. log(0) is -inf; a negative x gives NaN.
 fn math_log(x: float): float
+// Base-2 logarithm of x; the same edge cases as math_log.
 fn math_log2(x: float): float
+// Base-10 logarithm of x; the same edge cases as math_log.
 fn math_log10(x: float): float
+// base raised to a real exponent. A negative base with a non-integer exponent
+// gives NaN; powf(0.0, 0.0) is 1.0.
 fn math_powf(base: float, exp: float): float
+// Length of the hypotenuse: sqrt(a*a + b*b).
 fn math_hypot(a: float, b: float): float
 
 // constants
+
+// The constant pi, about 3.14159 (call it as math.pi()).
 fn math_pi(): float
+// The constant e, about 2.71828 (call it as math.e()).
 fn math_e(): float

@@ -1,0 +1,28 @@
+module path
+
+// Path-string helpers, called as path.NAME(...). They work on the text alone;
+// only path.exists looks at the disk.
+
+// Linked from stdlib/path.c.  Reached as `path.NAME(...)`, which the
+// compiler mangles to the flat symbol `path_NAME`.  The string functions
+// are lexical; nothing is read from disk except by abs and exists.
+
+// Joins a and b with one '/' between them. If b is absolute it replaces a,
+// and an empty b gives a.
+fn path_join(a: string, b: string): string
+// The part before the last '/'. Without a '/' the result is '.', and a
+// trailing slash is ignored: dirname("a/b/") is "a" and dirname("/a") is "/".
+fn path_dirname(p: string): string
+// The last component: basename("a/b.txt") is "b.txt". Trailing slashes are
+// ignored, and basename("/") is "".
+fn path_basename(p: string): string
+// The extension of the last component, with its dot: ".gz" for "a.tar.gz".
+// Empty when there is none. A leading dot (".bashrc") does not start an
+// extension, and "a." gives ".".
+fn path_ext(p: string): string
+// The path made absolute against the current directory and cleaned up in the
+// text: "." and ".." are resolved. The disk is not checked, so a missing path
+// is still returned: abs("/x/../y") is "/y".
+fn path_abs(p: string): string
+// 1 if something (a file or a directory) exists at p, else 0.
+fn path_exists(p: string): int

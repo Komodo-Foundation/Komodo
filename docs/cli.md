@@ -41,6 +41,8 @@ Everything after the file is passed to your program:
 | `komodo [run] [file]` | Build incrementally and run. The default. |
 | `komodo build [file]` | Build an executable: `./<project name>` (or the file name without `.km`), or `-o <path>`. Does not run it. |
 | `komodo test [path...]` | Build and run every `*_test.km` file, plus every `.km` under a `tests/` directory that defines `void main()`. Exit status 0 means pass. Prints one `ok` / `FAIL` line per file (output shown for failures) and a summary; exits 1 if any failed. Paths may be files or directories (default `.`). |
+| `komodo check [file\|dir]` | Analyse only. Prints the compiler's diagnostics to stdout, one per line, as `file:line:col: error: …` (or `warning: …`), and exits 1 if there is an error. A clean program prints nothing and exits 0. Nothing is linked or run. It writes only the work directory `.komodo/` and `komodo_bindings/` (auto-bound imports), as a normal run does. Honours `--strict`. See [Checking](#checking). |
+| `komodo explain <code>` | The long explanation of an error code such as `K0001`, with a wrong example and its fix. See [Diagnostics](diagnostics.md). |
 | `komodo repl` | The interactive prompt, see [REPL](#repl). |
 | `komodo new <name>` | Create `<name>/` with `main.km`, `tests/smoke_test.km` and a `.gitignore`. |
 | `komodo bind ...` | Generate Komodo `extern` bindings from a C header (`tools/km-bind`). Arguments go to that tool. |
@@ -49,6 +51,7 @@ Everything after the file is passed to your program:
 | `komodo clean [dir]` | Delete `.komodo/` and the files `komodo build` / `lib` recorded. `--cache` also empties the shared cache. |
 | `komodo doctor` | Check for `nasm`, `gcc`, libgc, and the optional `g++`, `pkg-config`, `emcc`, `node`, `km-bind`; prints a fix hint for anything missing. |
 | `komodo self build\|test\|seed` | For compiler contributors, see [Working on the compiler](#working-on-the-compiler). |
+| `komodo completions bash\|zsh` | Print a shell completion script for commands, options and file names, see [Shell completion](#shell-completion). |
 
 A mistyped command gets a suggestion (`komodo biuld` -> `did you mean 'build'?`).
 
@@ -61,6 +64,7 @@ A mistyped command gets a suggestion (`komodo biuld` -> `did you mean 'build'?`)
 | `-o <path>` | Where `build` writes its executable, or the output prefix for `lib`. The directory must exist. |
 | `-q, --quiet` | Only the program's own output (plus diagnostics and errors). |
 | `-v, --verbose` | Show the steps and every `nasm` / `gcc` command. |
+| `--errors=short\|rich\|auto` | How diagnostics are printed: `short` is the one-line `file:line:col: error: …`, `rich` adds a source snippet, a code and an explanation, `auto` (the default) is `rich` on a terminal and `short` otherwise. `--explain` means `--errors=rich`; `KM_ERRORS` sets the default. See [Diagnostics](diagnostics.md). |
 | `-h, --help`, `-V, --version` | Help and version. |
 
 Errors are one line with a hint, for example
@@ -89,9 +93,11 @@ link line (`pkg:NAME` or `-lNAME`). Existing bindings are reused, so repeated
 runs are instant; delete the directory to regenerate. `komodo_bindings/` is
 generated, so `komodo new` ignores it in git. (It cannot live inside
 `.komodo/`: the compiler's module search skips directories whose name begins
-with a dot.) If no library is found the compiler's error is followed by
-`no C library 'NAME' found (try: sudo apt install libNAME-dev, or write a
-binding with komodo bind)`. For a header you want to bind yourself, run
+with a dot.) If no library is found, the build stops at the import line with
+`main.km:2:8: error: cannot find module 'NAME'`, followed by a second line,
+`komodo: no C library 'NAME' found (try: sudo apt install libNAME-dev, or write
+a binding with komodo bind)`. The same happens for any import that is neither
+a project module nor a library. For a header you want to bind yourself, run
 `komodo bind`.
 
 ### native/
@@ -102,6 +108,7 @@ and linked automatically. Sources are compiled once and cached by content
 (`.cpp` with `g++`, which adds `-lstdc++`); `native/` is also an include path,
 and editing a header there rebuilds what includes it.
 
+<!-- doc-skip -->
 ```km
 // main.km                      native/hello.c: long hello_add(long a, long b) {...}
 extern fn hello_add(a: int, b: int): int
@@ -146,7 +153,7 @@ These keep working (the test scripts use them) but are hidden from `--help`.
 | Flag | Equivalent / meaning |
 |---|---|
 | `-O <level>`, `-O<level>`, `--opt=<level>` | Optimization level `none`, `low`, `medium`, `max` or `0`-`3`; `--release` is `-O max`. |
-| `-S`, `--emit-asm` | Stop after writing `<file>.asm` next to the source. |
+| `-S`, `--emit-asm` | Stop after writing the generated code next to the source: `<file>.km.asm` for x86 and stackvm, `<file>.c` for `-t c` and `-t wasm`. |
 | `-c`, `--compile` | Build but do not run; the binary goes to `-o` or the file name without `.km`. |
 | `-k`, `--kmc <path>` | Use another `kmc` (as `$KMC`); disables the automatic compiler build. |
 | `--strict` | Make analyser warnings fatal, and enable extra checks, see [Strict mode](#strict-mode). |
@@ -160,6 +167,7 @@ These keep working (the test scripts use them) but are hidden from `--help`.
 komodo -O max -c -o app src/main.km
 komodo --strict hello.km
 komodo -S hello.km                    # writes hello.km.asm
+komodo -t c -S hello.km               # writes hello.c, next to the source
 komodo --time -q hello.km
 komodo hello.km -- util.cpp           # same as putting util.cpp in native/
 ```
@@ -179,8 +187,8 @@ Hello, world!
 | Target | Emits | Built by | Run |
 |---|---|---|---|
 | `x86` (default) | NASM x86-64 assembly in `<file>.asm` | `nasm` + `gcc`, linked with `stdlib/*.c` and libgc | the native executable |
-| `c` | portable C in `<file>.asm` | `gcc -std=gnu11 -O1`, with `stdlib/*.c` | the native executable |
-| `wasm` | the same C, built with `emcc` into `<out>.js` and `<out>.wasm` | `emcc` with `stdlib/*.c` | `node <out>.js` |
+| `c` | portable C; `-S` writes it as `<file>.c` | `gcc -std=gnu11 -O1`, with `stdlib/*.c` | the native executable |
+| `wasm` | the same C (`-S` writes `<file>.c`), built with `emcc` into `<out>.js` and `<out>.wasm` | `emcc` with `stdlib/*.c` | `node <out>.js` |
 | `stackvm` | stack-VM bytecode text in `<file>.asm` | nothing (no runner yet) | not runnable |
 
 ```bash
@@ -274,6 +282,25 @@ The diagnostics are reported as `file:line:col: error: …` or
 `… warning: …`, against the file that contains the problem. Imported modules
 are included.
 
+## Checking
+
+`komodo check` runs the analyser and nothing else. An editor or a CI step can
+use it: the output is the compiler's own diagnostics, one per line, on stdout.
+
+```bash
+komodo check                  # the project in this directory
+komodo check --strict app.km  # strict mode, one file
+```
+
+```text
+app.km:5:19: error: undefined name 'cont' (did you mean 'count'?)
+```
+
+The exit status is 1 when there is an error, and 0 otherwise. Warnings are
+printed but do not fail the check, unless `--strict` makes them errors. A clean
+program prints nothing. An import that cannot be found is reported at its line,
+as `cannot find module`, followed by the same library hint as a build.
+
 ## Caching
 
 `komodo` keeps a content-addressed cache under `$KOMODO_CACHE`, which defaults
@@ -298,12 +325,14 @@ The cache holds only derived data, so it is safe to delete:
 `kmc` is the compiler binary. `komodo` runs it with this argument order:
 
 ```text
-kmc <file.km> [x86|stackvm|c|wasm] [strict] [none|low|medium|max]
+kmc <file.km> [x86|stackvm|c|wasm|check] [strict] [none|low|medium|max]
 ```
 
 The arguments after the file can come in any order. The defaults are `x86`,
 no strict mode and `none`. `kmc` writes `<file.km>.asm`, `<file.km>.deps` and
-`<file.km>.links` next to the source. It does not assemble or link.
+`<file.km>.links` next to the source. It does not assemble or link. The
+`check` target runs the front end and the analyser only: it prints the
+diagnostics and writes nothing, which is what `komodo check` uses.
 
 With `REPO` set to the checkout and `hello.km` in the current directory:
 
@@ -382,6 +411,17 @@ rechecks a second stage if the first differs.
   ```
 
 Both scripts need `./kmc`. Run `./build-self.sh` first.
+
+## Shell completion
+
+```bash
+source <(komodo completions bash)                 # bash, in this shell
+komodo completions bash > ~/.local/share/bash-completion/completions/komodo
+komodo completions zsh > "${fpath[1]}/_komodo"    # zsh; then restart the shell
+```
+
+The scripts complete the commands, the options (with the values of `-t` and
+`-O`), the `self` and `completions` subcommands, and file names.
 
 ## Environment variables
 

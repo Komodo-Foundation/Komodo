@@ -43,6 +43,7 @@ void Codegen::genFunction(func: FunctionDecl)
     let emitName = func.name
     if func.linkName != null then
         emitName = func.linkName
+    m_backend.markLine(func.line)
     m_backend.beginFunction(emitName, m_frame, paramOffsets, func.name == "main")
 
     // top-level `let` initialisers run once, at the very start of `main`
@@ -56,6 +57,8 @@ void Codegen::genFunction(func: FunctionDecl)
     m_backend.endFunction()
 
 void Codegen::genStmt(s: Statement?)
+    if s != null then
+        m_backend.markLine(s.line)
     if s is VarDecl then
         if s.immutable then
             // `let x be expr` — register a macro in the current block
@@ -239,7 +242,7 @@ void Codegen::genAssign(s: AssignStmt)
             genExpr(s.value)
             if exprType(s.value) != "float" then
                 m_backend.cvtIntToFloat()
-            m_backend.binaryFloat(compoundOp(s.op))
+            floatOp(compoundOp(s.op), s.numKind)
             m_backend.floatToBits()
             m_backend.storeField(idx)
             return
@@ -249,7 +252,7 @@ void Codegen::genAssign(s: AssignStmt)
         m_backend.loadField(idx)
         m_backend.pushAcc()
         genExpr(s.value)
-        m_backend.binaryInt(compoundOp(s.op))
+        intOp(compoundOp(s.op), s.numKind)
         m_backend.storeField(idx)
         return
     if not hasLocal(s.name) and isGlobalVar(s.name) then
@@ -276,9 +279,9 @@ void Codegen::genAssign(s: AssignStmt)
         genExpr(s.value)
         if exprType(s.value) != "float" then
             m_backend.cvtIntToFloat()
-        m_backend.binaryFloat(compoundOp(s.op))
+        floatOp(compoundOp(s.op), s.numKind)
         m_backend.storeLocal(slotOf(s.name), "float")
-    else if s.op == "-=" then
+    else if s.op == "-=" and s.numKind == "" then
         genExpr(s.value)
         m_backend.subFromLocal(slotOf(s.name))
     else if isCompoundAssign(s.op) then
@@ -290,7 +293,7 @@ void Codegen::genAssign(s: AssignStmt)
         if st and s.op == "+=" then
             m_backend.strBinOp("km_str_concat")
         else
-            m_backend.binaryInt(compoundOp(s.op))
+            intOp(compoundOp(s.op), s.numKind)
         storeVar(s.name)
     else
         genExpr(s.value)
@@ -302,7 +305,10 @@ void Codegen::genAssign(s: AssignStmt)
 // would be stored and read back as a denormal.
 void Codegen::coerceToFloat(dstType: string, value: Expression?)
     if dstType == "float" and value != null and exprType(value) == "int" then
-        m_backend.cvtIntToFloat()
+        if nk(value) == "u64" or nk(value) == "uint" then
+            m_backend.cvtUIntToFloat()
+        else
+            m_backend.cvtIntToFloat()
 
 // `g = v` / `g += v` / `g -= v` for a top-level variable `g`.  The
 // compound forms lower to `g = g <op> v`, mirroring the local path.
@@ -330,7 +336,7 @@ void Codegen::genGlobalAssign(s: AssignStmt)
         genExpr(s.value)
         if exprType(s.value) != "float" then
             m_backend.cvtIntToFloat()
-        m_backend.binaryFloat(compoundOp(s.op))
+        floatOp(compoundOp(s.op), s.numKind)
         m_backend.storeGlobal(name, "float")
         return
     // numeric / string compound → `g = g <op> v`
@@ -340,7 +346,7 @@ void Codegen::genGlobalAssign(s: AssignStmt)
     if ty == "string" and s.op == "+=" then
         m_backend.strBinOp("km_str_concat")
     else
-        m_backend.binaryInt(compoundOp(s.op))
+        intOp(compoundOp(s.op), s.numKind)
     m_backend.storeGlobal(name, ty)
 
 // `obj.field = value`  /  `obj.field += value`  /  `obj.field -= value`
@@ -386,7 +392,7 @@ void Codegen::genFieldAssign(s: FieldAssignStmt)
         genExpr(s.value)
         if exprType(s.value) != "float" then
             m_backend.cvtIntToFloat()
-        m_backend.binaryFloat(compoundOp(s.op))
+        floatOp(compoundOp(s.op), s.numKind)
         m_backend.floatToBits()
         m_backend.storeField(idx)
         return
@@ -397,7 +403,7 @@ void Codegen::genFieldAssign(s: FieldAssignStmt)
     m_backend.loadField(idx)
     m_backend.pushAcc()          // current field value
     genExpr(s.value)
-    m_backend.binaryInt(compoundOp(s.op))
+    intOp(compoundOp(s.op), s.numKind)
     m_backend.storeField(idx)
 
 // `arr[i] = value`  /  `arr[i] += value`  /  `arr[i] -= value`
@@ -434,7 +440,7 @@ void Codegen::genIndexAssign(s: IndexAssignStmt)
         genExpr(s.value)
         if exprType(s.value) != "float" then
             m_backend.cvtIntToFloat()
-        m_backend.binaryFloat(compoundOp(s.op))
+        floatOp(compoundOp(s.op), s.numKind)
         m_backend.floatToBits()
         m_backend.indexAssign()
         return
@@ -453,7 +459,7 @@ void Codegen::genIndexAssign(s: IndexAssignStmt)
     if s.op == "+=" and elemIsArray then
         m_backend.arrayAppendAcc()
     else
-        m_backend.binaryInt(compoundOp(s.op))
+        intOp(compoundOp(s.op), s.numKind)
     m_backend.indexAssign()
 
 void Codegen::genReturn(s: ReturnStmt)

@@ -23,15 +23,20 @@ void main(args)
 
     // Trailing arguments, in any order:
     //   x86 | stackvm | c | wasm  code-generation target      (default x86)
+    //   check                    analyse only: diagnostics, no output file
     //   strict                   analyser lint-level checks   (default off)
     //   none | low | medium | max   optimisation level        (default none)
     let target = "x86"
     let strict = false
     let opt = "none"
+    let rich = false
+    let color = false
+    let width = 100
+    let renderText = ""
     let ai = 2
     while ai < #args do
         let a = args[ai]
-        if a == "x86" or a == "x86pic" or a == "stackvm" or a == "c" or a == "wasm" then
+        if a == "x86" or a == "x86pic" or a == "stackvm" or a == "c" or a == "wasm" or a == "check" then
             target = a
         else if a == "header" then
             target = a              // C header for the `export fn`s -> <file>.h
@@ -39,6 +44,14 @@ void main(args)
             strict = true
         else if a == "none" or a == "low" or a == "medium" or a == "max" then
             opt = a
+        else if a == "rich" or a == "color" then
+            rich = true             // rustc-style diagnostics (see diag.kmm)
+            if a == "color" then
+                color = true
+        else if a.length > 7 and a[0 to 7] == "render=" then
+            renderText = a[7 to a.length]       // test hook: render this one line
+        else if a.length > 6 and a[0 to 6] == "width=" then
+            width = km_compiler::dgNum(a[6 to a.length])
         ai += 1
 
     // The standard library ships as `.kmm` declaration files under the
@@ -46,17 +59,29 @@ void main(args)
     // so `import console` resolves no matter where the user's file is.
     // `file::find` walks recursively, so the executable's directory is
     // enough whether `stdlib/` is a subdirectory or holds kmc itself.
+    km_compiler::diagSetMode(rich, color, width)
+    if renderText != "" then
+        print(km_compiler::diagReport([renderText]))
+        return
     let stdlibProbe = dirOf(selfPath) + "/probe.km"
 
     let gathered = gather(fileName, stdlibProbe)
-    file::write_all(fileName + ".deps", join(gathered.deps, "\n"))
-    file::write_all(fileName + ".links", join(gathered.links, "\n"))
+    // `check` writes nothing: no .deps / .links / output file
+    if target != "check" then
+        file::write_all(fileName + ".deps", join(gathered.deps, "\n"))
+        file::write_all(fileName + ".links", join(gathered.links, "\n"))
     let compiled = km_compiler::compileMapped(gathered.source, target, strict, opt, gathered.deps, gathered.starts)?
     if compiled == null then
         // report as `file:line:col: error: …`, against the file the
         // problem is actually in rather than the merged unit
+        // (several errors arrive newline-separated, one per failed function)
         let raw = km_error_message() or "compilation failed"
-        km_fail(km_compiler::locate(errorLine(raw), gathered.deps, gathered.starts))
+        let shown: [string] = []
+        for one in km_compiler::dgSplit(raw, "\n") do
+            shown += [km_compiler::locate(errorLine(one), gathered.deps, gathered.starts)]
+        km_fail(km_compiler::diagReport(shown))
+    if target == "check" then
+        return                        // analysed clean; diagnostics already printed
     let asm = compiled or ""          // km_fail above does not return
 
     let outputPath = fileName + ".asm"
@@ -65,6 +90,8 @@ void main(args)
     km_compiler::save(asm, outputPath)
 
 extern void km_fail(msg: string)
+extern fn km_str_nl(s: string, start: int): int
+extern fn km_str_kw(s: string, start: int, kw: string): int
 
 // "3:7: msg" → "3:7: error: msg" (the position is mapped to its file
 // afterwards); a message with no leading position becomes "error: msg".
@@ -120,16 +147,15 @@ fn isSource(name: string) : bool
 
 // The name on the first `module <name>` line of `src`, or "".
 fn moduleOf(src: string) : string
-    let i = 0
     let lineStart = 0
     let n = src.length              // a strlen — measure once, not per char
-    while i <= n do
-        if i == n or src[i] == "\n" then
+    while lineStart <= n do
+        let i = km_str_nl(src, lineStart)
+        if km_str_kw(src, lineStart, "module ") == 1 then
             let m = moduleOnLine(src[lineStart to i])
             if m != "" then
                 return m
-            lineStart = i + 1
-        i += 1
+        lineStart = i + 1
     return ""
 
 fn moduleOnLine(line: string) : string
@@ -187,6 +213,8 @@ fn gather(rootPath: string, stdlibProbe: string) : GatherResult
             let resolved = file::find(name, rootPath)
             if resolved == null then
                 resolved = file::find(name, stdlibProbe)
+            if resolved == null then
+                km_fail(km_compiler::diagReport([p + ":" + importPos(src, name) + ": error: cannot find module '" + name + "'"]))
             if resolved != null and not (resolved in seen) then
                 queue += [resolved]
 
@@ -254,7 +282,8 @@ fn newlines(src: string) : int
     let i = 0
     let n = src.length
     while i < n do
-        if src[i] == "\n" then
+        i = km_str_nl(src, i)
+        if i < n then
             c += 1
         i += 1
     return c
@@ -278,16 +307,15 @@ fn sourceTree(dir: string) : [string]
 // how the real keyword is parsed (parser.kmm's `parseLink`).
 fn linkTargets(src: string) : [string]
     let out: [string] = []
-    let i = 0
     let lineStart = 0
     let n = src.length              // a strlen — measure once, not per char
-    while i <= n do
-        if i == n or src[i] == "\n" then
+    while lineStart <= n do
+        let i = km_str_nl(src, lineStart)
+        if km_str_kw(src, lineStart, "link ") == 1 then
             let t = linkOnLine(src[lineStart to i])
             if t != "" then
                 out += [t]
-            lineStart = i + 1
-        i += 1
+        lineStart = i + 1
     return out
 
 fn linkOnLine(line: string) : string
@@ -320,16 +348,15 @@ fn linkOnLine(line: string) : string
 // `externLibIsPath`.
 fn externLinkTargets(src: string) : [string]
     let out: [string] = []
-    let i = 0
     let lineStart = 0
     let n = src.length              // a strlen — measure once, not per char
-    while i <= n do
-        if i == n or src[i] == "\n" then
+    while lineStart <= n do
+        let i = km_str_nl(src, lineStart)
+        if km_str_kw(src, lineStart, "extern ") == 1 then
             let t = externOnLine(src[lineStart to i])
             if t != "" then
                 out += [t]
-            lineStart = i + 1
-        i += 1
+        lineStart = i + 1
     return out
 
 fn externOnLine(line: string) : string
@@ -361,19 +388,45 @@ fn externOnLine(line: string) : string
         k += 1
     return "-l" + name
 
-// Names on `import <name>` lines, in source order.
-fn importNames(src: string) : [string]
-    let names: [string] = []
+// "line:col" of the first `import <name>` line in `src` (col is the
+// column of the name), for a diagnostic.  "1:1" when there is none.
+fn importPos(src: string, name: string) : string
+    let line = 1
     let i = 0
     let lineStart = 0
     let n = src.length              // a strlen — measure once, not per char
     while i <= n do
         if i == n or src[i] == "\n" then
+            let text = src[lineStart to i]
+            if importOnLine(text) == name then
+                return string(line) + ":" + string(importNameCol(text))
+            line += 1
+            lineStart = i + 1
+        i += 1
+    return "1:1"
+
+// 1-based column at which the module name starts on an `import` line.
+fn importNameCol(line: string) : int
+    let a = 0
+    while a < line.length and (line[a] == " " or line[a] == "\t") do
+        a += 1
+    let b = a + 7                   // past "import"
+    while b < line.length and line[b] == " " do
+        b += 1
+    return b + 1
+
+// Names on `import <name>` lines, in source order.
+fn importNames(src: string) : [string]
+    let names: [string] = []
+    let lineStart = 0
+    let n = src.length              // a strlen — measure once, not per char
+    while lineStart <= n do
+        let i = km_str_nl(src, lineStart)
+        if km_str_kw(src, lineStart, "import ") == 1 then
             let name = importOnLine(src[lineStart to i])
             if name != "" then
                 names += [name]
-            lineStart = i + 1
-        i += 1
+        lineStart = i + 1
     return names
 
 fn importOnLine(line: string) : string

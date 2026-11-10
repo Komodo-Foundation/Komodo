@@ -1,0 +1,427 @@
+#!/usr/bin/env python3
+"""km-fmt: a conservative layout normaliser for Komodo source (.km, .kmm).
+
+It only changes whitespace. It never reorders code, never reflows lines and
+never changes the indentation structure. Every rewrite is checked before it is
+reported: the significant token stream of the output must equal that of the
+input, and tab-expanded indentation must order lines exactly as before.
+See docs/fmt.md for the full rule list.
+
+Usage:
+    tools/km-fmt [--check | --diff | -w] files-or-dirs...
+
+Python 3 standard library only.
+"""
+
+import argparse
+import difflib
+import os
+import sys
+
+# ---------------------------------------------------------------------------
+# Lexical tables. These mirror modules/frontend/lexer.kmm.
+
+KEYWORDS = {
+    "true", "false", "null", "if", "else", "while", "for", "to", "until", "do",
+    "then", "fn", "void", "return", "throw", "break", "continue", "struct",
+    "class", "enum", "match", "case", "new", "let", "and", "or", "not",
+    "import", "link", "mut", "extern", "module", "constructor", "be", "down",
+    "in", "is", "xor",
+}
+# Keywords that end an operand, so a following `-` is binary.
+OPERAND_WORDS = {"true", "false", "null"}
+
+WORD_START = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_")
+DIGITS = set("0123456789")
+WORD_CHARS = WORD_START | DIGITS
+
+OPS2 = ("==", "!=", "<=", ">=", "<<", ">>", "+=", "-=", "*=", "/=", "%=",
+        "->", "::")
+OPS1 = set("+-*/%=<>&|^!?#.,:;()[]{}")
+
+# Binary operators: always spaced on both sides. `-` is handled by context.
+BINARY_OPS = {"==", "!=", "<", "<=", ">", ">=", "+", "*", "/", "%", "=",
+              "+=", "-=", "*=", "/=", "%=", "&", "|", "^", "<<", ">>", "->"}
+
+# Each bracket type makes `:` a plain separator, except `[` (slices).
+TIGHT_AFTER_OPS = {"(", "[", ".", "::"}
+TIGHT_BEFORE_OPS = {")", "]", ",", "?", ";"}
+
+
+class FmtError(Exception):
+    def __init__(self, msg, line=None):
+        super().__init__(msg)
+        self.msg = msg
+        self.line = line
+
+
+class Tok:
+    __slots__ = ("kind", "text", "gap", "pos", "cls")
+
+    def __init__(self, kind, text, gap, pos):
+        self.kind = kind    # comment | str | num | word | op | other
+        self.text = text
+        self.gap = gap      # raw whitespace before this token
+        self.pos = pos      # offset of the token in the source
+        self.cls = None     # for ops: "unary" or "binary" when relevant
+
+
+# ---------------------------------------------------------------------------
+# Tokeniser. Strings, chars, backtick strings and comments are opaque, so
+# their content (including {…} holes and trailing spaces) is never rewritten
+# except for trailing whitespace on comment lines.
+
+def _line_of(src, pos):
+    return src.count("\n", 0, pos) + 1
+
+
+def _scan_quoted(src, i, quote):
+    n = len(src)
+    j = i + 1
+    while j < n:
+        c = src[j]
+        if c == "\\":
+            j += 2
+        elif c == quote:
+            return j + 1
+        else:
+            j += 1
+    raise FmtError("unterminated %s literal" % ("string" if quote == '"' else "char"),
+                   _line_of(src, i))
+
+
+def _scan_hole(src, j):
+    # j is just past a `{` inside a backtick string. Mirrors readInterpExpr.
+    n = len(src)
+    depth = 1
+    while j < n:
+        c = src[j]
+        if c == '"':
+            j = _scan_quoted(src, j, '"')
+            continue
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return j + 1
+        j += 1
+    raise FmtError("unterminated `{` hole in backtick string", _line_of(src, j))
+
+
+def _scan_backtick(src, i):
+    n = len(src)
+    j = i + 1
+    while j < n:
+        c = src[j]
+        if c == "\\":
+            j += 2
+        elif c == "`":
+            return j + 1
+        elif c == "{":
+            j = _scan_hole(src, j + 1)
+        else:
+            j += 1
+    raise FmtError("unterminated backtick string", _line_of(src, i))
+
+
+def tokenize(src):
+    toks = []
+    n = len(src)
+    i = 0
+    prev_end = 0
+    while True:
+        while i < n and src[i] in " \t\r\n":
+            i += 1
+        if i >= n:
+            break
+        start = i
+        c = src[i]
+        if src.startswith("//", i):
+            j = src.find("\n", i)
+            j = n if j < 0 else j
+            kind = "comment"
+        elif src.startswith("/*", i):
+            j = src.find("*/", i + 2)
+            if j < 0:
+                raise FmtError("unterminated block comment", _line_of(src, i))
+            j += 2
+            kind = "comment"
+        elif c in "\"'":
+            j = _scan_quoted(src, i, c)
+            kind = "str"
+        elif c == "`":
+            j = _scan_backtick(src, i)
+            kind = "str"
+        elif c in DIGITS:
+            j = i
+            while j < n and src[j] in WORD_CHARS:
+                j += 1
+            if j + 1 < n and src[j] == "." and src[j + 1] in DIGITS:
+                j += 1
+                while j < n and src[j] in WORD_CHARS:
+                    j += 1
+            kind = "num"
+        elif c in WORD_START:
+            j = i
+            while j < n and src[j] in WORD_CHARS:
+                j += 1
+            kind = "word"
+        elif src[i:i + 2] in OPS2:
+            j = i + 2
+            kind = "op"
+        elif c in OPS1:
+            j = i + 1
+            kind = "op"
+        else:
+            j = i + 1
+            kind = "other"
+        toks.append(Tok(kind, src[start:j], src[prev_end:start], start))
+        prev_end = i = j
+    return toks
+
+
+def _operand_end(t):
+    if t is None:
+        return False
+    if t.kind in ("num", "str"):
+        return True
+    if t.kind == "word":
+        return t.text not in KEYWORDS or t.text in OPERAND_WORDS
+    if t.kind == "op":
+        return t.text in (")", "]", "?", "}")
+    return False
+
+
+def _classify(toks):
+    """Mark `-`, `#`, `!` as unary or binary from the previous real token."""
+    prev = None
+    for t in toks:
+        if t.kind == "comment":
+            continue
+        if t.kind == "op":
+            if t.text in ("#", "!"):
+                t.cls = "unary"
+            elif t.text == "-":
+                t.cls = "binary" if _operand_end(prev) else "unary"
+            elif t.text in BINARY_OPS:
+                t.cls = "binary"
+        prev = t
+
+
+# ---------------------------------------------------------------------------
+# Spacing rules between two tokens on the same line.
+
+def _gap(prev, t, raw, innermost):
+    """Whitespace to emit between `prev` and `t` on one line. `raw` is the
+    whitespace as written; where the rule keeps the author's choice, it is
+    used (with tabs widened)."""
+    had_ws = raw != ""
+    kept = " " if had_ws else ""
+    if t.kind == "comment":
+        return raw.replace("\t", "    ")   # trailing comments keep their alignment
+    if prev.kind == "op" and (prev.text in TIGHT_AFTER_OPS or prev.cls == "unary"):
+        return ""
+    if t.kind == "op":
+        if t.text in TIGHT_BEFORE_OPS:
+            return ""
+        if t.text in (".", "::"):
+            return "" if _operand_end(prev) else " "
+        if t.text == ":":
+            return kept                    # the space before `:` is kept as is
+        if t.text in ("(", "[") and prev.kind == "word":
+            return kept                    # call, index, constructor(...): keep
+        if t.text in ("(", "[") and _operand_end(prev):
+            return kept
+    if prev.kind == "op" and prev.text == ":":
+        if innermost == "[":
+            return kept                    # slice a[1:] stays as written
+        return " "                         # params, fields, let x: T
+    return " "
+
+
+def _comment_text(t):
+    if t.text.startswith("//"):
+        return t.text.rstrip(" \t\r")
+    return "\n".join(line.rstrip(" \t\r") for line in t.text.split("\n"))
+
+
+def _render(toks):
+    out = []
+    pairs = []            # (original indent width, new indent width)
+    prev = None
+    stack = []            # open brackets, innermost last
+    for t in toks:
+        g = t.gap
+        nl = g.count("\n")
+        if prev is None or nl > 0:
+            seg = g[g.rfind("\n") + 1:] if nl else g
+            if prev is not None:
+                blanks = nl - 1
+                # Indented lines are inside a block: at most 1 blank line.
+                limit = 1 if len(seg) > 0 else 2
+                out.append("\n" * (1 + min(blanks, limit)))
+            indent = "".join("    " if ch == "\t" else ch for ch in seg if ch != "\r")
+            pairs.append((len(seg), len(indent)))
+            out.append(indent)
+        else:
+            out.append(_gap(prev, t, g, stack[-1] if stack else None))
+        out.append(_comment_text(t) if t.kind == "comment" else t.text)
+        if t.kind == "op" and t.text in ("(", "["):
+            stack.append(t.text)
+        elif t.kind == "op" and t.text in (")", "]") and stack:
+            stack.pop()
+        prev = t
+    if prev is not None:
+        out.append("\n")
+    return "".join(out), pairs
+
+
+def _indent_decisions(widths):
+    """What the lexer does at each line start (modules/frontend/lexer.kmm,
+    handleLineStart): INDENT, DEDENT n, or nothing. Two width sequences with
+    equal decisions produce the same INDENT/DEDENT tokens."""
+    stack = [0]
+    out = []
+    for w in widths:
+        top = stack[-1]
+        if w > top:
+            stack.append(w)
+            out.append("I")
+        elif w < top:
+            n = 0
+            while stack[-1] > w:
+                stack.pop()
+                n += 1
+            out.append("D%d" % n)
+        else:
+            out.append("=")
+    return out
+
+
+def _check_indent(pairs):
+    """Tab expansion must leave the lexer's INDENT/DEDENT decisions unchanged."""
+    before = _indent_decisions([a for a, _ in pairs])
+    after = _indent_decisions([b for _, b in pairs])
+    if before != after:
+        raise FmtError("mixed tabs and spaces in indentation would change block "
+                       "structure; fix the indentation by hand")
+
+
+def format_source(src):
+    """Return the formatted text of `src`, or raise FmtError."""
+    toks = tokenize(src)
+    if not toks:
+        return ""
+    _classify(toks)
+    text, pairs = _render(toks)
+    _check_indent(pairs)
+    # Safety net: the output must tokenise to exactly the same code.
+    again = tokenize(text)
+    before = [(t.kind, t.text) for t in toks if t.kind != "comment"]
+    after = [(t.kind, t.text) for t in again if t.kind != "comment"]
+    if before != after:
+        raise FmtError("internal error: formatting would change the token stream")
+    if [t.kind for t in toks if t.kind == "comment"] != [t.kind for t in again if t.kind == "comment"]:
+        raise FmtError("internal error: formatting would change the comments")
+    return text
+
+
+# ---------------------------------------------------------------------------
+# Command line.
+
+def _collect(paths):
+    files = []
+    for p in paths:
+        if os.path.isdir(p):
+            for root, dirs, names in os.walk(p):
+                dirs[:] = sorted(d for d in dirs
+                                 if not d.startswith(".") and d != "__pycache__")
+                for name in sorted(names):
+                    if name.endswith((".km", ".kmm")):
+                        files.append(os.path.join(root, name))
+        else:
+            files.append(p)
+    return files
+
+
+def _read(path):
+    # newline="" keeps \r\n as written; \r is whitespace to the formatter.
+    with open(path, encoding="utf-8", newline="") as f:
+        return f.read()
+
+
+def _write(path, text):
+    with open(path, "w", encoding="utf-8", newline="") as f:
+        f.write(text)
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(
+        prog="km-fmt",
+        description="Normalise whitespace and layout in Komodo source files. "
+                    "Never changes program meaning.")
+    mode = ap.add_mutually_exclusive_group()
+    mode.add_argument("--check", action="store_true",
+                      help="list files that would change; exit 1 if any would")
+    mode.add_argument("--diff", action="store_true",
+                      help="print a unified diff; exit 1 if any file would change")
+    mode.add_argument("-w", "--write", action="store_true",
+                      help="rewrite changed files in place")
+    ap.add_argument("paths", nargs="+", help="files, or directories to recurse")
+    args = ap.parse_args(argv)
+
+    files = _collect(args.paths)
+    if not files:
+        print("km-fmt: no .km or .kmm files found", file=sys.stderr)
+        return 2
+    if len(files) > 1 and not (args.check or args.diff or args.write):
+        print("km-fmt: several files need --check, --diff or -w", file=sys.stderr)
+        return 2
+
+    errors = 0
+    changed = 0
+    for path in files:
+        try:
+            src = _read(path)
+            out = format_source(src)
+        except OSError as e:
+            print("km-fmt: %s: %s" % (path, e.strerror), file=sys.stderr)
+            errors += 1
+            continue
+        except UnicodeDecodeError as e:
+            print("km-fmt: %s: not UTF-8 (%s)" % (path, e), file=sys.stderr)
+            errors += 1
+            continue
+        except FmtError as e:
+            where = "%s:%s" % (path, e.line) if e.line else path
+            print("km-fmt: %s: %s" % (where, e.msg), file=sys.stderr)
+            errors += 1
+            continue
+
+        if out == src:
+            if not (args.check or args.diff or args.write):
+                sys.stdout.write(out)
+            continue
+
+        changed += 1
+        if args.write:
+            _write(path, out)
+        elif args.check:
+            print("would reformat: %s" % path)
+        elif args.diff:
+            sys.stdout.writelines(difflib.unified_diff(
+                src.splitlines(True), out.splitlines(True),
+                "a/" + path, "b/" + path))
+        else:
+            sys.stdout.write(out)
+
+    if errors:
+        return 2
+    if (args.check or args.diff) and changed:
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

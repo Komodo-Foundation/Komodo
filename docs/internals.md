@@ -514,7 +514,7 @@ will cost you time when you touch the area.
    operation is caught only when a program reaches that code path, or never.
 5. **Global registries are parallel arrays.** `Analyzer` and `Codegen` keep
    functions and types as parallel lists, with `StrIndex` added for lookup.
-   This is fast enough (the README reports about 0.25 s for the compiler to build its own sources),
+   This is fast enough (the compiler builds its own sources in about 0.3 s, measured by `tools/perf-budget.sh`),
    but it is easy to desynchronise a list when adding a field.
 
 ## 14. Stale documentation

@@ -78,6 +78,37 @@ module km_compiler
 
 abstract class Backend
 public
+    // ── fixed-width integers / f32 ─────────────────────────────────
+    // `k` is u8 u16 u32 u64 uint i8 i16 i32.  Values are kept normalised
+    // (zero-/sign-extended to 64 bits); unsigned <= 32 bits therefore
+    // reuses the signed ops, and only u64/uint needs the *U variants.
+    // A target without them reports a clear error.
+    mut normInt(k: string)
+        throw ("fixed-width integer arithmetic (" + k + ") is not supported on this target yet")
+    mut binaryIntU(op: string)
+        throw ("unsigned 64-bit arithmetic is not supported on this target yet")
+    mut compareIntU(op: string)
+        throw ("unsigned 64-bit comparison is not supported on this target yet")
+    // (a target without them keeps the old behaviour: signed convert,
+    // f32 held as a double)
+    mut cvtUIntToFloat()
+        cvtIntToFloat()
+    // round the double in the float accumulator to single precision
+    mut roundF32()
+        return
+    mut binaryIntK(op: string, k: string)
+        let u = k == "u64" or k == "uint"
+        if u and (op == "/" or op == "%" or op == ">>") then
+            binaryIntU(op)
+            return
+        binaryInt(op)
+        if not u and op != "&" and op != "|" and op != "^" and op != "xor" and op != ">>" then
+            normInt(k)
+    mut compareIntK(op: string, k: string)
+        if (k == "u64" or k == "uint") and op != "==" and op != "!=" then
+            compareIntU(op)
+        else
+            compareInt(op)
     // ── in-place append ────────────────────────────────────────────
     // `dst += [v]` with one element: a backend that can append the value
     // straight into the array (no one-element temporary) answers
@@ -126,21 +157,33 @@ public
     // (hidden `sret` pointer for a MEMORY-class struct return)
     mut ffiRetBufAddr()
         throw ("struct returns over 16 bytes are not supported on this target yet")
+    // ── debug info (KM_DEBUG) ──────────────────────────────────────
+    // `files[k]` begins at line `starts[k]` of the merged translation
+    // unit (the same map `locate` uses for diagnostics).  Only a backend
+    // that can describe source lines to a debugger does anything with it.
+    mut setDebugInfo(files: [string], starts: [int])
+        return
+    // the code emitted from here on belongs to merged-unit line `line`
+    mut markLine(line: int)
+        return
     // ── labels ─────────────────────────────────────────────────────
     mut newLabel(): string
         m_labelId += 1
-        return ".L" + string(m_labelId)
+        return labelPrefix() + string(m_labelId)
+    mut labelPrefix(): string
+        return ".L"
 
     // ── program-wide function table ────────────────────────────────
     // Recorded in pass 1 so a call target defined in this program is
     // never emitted as an external symbol.
     mut declareFn(name: string)
         let m = mangle(name)
-        if not (m in m_fnNames) then
+        if not m_fnIdx.has(m) then
             m_fnNames += [m]
+            m_fnIdx.add(m, 0)
 
     mut isLocalFn(mangledSym: string): bool
-        return (mangledSym in m_fnNames)
+        return m_fnIdx.has(mangledSym)
 
     // `module.member` → `module_member`; a plain name is unchanged.
     fn mangle(name: string): string
@@ -157,3 +200,4 @@ public
 private
     m_labelId: int = 0
     m_fnNames: [string] = []
+    m_fnIdx: StrIndex = new StrIndex()    // hashes m_fnNames

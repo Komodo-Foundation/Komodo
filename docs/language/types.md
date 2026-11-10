@@ -30,8 +30,8 @@ For the complete syntax reference see [design.md](../../design.md).
 | Type | Meaning |
 |---|---|
 | `int` | 64-bit signed integer |
-| `uint`, `u8`..`u64`, `i8`..`i64` | other integer widths |
-| `float` | IEEE-754 double. `f64` is the same type; `f32` is held as a double too and is 4 bytes only at a C boundary |
+| `uint`, `u8`..`u64`, `i8`..`i64` | other integer widths, with real wrap-around semantics: see [Integers](integers.md) |
+| `float` | IEEE-754 double. `f64` is the same type; `f32` is single precision (each result is rounded to 32 bits, see [Integers](integers.md#f32)) |
 | `bool`, `char`, `string` | booleans, single characters, text |
 | `[T]` | array of `T` |
 | `T?` | nullable `T`; may hold `null` |
@@ -644,6 +644,7 @@ The rules are:
 
 - An exact repeat of the parameter types is an error:
 
+  <!-- doc-error -->
   ```km
   import console
 
@@ -663,6 +664,7 @@ The rules are:
 
 - A call that matches no overload is an error:
 
+  <!-- doc-error -->
   ```km
   import console
 
@@ -683,6 +685,7 @@ The rules are:
 - **An overloaded name cannot take default parameter values.** Overloads and
   defaulted arities would compete, so the compiler rejects the combination:
 
+  <!-- doc-error -->
   ```km
   import console
 
@@ -939,6 +942,7 @@ void main()
 - `int(x)` is the explicit float-to-int conversion. It truncates toward zero.
   Plain assignment does not convert floats to ints:
 
+  <!-- doc-error -->
   ```km
   import console
 
@@ -953,8 +957,8 @@ void main()
 
 - `int(x)` accepts only numbers: `int("3")` is an error,
   `'int' expects a number, got 'string'`.
-- `f32` behaves like `float` inside Komodo. Its 4-byte width matters only for
-  struct fields and parameters at a C FFI boundary.
+- `f32` is single precision: every `f32` result is rounded to 32 bits. It is
+  still stored in an 8-byte slot, and is 4 bytes in C struct layouts.
 
 ## Common type errors
 

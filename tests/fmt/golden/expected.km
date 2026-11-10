@@ -1,0 +1,30 @@
+import console
+// header
+
+
+let counter = 0
+let limit: int = 10
+fn add(a: int, b : int = -1) : int
+    return a + b * 2
+fn neg(x: int): int
+    return -x + -3 * #xs
+
+
+void main()
+    let xs = [1, 2, 3]
+    let s = "a=b , c"   // kept  as written
+    let t = `x {xs[0]+1} = {s}`
+    let c = '='
+    console.print(xs[1:], xs[:2], xs[0 to 2], s[1])
+    if counter < limit and not (limit >= 10) then
+        counter += 1
+
+        counter -= 1
+    /* block
+       comment
+    */
+    for k = 0 until 3
+        console.print(k * 2, k / 2, k % 2, k - 1, !true)
+    let f = check(70000)?
+    let pair = new Pixel(1, 2)
+    console.print(string(-1), f.x, pair.x, xs.length)
