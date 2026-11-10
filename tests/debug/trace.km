@@ -1,0 +1,21 @@
+import console
+
+class Job
+    constructor(n: int)
+        m_n = n
+    fn run(): int
+        return inner(m_n)
+    m_n: int
+
+fn inner(n: int): int
+    if n > 2 then
+        throw "boom"
+    return n
+
+fn outer(n: int): int
+    let j = new Job(n)
+    return j.run()
+
+void main()
+    console.print("ok:", outer(1))
+    console.print("bad:", outer(5))

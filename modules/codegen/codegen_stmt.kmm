@@ -43,6 +43,7 @@ void Codegen::genFunction(func: FunctionDecl)
     let emitName = func.name
     if func.linkName != null then
         emitName = func.linkName
+    m_backend.markLine(func.line)
     m_backend.beginFunction(emitName, m_frame, paramOffsets, func.name == "main")
 
     // top-level `let` initialisers run once, at the very start of `main`
@@ -56,6 +57,8 @@ void Codegen::genFunction(func: FunctionDecl)
     m_backend.endFunction()
 
 void Codegen::genStmt(s: Statement?)
+    if s != null then
+        m_backend.markLine(s.line)
     if s is VarDecl then
         if s.immutable then
             // `let x be expr` — register a macro in the current block

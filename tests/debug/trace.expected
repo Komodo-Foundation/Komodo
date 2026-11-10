@@ -1,0 +1,5 @@
+Uncaught error: boom
+  at inner (trace.km:12)
+  at Job::run (trace.km:7)
+  at outer (trace.km:17)
+  at main (trace.km:21)
