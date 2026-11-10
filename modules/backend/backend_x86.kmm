@@ -814,21 +814,43 @@ mut X86Backend::arrayRepeat()
 // it in place (the handle may move, and is stored back).
 mut X86Backend::arrayPushTo(off: int)
     m_usesAppend = true
-    ins("mov rsi, rax")
+    let slow = newLabel()
+    let done = newLabel()
     ins("mov rdi, [rbp - " + string(off) + "]")
+    arrayPushFast(slow, done)
+    ins("mov rsi, rax")
     emitCall("km_array_push")
     ins("mov [rbp - " + string(off) + "], rax")
+    label(done)
+
+// The inline half of a vector `push_back`: rdi = array handle, rax = the
+// value.  While len < cap the element is stored and len bumped right here;
+// otherwise control continues at `slow` (just after this sequence) to grow
+// through the runtime.  The caller emits the slow path, then `done`.
+mut X86Backend::arrayPushFast(slow: string, done: string)
+    ins("mov rdx, [rdi]")
+    ins("cmp rdx, [rdi + 8]")
+    ins("jge near " + slow)
+    ins("mov [rdi + rdx*8 + 16], rax")
+    ins("add qword [rdi], 1")
+    ins("jmp near " + done)
+    label(slow)
 
 // `obj.field += [v]` — value in rax, receiver spilled by pushAcc().
 mut X86Backend::arrayPushToField(idx: int)
     m_usesAppend = true
+    let slow = newLabel()
+    let done = newLabel()
     ins("mov rsi, rax")
-    ins("pop rax")
-    ins("mov rdi, [rax + " + string(8 + idx * 8) + "]")
-    ins("push rax")
+    ins("pop rcx")
+    ins("mov rdi, [rcx + " + string(8 + idx * 8) + "]")
+    ins("mov rax, rsi")
+    arrayPushFast(slow, done)
+    ins("push rcx")
     emitCall("km_array_push")
     ins("pop rcx")
     ins("mov [rcx + " + string(8 + idx * 8) + "], rax")
+    label(done)
 
 mut X86Backend::inPlaceAppend(): bool
     return true
