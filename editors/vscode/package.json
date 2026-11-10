@@ -1,21 +1,39 @@
 {
   "name": "komodo-lang",
   "displayName": "Komodo",
-  "description": "Syntax highlighting, snippets and indentation for the Komodo language (.km, .kmm).",
-  "version": "0.1.0",
+  "description": "Komodo language support: highlighting, diagnostics, outline, formatting, run/build/test tasks and debugging for .km and .kmm files.",
+  "version": "0.2.0",
   "license": "MIT",
   "publisher": "komodo-foundation",
   "icon": "icon.png",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Komodo-Foundation/Komodo.git"
+    "url": "https://github.com/Komodo-Foundation/Komodo.git",
+    "directory": "editors/vscode"
+  },
+  "bugs": {
+    "url": "https://github.com/Komodo-Foundation/Komodo/issues"
   },
   "engines": {
-    "vscode": "^1.80.0"
+    "vscode": "^1.82.0"
   },
   "categories": [
     "Programming Languages",
-    "Snippets"
+    "Snippets",
+    "Formatters",
+    "Linters",
+    "Debuggers"
+  ],
+  "keywords": [
+    "komodo",
+    "km",
+    "kmm"
+  ],
+  "main": "./extension.js",
+  "activationEvents": [
+    "onLanguage:komodo",
+    "onDebugResolve:komodo",
+    "workspaceContains:**/*.km"
   ],
   "contributes": {
     "languages": [
@@ -29,7 +47,11 @@
           ".km",
           ".kmm"
         ],
-        "configuration": "./language-configuration.json"
+        "configuration": "./language-configuration.json",
+        "icon": {
+          "light": "./images/file-icon.png",
+          "dark": "./images/file-icon.png"
+        }
       }
     ],
     "grammars": [
@@ -37,6 +59,16 @@
         "language": "komodo",
         "scopeName": "source.komodo",
         "path": "./syntaxes/komodo.tmLanguage.json"
+      },
+      {
+        "scopeName": "markdown.komodo.codeblock",
+        "path": "./syntaxes/komodo.markdown.tmLanguage.json",
+        "injectTo": [
+          "text.html.markdown"
+        ],
+        "embeddedLanguages": {
+          "meta.embedded.block.komodo": "komodo"
+        }
       }
     ],
     "snippets": [
@@ -45,12 +77,249 @@
         "path": "./snippets/komodo.code-snippets"
       }
     ],
+    "configuration": {
+      "title": "Komodo",
+      "properties": {
+        "komodo.path": {
+          "type": "string",
+          "default": "komodo",
+          "markdownDescription": "The `komodo` command. A name is looked up on `PATH`; an absolute path is used as is."
+        },
+        "komodo.target": {
+          "type": "string",
+          "enum": [
+            "x86",
+            "c",
+            "wasm",
+            "stackvm"
+          ],
+          "default": "x86",
+          "description": "Code-generation target for Run and Build."
+        },
+        "komodo.languageServer.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Start the Komodo language server (tools/km-lsp) for diagnostics and the outline."
+        },
+        "komodo.languageServer.path": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Path to `km-lsp`. Empty: use `tools/km-lsp` from the open workspace, else the one next to the `komodo` command."
+        },
+        "komodo.debugger": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "cppdbg",
+            "lldb"
+          ],
+          "default": "auto",
+          "markdownDescription": "Debugger used by the `komodo` launch type: `cppdbg` (C/C++ extension, gdb) or `lldb` (CodeLLDB). `auto` picks whichever is installed."
+        }
+      }
+    },
     "configurationDefaults": {
       "[komodo]": {
         "editor.tabSize": 4,
         "editor.insertSpaces": true,
-        "editor.detectIndentation": false
+        "editor.detectIndentation": false,
+        "editor.defaultFormatter": "komodo-foundation.komodo-lang"
       }
-    }
+    },
+    "commands": [
+      {
+        "command": "komodo.run",
+        "title": "Run File",
+        "category": "Komodo",
+        "icon": "$(play)"
+      },
+      {
+        "command": "komodo.build",
+        "title": "Build File",
+        "category": "Komodo"
+      },
+      {
+        "command": "komodo.check",
+        "title": "Check File",
+        "category": "Komodo"
+      },
+      {
+        "command": "komodo.test",
+        "title": "Run Tests",
+        "category": "Komodo"
+      },
+      {
+        "command": "komodo.debug",
+        "title": "Debug File",
+        "category": "Komodo",
+        "icon": "$(debug-alt)"
+      },
+      {
+        "command": "komodo.repl",
+        "title": "Open REPL",
+        "category": "Komodo"
+      },
+      {
+        "command": "komodo.doctor",
+        "title": "Check Toolchain (doctor)",
+        "category": "Komodo"
+      },
+      {
+        "command": "komodo.restartServer",
+        "title": "Restart Language Server",
+        "category": "Komodo"
+      }
+    ],
+    "menus": {
+      "editor/title/run": [
+        {
+          "command": "komodo.run",
+          "when": "resourceLangId == komodo",
+          "group": "navigation@0"
+        },
+        {
+          "command": "komodo.debug",
+          "when": "resourceLangId == komodo",
+          "group": "navigation@1"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "komodo.run",
+          "when": "editorLangId == komodo"
+        },
+        {
+          "command": "komodo.build",
+          "when": "editorLangId == komodo"
+        },
+        {
+          "command": "komodo.check",
+          "when": "editorLangId == komodo"
+        },
+        {
+          "command": "komodo.debug",
+          "when": "editorLangId == komodo"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "komodo.run",
+        "key": "ctrl+f5",
+        "mac": "cmd+f5",
+        "when": "editorLangId == komodo && !inDebugMode"
+      }
+    ],
+    "taskDefinitions": [
+      {
+        "type": "komodo",
+        "required": [
+          "command"
+        ],
+        "properties": {
+          "command": {
+            "type": "string",
+            "enum": [
+              "run",
+              "build",
+              "check",
+              "test"
+            ],
+            "description": "The komodo command to run."
+          },
+          "file": {
+            "type": "string",
+            "description": "Entry file or path. Empty: the project in the workspace folder."
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Extra arguments, for example [\"--release\"] or [\"-t\", \"c\"]."
+          }
+        }
+      }
+    ],
+    "problemMatchers": [
+      {
+        "name": "komodo",
+        "owner": "komodo",
+        "source": "komodo",
+        "fileLocation": [
+          "autoDetect",
+          "${workspaceFolder}"
+        ],
+        "pattern": {
+          "regexp": "^(.+?):(\\d+):(\\d+): (error|warning): (.*)$",
+          "file": 1,
+          "line": 2,
+          "column": 3,
+          "severity": 4,
+          "message": 5
+        }
+      }
+    ],
+    "debuggers": [
+      {
+        "type": "komodo",
+        "label": "Komodo",
+        "languages": [
+          "komodo"
+        ],
+        "configurationAttributes": {
+          "launch": {
+            "properties": {
+              "program": {
+                "type": "string",
+                "description": "The .km file to build with debug info and run.",
+                "default": "${file}"
+              },
+              "args": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Arguments passed to the program.",
+                "default": []
+              },
+              "cwd": {
+                "type": "string",
+                "description": "Working directory of the program.",
+                "default": "${workspaceFolder}"
+              },
+              "stopAtEntry": {
+                "type": "boolean",
+                "description": "Stop at the program's entry point.",
+                "default": false
+              }
+            }
+          }
+        },
+        "initialConfigurations": [
+          {
+            "type": "komodo",
+            "request": "launch",
+            "name": "Debug Komodo file",
+            "program": "${file}"
+          }
+        ],
+        "configurationSnippets": [
+          {
+            "label": "Komodo: Launch",
+            "description": "Build a .km file with debug info and debug it with gdb or lldb.",
+            "body": {
+              "type": "komodo",
+              "request": "launch",
+              "name": "Debug Komodo file",
+              "program": "^\"\\${file}\""
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
   }
 }
