@@ -293,15 +293,15 @@ public
         registerType(d.name, d.parent, d, true, d.isAbstract, false, names, types, hasDef)
         let ti = typeIndex(d.name)
         for f in d.fields do
-            m_ownMembers += [d.name + "." + f.name]
+            m_ownMembers.add(d.name + "." + f.name, 0)
             if f.visibility == "private" then
-                m_privMembers += [d.name + "." + f.name]
+                m_privMembers.add(d.name + "." + f.name, 0)
         for m in d.methods do
             if not m.isConstructor then
                 m_typeOwnMethods[ti] += [m.name]
-                m_ownMembers += [d.name + "." + m.name]
+                m_ownMembers.add(d.name + "." + m.name, 0)
                 if m.visibility == "private" then
-                    m_privMembers += [d.name + "." + m.name]
+                    m_privMembers.add(d.name + "." + m.name, 0)
 
     mut registerType(name: string, parent: string?, node: ASTNode, isClass: bool, isAbs: bool, isUniq: bool, fnames: [string], ftypes: [string], fdef: [bool])
         if (name in m_typeNames) then
@@ -416,7 +416,7 @@ public
         let cur = typeName
         let guard = 0
         while cur != "" do
-            if (cur + "." + field) in m_ownMembers then
+            if m_ownMembers.has(cur + "." + field) then
                 return cur
             cur = typeParentOf(cur)
             guard += 1
@@ -429,7 +429,7 @@ public
     mut checkMemberAccess(node: ASTNode, owner: string, member: string)
         if owner == "" or m_curClass == owner then
             return
-        if (owner + "." + member) in m_privMembers then
+        if m_privMembers.has(owner + "." + member) then
             err(node, "'" + member + "' is private to class '" + owner + "'")
 
     mut checkFieldAccess(node: ASTNode, typeName: string, field: string)
@@ -1095,8 +1095,8 @@ private
     m_fnVis: [string] = []       // "public" / "private" (module section)
     // class members: "Class.member" for each own field and method, and the
     // subset declared under a `private` section
-    m_ownMembers: [string] = []
-    m_privMembers: [string] = []
+    m_ownMembers: StrIndex = new StrIndex()
+    m_privMembers: StrIndex = new StrIndex()
     m_fnMod: [string] = []       // owning module name ("" for the program)
     // module of the function body currently being checked (for privacy)
     m_curModuleOwner: string = ""
