@@ -147,6 +147,9 @@ struct VarDecl : Statement
     declaredType: string? = null
     init: Expression? = null
     immutable: bool = false
+    // `name := [..]` / `name: [T] := [..]` — a read-only packed constant
+    // array (see docs/language/const-arrays.md); `init` is the ArrayExpr.
+    constArray: bool = false
     // The analyser's inferred/declared type for this binding (coarse
     // string form), so frame layout does not re-infer it.
     resolvedType: string? = null

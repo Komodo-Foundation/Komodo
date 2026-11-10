@@ -1,0 +1,37 @@
+// Constant arrays: `name := [..]` or `name: [T] := [..]` — read-only data
+// packed at the element's natural width, like a C `static const T xs[]`.
+// They can be indexed, measured with `#`, and iterated.
+// stackvm: skip
+// c: skip
+import console
+primes := [2, 3, 5, 7, 11]
+weights: [float] := [1.5, 2, -0.25]
+bytes: [u8] := [0, 1, 255]
+signed: [i16] := [-1, 300, -32768]
+words: [string] := ["alpha", "beta"]
+flags: [bool] := [true, false, true]
+letters: [char] := ['a', 'Z', '\n']
+
+fn total(): int
+    let t = 0
+    for p in primes do
+        t += p
+    return t
+
+void main()
+    console.print(total())
+    console.print(#primes)
+    console.print(primes[4])
+    console.print(weights[0] + weights[2])
+    console.print(bytes[2])
+    console.print(signed[0] + signed[2])
+    console.print(words[1])
+    console.print(flags[0])
+    console.print(letters[1])
+    local := [10, 20, 30]
+    for x in local do
+        console.print(x)
+    for w in weights do
+        console.print(w)
+    for wd in words do
+        console.print(wd)

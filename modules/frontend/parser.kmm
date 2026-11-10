@@ -94,6 +94,11 @@ public
                     prog.classes += [cd]
                 else
                     throw ("expected `struct` or `class` after type modifier")
+            else if atConstArrayDecl() then
+                let carr = parseConstArrayDecl()
+                carr.visMod = m_curVis
+                carr.modOwner = m_curModule
+                prog.globals += [carr]
             else if at(TokenType::LET) then
                 // `let NAME be EXPR` — a compile-time macro; `let NAME
                 // [: T] = EXPR` (or a bare `let NAME : T`) — a top-level
@@ -752,7 +757,48 @@ private
             st.column = col
         return st
 
+    // `name := [..]` or `name: [T] := [..]` — a constant array (the
+    // statement form of a top-level constant).
+    mut atConstArrayDecl(): bool
+        if not at(TokenType::IDENT) then
+            return false
+        if peekAt(1).type == TokenType::COLON_EQ then
+            return true
+        return peekAt(1).type == TokenType::COLON and startsConstTyped()
+
+    // IDENT ':' ... ':=' on one line — a type annotation before `:=`.
+    mut startsConstTyped(): bool
+        let k = 2
+        while peekAt(k).type != TokenType::NEWLINE and peekAt(k).type != TokenType::EOF do
+            if peekAt(k).type == TokenType::COLON_EQ then
+                return true
+            if peekAt(k).type == TokenType::EQUALS then
+                return false
+            k += 1
+        return false
+
+    mut parseConstArrayDecl(): VarDecl
+        let name = peek().lexeme
+        let line = peek().line
+        let col = peek().column
+        eat()
+        let vtype: string? = null
+        if at(TokenType::COLON) then
+            eat()
+            vtype = parseType()
+        eat()                       // :=
+        let init = parseExpression()
+        let decl = new VarDecl(name)
+        decl.declaredType = vtype
+        decl.init = init
+        decl.constArray = true
+        decl.line = line
+        decl.column = col
+        return decl
+
     mut parseStatementInner(): Statement?
+        if atConstArrayDecl() then
+            return parseConstArrayDecl()
         if at(TokenType::LET) then
             return parseVarDecl()
         if at(TokenType::RETURN) then

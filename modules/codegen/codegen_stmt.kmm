@@ -60,7 +60,9 @@ void Codegen::genStmt(s: Statement?)
     if s != null then
         m_backend.markLine(s.line)
     if s is VarDecl then
-        if s.immutable then
+        if s.constArray then
+            registerConstArray(s)
+        else if s.immutable then
             // `let x be expr` — register a macro in the current block
             // scope; no storage, no code. Uses are substituted.
             pushMacro(s.name, s.init)
@@ -534,9 +536,35 @@ void Codegen::genFor(s: ForStmt)
     popLoop()
 
 // `for x in arr` — arrays only.  #a/#i are hidden per-loop locals.
+// `for x in xs` where `xs` is a constant array: count 0 .. n-1, loading
+// each packed element straight from .rodata.
+void Codegen::genForInConst(s: ForInStmt, ci: int)
+    let vi = slotOf(s.varName + "#i")
+    m_backend.constForInInit(vi)
+    let topL = m_backend.newLabel()
+    let contL = m_backend.newLabel()
+    let endL = m_backend.newLabel()
+    pushLoop(contL, endL)
+    m_backend.label(topL)
+    m_backend.constForInHead(vi, m_constCounts[ci], endL)
+    m_backend.constForInElem(vi, slotOf(s.varName), m_constLabels[ci], m_constElems[ci])
+    let macroMark = macroScopeMark()
+    for st in s.body do
+        genStmt(st)
+    macroScopeRestore(macroMark)
+    m_backend.label(contL)
+    m_backend.forInStep(vi)
+    m_backend.jump(topL)
+    m_backend.label(endL)
+    popLoop()
+
 void Codegen::genForIn(s: ForInStmt)
     let vi = s.varName + "#i"
     let va = s.varName + "#a"
+    let ci = constArrIndex(s.iterable)
+    if ci >= 0 then
+        genForInConst(s, ci)
+        return
     genExpr(s.iterable)
     m_backend.forInInit(slotOf(vi), slotOf(va))
     let topL = m_backend.newLabel()

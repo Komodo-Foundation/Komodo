@@ -1,0 +1,6 @@
+import console
+nums := [1, 2, 3]
+fn total(a: [int]): int
+    return #a
+void main()
+    console.print(total(nums))

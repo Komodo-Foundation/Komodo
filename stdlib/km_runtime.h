@@ -120,6 +120,7 @@ void km_drop_array(void *handle);
 void km_crash_init(void);
 void km_komodo_caller(char *buf, size_t cap);
 void km_index_error(int64_t index, KmArray *a);
+void km_const_index_error(int64_t index, int64_t len);
 
 /* ── compiler-internal runtime (operator lowerings, not Komodo calls) ── */
 KmArray *km_array_new(int64_t len);

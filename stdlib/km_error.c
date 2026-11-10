@@ -475,19 +475,31 @@ void km_komodo_caller(char *buf, size_t cap)
 
 /* `arr[i]` with i outside 0 .. #arr-1 (generated code checks inline and
  * calls here).  Thrown like any Komodo error, so `f(...)?` can catch it. */
-void km_index_error(int64_t index, KmArray *a)
+static void km_index_fail(int64_t index, int64_t len, void *ra)
 {
     char where[160] = "";
 #ifndef __EMSCRIPTEN__
     int komodo = 0;
-    const char *s = km_exe_symbol((uintptr_t)__builtin_return_address(0) - 1, &komodo);
+    const char *s = km_exe_symbol((uintptr_t)ra - 1, &komodo);
     if (s && komodo)
         km_pretty(s, where, sizeof where);
 #endif
     char buf[256];
     snprintf(buf, sizeof buf, "array index %" PRId64 " out of range (length %" PRId64 ")%s%s",
-             index, a->len, *where ? " in " : "", where);
+             index, len, *where ? " in " : "", where);
     km_throw(km_strndup(buf, strlen(buf)));
+}
+
+void km_index_error(int64_t index, KmArray *a)
+{
+    km_index_fail(index, a->len, __builtin_return_address(0));
+}
+
+/* `xs[i]` on a constant array (`xs := [..]`): the length is a constant
+ * the generated code passes in. */
+void km_const_index_error(int64_t index, int64_t len)
+{
+    km_index_fail(index, len, __builtin_return_address(0));
 }
 
 #ifndef __EMSCRIPTEN__

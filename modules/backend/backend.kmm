@@ -162,6 +162,12 @@ public
     // other caller still uses the ordinary entry.
     mut fastCalls(): bool
         return false
+
+    // Constant arrays (`xs := [..]`, packed read-only data): a backend that
+    // can lay them out returns true and implements addConstArray /
+    // constIndexLoad / constForIn*.
+    mut constArrays(): bool
+        return false
     mut declareFastFn(name: string, nparams: int)
         m_fastIdx.add(mangle(name), nparams)
     mut isFastFn(name: string, nargs: int): bool

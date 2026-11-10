@@ -49,6 +49,13 @@ void Codegen::genExpr(e: Expression?)
         genUnary(e)
     else if e is BinaryOp then
         genBinary(e)
+    else if e is IndexExpr and constArrIndex(e.object) >= 0 then
+        // `xs[i]` on a constant array: packed read-only data
+        let ci = constArrIndex(e.object)
+        genExpr(e.index)
+        m_backend.constIndexLoad(m_constLabels[ci], m_constElems[ci], m_constCounts[ci])
+        if constElemIsFloat(m_constElems[ci]) then
+            m_backend.bitsToFloat()
     else if e is IndexExpr then
         let objT = exprType(e.object)
         let strIdx = objT == "string"
@@ -131,7 +138,9 @@ void Codegen::genIsCheck(e: BinaryOp)
     m_backend.isTypeCheck(descendantIds(rn))
 
 void Codegen::genUnary(e: UnaryOp)
-    if e.op == "#" then
+    if e.op == "#" and constArrIndex(e.operand) >= 0 then
+        m_backend.loadIntLit(string(m_constCounts[constArrIndex(e.operand)]))
+    else if e.op == "#" then
         genExpr(e.operand)
         if exprType(e.operand) == "string" then
             m_backend.strLen()

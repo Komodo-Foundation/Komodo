@@ -319,7 +319,33 @@ mut Analyzer::checkStmt(s: Statement?)
 
 // ── declarations & assignment ─────────────────────────────────────
 
+// Validate a constant-array declaration and remember its name.
+mut Analyzer::checkConstArray(d: VarDecl)
+    if d.init == null or not (d.init is ArrayExpr) then
+        err(d, "'" + d.name + "' := needs an array literal, e.g. `" + d.name + " := [1, 2, 3]`")
+        return
+    let elem = constElemName(d)
+    if elem == "" then
+        err(d, "constant array '" + d.name + "' needs at least one element or an explicit type: `" + d.name + ": [int] := [..]`")
+        return
+    if constElemSize(elem) == 0 then
+        err(d, "constant arrays of '" + elem + "' are not supported (use int, a sized integer, float, bool, char or string)")
+        return
+    for x in d.init.elements do
+        let lit = constLiteral(x)
+        if lit == null then
+            err(x, "constant array '" + d.name + "' elements must be literals")
+            return
+        if not constKindOk(elem, x) then
+            err(x, "constant array '" + d.name + "' is [" + elem + "]: this element does not fit")
+            return
+    if d.name in m_constArrs then
+        err(d, "constant array '" + d.name + "' is declared twice")
+    m_constArrs += [d.name]
+
 mut Analyzer::checkVarDecl(s: VarDecl)
+    if s.constArray then
+        checkConstArray(s)
     if s.immutable then
         // `let NAME be EXPR` — a block-scoped macro, no storage.
         if s.init == null then
@@ -579,7 +605,9 @@ mut Analyzer::checkFor(s: ForStmt)
     m_loopDepth -= 1
 
 mut Analyzer::checkForIn(s: ForInStmt)
+    m_constOk = s.iterable is Identifier
     let it = inferExpr(s.iterable)
+    m_constOk = false
     let base = stripNull(it)
     let elem = tPrim("int")
     if base.kind == "any" then

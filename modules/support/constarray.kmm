@@ -1,0 +1,136 @@
+module km_compiler
+
+// ═══════════════════════════════════════════════════════════════════════
+//  Constant arrays — `name := [..]` / `name: [T] := [..]`.
+//
+//  A read-only, fixed-length array stored in .rodata with its elements
+//  packed at their natural width (no header, no allocation), like a C
+//  `static const T xs[]`.  It can only be indexed, measured with `#`, or
+//  iterated with `for … in`; the analyser rejects every other use because
+//  the layout differs from a normal `[T]`.  x86 target only for now.
+//
+//  Shared by the analyser (validation) and the code generator (layout).
+// ═══════════════════════════════════════════════════════════════════════
+
+// The element type name of a constant array: the T of an explicit `[T]`,
+// else taken from its first literal.
+fn constElemName(d: VarDecl): string
+    let t = d.declaredType or ""
+    if t.length > 2 and t[0] == "[" then
+        return t[1 to (t.length - 1)]
+    let init = d.init
+    if init is ArrayExpr and #init.elements > 0 then
+        let first = constLiteral(init.elements[0])
+        if first is IntLiteral then
+            return "int"
+        if first is FloatLiteral then
+            return "float"
+        if first is BoolLiteral then
+            return "bool"
+        if first is StringLiteral then
+            return "string"
+        if first is CharLiteral then
+            return "char"
+    return ""
+
+// A literal element with a leading `-` folded away: the literal itself,
+// or null when `e` is not a plain literal.
+fn constLiteral(e: Expression): Expression?
+    if e is UnaryOp and e.op == "-" and (e.operand is IntLiteral or e.operand is FloatLiteral) then
+        return e.operand
+    if e is IntLiteral or e is FloatLiteral or e is BoolLiteral or e is StringLiteral or e is CharLiteral then
+        return e
+    return null
+
+// Bytes per element, or 0 for a type a constant array cannot hold yet.
+fn constElemSize(elem: string): int
+    if elem == "u8" or elem == "i8" or elem == "bool" or elem == "char" then
+        return 1
+    if elem == "u16" or elem == "i16" then
+        return 2
+    if elem == "u32" or elem == "i32" or elem == "f32" then
+        return 4
+    if elem == "int" or elem == "uint" or elem == "u64" or elem == "i64" or elem == "float" or elem == "f64" or elem == "string" then
+        return 8
+    return 0
+
+fn constElemIsFloat(elem: string): bool
+    return elem == "float" or elem == "f64" or elem == "f32"
+
+fn constElemIsSigned(elem: string): bool
+    return elem == "int" or elem == "i8" or elem == "i16" or elem == "i32" or elem == "i64"
+
+// The NASM text of one element value (a number; a string/char is handled
+// by the backend, which owns the string pool).
+fn constNumberText(e: Expression): string
+    let neg = e is UnaryOp
+    let lit = constLiteral(e)
+    let text = ""
+    if lit is IntLiteral then
+        text = lit.value
+    else if lit is FloatLiteral then
+        text = lit.value
+    else if lit is BoolLiteral then
+        if lit.value then
+            return "1"
+        return "0"
+    if neg then
+        return "-" + text
+    return text
+
+// Does literal `x` fit an element of type `elem`?
+fn constKindOk(elem: string, x: Expression): bool
+    let lit = constLiteral(x)
+    if lit == null then
+        return false
+    if elem == "bool" then
+        return lit is BoolLiteral
+    if elem == "string" then
+        return lit is StringLiteral
+    if elem == "char" then
+        return lit is CharLiteral
+    if constElemIsFloat(elem) then
+        return lit is IntLiteral or lit is FloatLiteral
+    return lit is IntLiteral
+
+// The code of a char literal body (`a`, `\n`, …), or 63 ('?') for one we
+// do not know.
+fn constCharCode(body: string): int
+    if body.length == 2 and body[0] == "\\" then
+        let c = body[1]
+        if c == "n" then
+            return 10
+        if c == "t" then
+            return 9
+        if c == "r" then
+            return 13
+        if c == "0" then
+            return 0
+        if c == "\\" then
+            return 92
+        if c == "'" then
+            return 39
+        if c == "\"" then
+            return 34
+        return 63
+    let table = " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~"
+    let i = 0
+    while i < table.length do
+        if body.length == 1 and table[i] == body then
+            return i + 32
+        i += 1
+    return 63
+
+// The data text of one element for the backend: a number for numeric,
+// bool and char elements; the quoted lexeme for a string (the backend
+// owns the string pool).
+fn constValueText(x: Expression, elem: string): string
+    let lit = constLiteral(x)
+    if lit is StringLiteral then
+        return lit.value
+    if lit is CharLiteral then
+        return string(constCharCode(lit.value[1 to (lit.value.length - 1)]))
+    let text = constNumberText(x)
+    if constElemIsFloat(elem) and lit is IntLiteral then
+        return text + ".0"
+    return text

@@ -36,12 +36,12 @@ DIGITS = set("0123456789")
 WORD_CHARS = WORD_START | DIGITS
 
 OPS2 = ("==", "!=", "<=", ">=", "<<", ">>", "+=", "-=", "*=", "/=", "%=",
-        "->", "::")
+        "->", "::", ":=")
 OPS1 = set("+-*/%=<>&|^!?#.,:;()[]{}")
 
 # Binary operators: always spaced on both sides. `-` is handled by context.
 BINARY_OPS = {"==", "!=", "<", "<=", ">", ">=", "+", "*", "/", "%", "=",
-              "+=", "-=", "*=", "/=", "%=", "&", "|", "^", "<<", ">>", "->"}
+              "+=", "-=", "*=", "/=", "%=", "&", "|", "^", "<<", ">>", "->", ":="}
 
 # Each bracket type makes `:` a plain separator, except `[` (slices).
 TIGHT_AFTER_OPS = {"(", "[", ".", "::"}
