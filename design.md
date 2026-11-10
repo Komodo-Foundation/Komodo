@@ -649,15 +649,15 @@ itself — copy the pattern for any other C library.
 ## Semantic analysis
 
 Between the parser and the code generator the compiler runs a dedicated
-**static analysis pass** (`modules/sema*.kmm`, driven from
-`km_compiler::compileWith`). It is the single authority on the language's
+**static analysis pass** (`modules/analyze/sema*.kmm`, driven from
+`km_compiler::compileMapped`). It is the single authority on the language's
 rules; the code generator only lowers a tree the analyser has already
 accepted and annotated.
 
 What it does:
 
 - **Type inference.** Every expression is resolved to one static `Type`
-  (`modules/types.kmm`). An unannotated `let` binding takes its
+  (`modules/analyze/types.kmm`). An unannotated `let` binding takes its
   initialiser's inferred type. The coarse form is written back onto the
   AST (`Expression.resolvedType`) so codegen never re-derives it.
 - **Flow-sensitive narrowing.** `if x == null` / `x != null` /
@@ -701,7 +701,7 @@ run.
 
 ## Optimization
 
-After analysis, an AST-rewriting pass (`modules/optimize.kmm`) runs at
+After analysis, an AST-rewriting pass (`modules/optimize/optimize.kmm`) runs at
 one of four levels, chosen by a driver argument
 (`main.km <file> <target> none|low|medium|max`, default `none`; `komodo
 --release` selects `max`):

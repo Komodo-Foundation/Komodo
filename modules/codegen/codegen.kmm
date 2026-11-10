@@ -261,9 +261,6 @@ public
             return className + "__ctor"
         return className + "__" + m.name
 
-    fn ctorSym(className: string): string
-        return className + "__ctor"
-
     // A class with no `constructor` of its own inherits its nearest
     // ancestor's (interpreter rule).  Falls back to `Name__ctor`.
     mut resolveCtorSym(className: string): string
@@ -278,9 +275,6 @@ public
             if guard > 10000 then
                 return className + "__ctor"
         return className + "__ctor"
-
-    fn methodSymOf(className: string, method: string): string
-        return className + "__" + method
 
     mut memberNames(ms: [StructMember]): [string]
         let out: [string] = []

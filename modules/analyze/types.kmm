@@ -58,9 +58,6 @@ fn tNullable(inner: Type): Type
         return inner
     return new Type("nullable", inner)
 
-fn tFn(params: [Type], r: Type): Type
-    return new Type("fn", null, "", params, r)
-
 // ── predicates ───────────────────────────────────────────────────────
 
 fn isNullable(t: Type): bool
@@ -173,11 +170,6 @@ fn stripOpt(t: string?): string?
     if #t > 0 and t[#t - 1] == "?" then
         return t[0 to (#t - 1)]
     return t
-
-fn isOpt(t: string?): bool
-    if t == null then
-        return false
-    return #t > 0 and t[#t - 1] == "?"
 
 fn isPrimName(w: string): bool
     if w == "int" or w == "uint" or w == "float" or w == "bool" then
