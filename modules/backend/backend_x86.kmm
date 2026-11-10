@@ -53,6 +53,7 @@ private
     m_xgSyms: [string] = []
     m_xgTypes: [string] = []
     m_usesExportInit: bool = false  // reserve the once-flag in .bss
+    m_keepIdx: StrIndex = new StrIndex()   // hashes m_keepJumps
     m_keepJumps: [string] = []      // targets of `and`/`or` branches whose rax is read at the join
     m_pic: bool = false             // position-independent output (shared libraries only)
     m_dbgFiles: [string] = []       // KM_DEBUG: source file of each merged part
@@ -819,10 +820,12 @@ void X86Backend::branchIfNonzero(name: string)
 // the "keep" forms are identical to the plain ones on x86.
 void X86Backend::branchIfZeroKeep(name: string)
     m_keepJumps += [name]
+    m_keepIdx.add(name, 0)
     branchIfZero(name)
 
 void X86Backend::branchIfNonzeroKeep(name: string)
     m_keepJumps += [name]
+    m_keepIdx.add(name, 0)
     branchIfNonzero(name)
 
 // loop-variable in rax spilled by pushAcc(), bound in rax; exit when the
@@ -1562,7 +1565,7 @@ mut X86Backend::peepholeAt(src: [string], i: int): [string]
                 off = 12
             let target = br[off to br.length]
             let cc = jccOf(src[i + 1])
-            if cc != "" and src[i + 2] == "    movzx eax, al" and src[i + 3] == "    test rax, rax" and not (target in m_keepJumps) then
+            if cc != "" and src[i + 2] == "    movzx eax, al" and src[i + 3] == "    test rax, rax" and not m_keepIdx.has(target) then
                 let jump = cc
                 if isJe then
                     jump = jccInverse(cc)

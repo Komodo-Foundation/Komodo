@@ -147,11 +147,12 @@ public
     // never emitted as an external symbol.
     mut declareFn(name: string)
         let m = mangle(name)
-        if not (m in m_fnNames) then
+        if not m_fnIdx.has(m) then
             m_fnNames += [m]
+            m_fnIdx.add(m, 0)
 
     mut isLocalFn(mangledSym: string): bool
-        return (mangledSym in m_fnNames)
+        return m_fnIdx.has(mangledSym)
 
     // `module.member` → `module_member`; a plain name is unchanged.
     fn mangle(name: string): string
@@ -168,3 +169,4 @@ public
 private
     m_labelId: int = 0
     m_fnNames: [string] = []
+    m_fnIdx: StrIndex = new StrIndex()    // hashes m_fnNames
