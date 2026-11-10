@@ -122,6 +122,7 @@ void km_drop_array(void *handle);
 void km_crash_init(void);
 void km_komodo_caller(char *buf, size_t cap);
 void km_index_error(int64_t index, KmArray *a);
+void km_const_index_error(int64_t index, int64_t len);
 
 /* ── compiler-internal runtime (operator lowerings, not Komodo calls) ── */
 KmArray *km_array_new(int64_t len);
@@ -154,6 +155,8 @@ const char *km_str_char(const char *s, int64_t i);
 int64_t        km_str_cmp(const char *a, const char *b);
 int64_t        km_str_hash(const char *s);
 int64_t        km_str_find(const char *s, const char *sub);
+int64_t        km_str_starts(const char *s, const char *p);
+int64_t        km_str_ends(const char *s, const char *p);
 const char *km_str_sub(const char *s, int64_t n, int64_t start, int64_t end);
 /* `x in coll` membership — 1 / 0 */
 int64_t        km_in_str(const char *haystack, const char *needle);

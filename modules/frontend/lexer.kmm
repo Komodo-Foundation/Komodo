@@ -47,6 +47,7 @@ enum TokenType
     CLOSE_BRACE
     COMMA
     COLON
+    COLON_EQ
     DOT
     SEMICOLON
     EQUALS
@@ -547,6 +548,9 @@ private
                 if peek() == ":" then
                     eat()
                     m_tokens += [new Token(TokenType::SCOPE, "::", m_line, m_col)]
+                else if peek() == "=" then
+                    eat()
+                    m_tokens += [new Token(TokenType::COLON_EQ, ":=", m_line, m_col)]
                 else
                     m_tokens += [new Token(TokenType::COLON, ":", m_line, m_col)]
             case "."

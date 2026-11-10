@@ -11,11 +11,12 @@ module km_compiler
 //      evaluate right  →  a second value pushed
 //      backend.binaryInt("+")                  pops two, pushes the sum
 //
-//  A concrete backend maps those operations onto its target.  Two ship
-//  today, both `module km_compiler`:
+//  A concrete backend maps those operations onto its target.  Three ship
+//  today, all `module km_compiler`:
 //
 //      backend_x86.kmm     X86Backend      — System V AMD64, NASM syntax
 //      backend_stackvm.kmm StackVMBackend  — textual stack-VM bytecode
+//      backend_c.kmm       CBackend        — portable C translation unit
 //
 //  To add a target, write another `<T>Backend : Backend`, implement the
 //  same operation names, and register it in `selectBackend`
@@ -185,6 +186,25 @@ public
     mut isLocalFn(mangledSym: string): bool
         return m_fnIdx.has(mangledSym)
 
+    // ── fast direct calls ──────────────────────────────────────────
+    // A backend that sets `fastCalls()` lets Codegen declare a function
+    // with `declareFastFn(name, nparams)`: a call that names it with
+    // exactly that many arguments may use the backend's register
+    // convention (`callFast`) instead of the (tag,value)[] frame.  Every
+    // other caller still uses the ordinary entry.
+    mut fastCalls(): bool
+        return false
+
+    // Constant arrays (`xs := [..]`, packed read-only data): a backend that
+    // can lay them out returns true and implements addConstArray /
+    // constIndexLoad / constForIn*.
+    mut constArrays(): bool
+        return false
+    mut declareFastFn(name: string, nparams: int)
+        m_fastIdx.add(mangle(name), nparams)
+    mut isFastFn(name: string, nargs: int): bool
+        return m_fastIdx.first(mangle(name)) == nargs
+
     // `module.member` → `module_member`; a plain name is unchanged.
     fn mangle(name: string): string
         let out = ""
@@ -199,5 +219,6 @@ public
 
 private
     m_labelId: int = 0
+    m_fastIdx: StrIndex = new StrIndex() // fast-entry functions → parameter count
     m_fnNames: [string] = []
     m_fnIdx: StrIndex = new StrIndex()    // hashes m_fnNames

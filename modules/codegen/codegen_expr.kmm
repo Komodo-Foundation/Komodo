@@ -49,6 +49,13 @@ void Codegen::genExpr(e: Expression?)
         genUnary(e)
     else if e is BinaryOp then
         genBinary(e)
+    else if e is IndexExpr and constArrIndex(e.object) >= 0 then
+        // `xs[i]` on a constant array: packed read-only data
+        let ci = constArrIndex(e.object)
+        genExpr(e.index)
+        m_backend.constIndexLoad(m_constLabels[ci], m_constElems[ci], m_constCounts[ci])
+        if constElemIsFloat(m_constElems[ci]) then
+            m_backend.bitsToFloat()
     else if e is IndexExpr then
         let objT = exprType(e.object)
         let strIdx = objT == "string"
@@ -134,7 +141,9 @@ void Codegen::genIsCheck(e: BinaryOp)
     m_backend.isTypeCheck(descendantIds(rn))
 
 void Codegen::genUnary(e: UnaryOp)
-    if e.op == "#" then
+    if e.op == "#" and constArrIndex(e.operand) >= 0 then
+        m_backend.loadIntLit(string(m_constCounts[constArrIndex(e.operand)]))
+    else if e.op == "#" then
         genExpr(e.operand)
         if exprType(e.operand) == "string" then
             m_backend.strLen()
@@ -629,21 +638,7 @@ void Codegen::genCall(e: CallExpr)
         if m_curKind == "fn" and kind == "void" then
             throw ("a pure `fn` cannot call the void procedure '" + e.name + "'")
 
-    let n = #e.args
-    if n == 0 then
-        m_backend.call0(e.name)
-        return
-
-    m_backend.callFrameBegin(n)
-    let j = 0
-    for a in e.args do
-        m_backend.callArgTag(j, argTag(a))
-        genExpr(a)
-        if exprType(a) == "float" then
-            m_backend.floatToBits()
-        m_backend.callArgStore(j)
-        j += 1
-    m_backend.callFrameEnd(e.name, n)
+    genDirectCall(e.name, e.args)
 
 // `extern fn` — the native System V AMD64 C ABI.  A scalar argument fills
 // the next integer (rdi..r9) or SSE (xmm0..7) register, then spills to
@@ -785,6 +780,14 @@ void Codegen::genDirectCall(sym: string, args: [Expression])
     let n = #args
     if n == 0 then
         m_backend.call0(sym)
+        return
+    if m_backend.isFastFn(sym, n) then
+        for a in args do
+            genExpr(a)
+            if exprType(a) == "float" then
+                m_backend.floatToBits()
+            m_backend.pushAcc()
+        m_backend.callFast(sym, n)
         return
     m_backend.callFrameBegin(n)
     let j = 0

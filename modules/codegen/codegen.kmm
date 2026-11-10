@@ -77,6 +77,8 @@ public
             m_globalTypes += [gty]
             if g.isExtern then
                 m_backend.declareExternGlobal(g.name, g.symbol or g.name, g.declaredType or "int")
+            else if g.constArray then
+                registerConstArray(g)
             else
                 m_backend.declareGlobal(g.name, gty)
 
@@ -209,6 +211,8 @@ public
             let fdef = prog.functions[pi1]
             if not fdef.isExtern and not fdef.isPrototype then
                 m_backend.declareFn(m_fnLink[pi1])
+                if fastEntry(fdef) then
+                    m_backend.declareFastFn(m_fnLink[pi1], #fdef.params)
             if fdef.isExport then
                 m_backend.declareExport(fdef.name)
             if fdef.isExtern and fdef.symbol != null then
@@ -821,9 +825,37 @@ public
     // Evaluate each top-level initialiser once and store it into its
     // slot.  Emitted at the very top of `main`, in source order, so a
     // later initialiser can read an earlier global.
+    // Lay a constant array out as packed read-only data and remember where.
+    mut registerConstArray(d: VarDecl)
+        if d.name in m_constNames then
+            return
+        if not m_backend.constArrays() then
+            throw (string(d.line) + ":" + string(d.column) + ": constant arrays (`:=`) are supported on the x86 target only")
+        let arr = d.init
+        if not (arr is ArrayExpr) then
+            return
+        let elem = constElemName(d)
+        let vals: [string] = []
+        for x in arr.elements do
+            vals += [constValueText(x, elem)]
+        m_constNames += [d.name]
+        m_constLabels += [m_backend.addConstArray(elem, vals)]
+        m_constElems += [elem]
+        m_constCounts += [#arr.elements]
+
+    // Index into the constant-array tables for `e` when it names one, else -1.
+    mut constArrIndex(e: Expression?): int
+        if e is Identifier then
+            let k = 0
+            while k < #m_constNames do
+                if m_constNames[k] == e.name then
+                    return k
+                k += 1
+        return 0 - 1
+
     void genGlobalInits()
         for g in m_globalDecls do
-            if g.init != null then
+            if g.init != null and not g.constArray then
                 genExpr(g.init)
                 coerceToFloat(g.resolvedType or "int", g.init)
                 m_backend.storeGlobal(g.name, g.resolvedType or "int")
@@ -921,6 +953,10 @@ private
     // ── program-wide function table ───────────────────────────────
     m_fnNames: [string] = []
     m_fnIdx: StrIndex             // hash index over m_fnNames
+    m_constNames: [string] = []   // constant arrays (`xs := [..]`): name,
+    m_constLabels: [string] = []  //   data label,
+    m_constElems: [string] = []   //   element type name,
+    m_constCounts: [int] = []     //   length
     m_fnRets: [string] = []
     m_fnKinds: [string] = []      // "fn" (pure) / "mut" / "void"
     m_fnArity: [int] = []

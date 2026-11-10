@@ -35,6 +35,8 @@ private
     m_usesIndexCheck: bool = false
     m_idxFail: string = ""          // this function's out-of-range stub label ("" = none yet)
     m_usesAppend: bool = false
+    m_constId: int = 0              // constant-array labels KC1, KC2, …
+    m_usesCharTab: bool = false     // some `[char]` constant array was read
     m_usesStr: bool = false
     m_usesFfiStruct: bool = false   // reserve km_ffi_marshal scratch in .bss
     m_vtblText: [string] = []         // `__vt_<id>: dq …` lines
@@ -240,12 +242,24 @@ void X86Backend::begin()
 // every other function receives  rsi = &(tag,value)[argc].
 void X86Backend::beginFunction(name: string, frame: int, paramOffsets: [int], isMain: bool)
     m_idxFail = ""
+    let fast = false
     if isMain then
         m_hasMain = true
         m_curSym = "km_program_main"
     else
         m_curSym = asmSym(name)
+        fast = isFastFn(name, #paramOffsets)
     label(m_curSym)
+    if fast then
+        // (`$name$f`: the `$` keeps tools/asm-split.awk from cutting here.)
+        // The ordinary entry unpacks the (tag,value)[] frame into the
+        // argument registers and falls into the fast entry below.
+        ins("mov r10, rsi")
+        let k = 0
+        while k < #paramOffsets do
+            ins("mov " + fastArgReg(k) + ", [r10 + " + string(16 * k + 8) + "]")
+            k += 1
+        label(m_curSym + "$f")
     ins("push rbp")
     ins("mov rbp, rsp")
     ins("push rbx")
@@ -255,9 +269,136 @@ void X86Backend::beginFunction(name: string, frame: int, paramOffsets: [int], is
     // `main` (which may take `args`) as for everything else.
     let i = 0
     while i < #paramOffsets do
-        ins("mov rax, [rsi + " + string(16 * i + 8) + "]")
+        // The body's first statement may reuse rax as "the last parameter",
+        // so both entries leave it there.
+        if fast then
+            ins("mov rax, " + fastArgReg(i))
+        else
+            ins("mov rax, [rsi + " + string(16 * i + 8) + "]")
         ins("mov [rbp - " + string(paramOffsets[i]) + "], rax")
         i += 1
+
+// ── fast direct calls ──────────────────────────────────────────────
+// System V integer argument registers; arguments are 64-bit words (a
+// float travels as its bit pattern, exactly as in the frame ABI).
+fn fastArgReg(k: int): string
+    if k == 0 then
+        return "rdi"
+    if k == 1 then
+        return "rsi"
+    if k == 2 then
+        return "rdx"
+    if k == 3 then
+        return "rcx"
+    if k == 4 then
+        return "r8"
+    return "r9"
+
+// Off for `-g` builds: gdb reads a function's frame from its first
+// instructions, and the register-argument wrapper sits in front of them.
+// ── constant arrays ────────────────────────────────────────────────
+// Packed, read-only data in .rodata at the element's natural width.  A
+// string element is a pointer to the pooled literal; a `char` is its byte
+// (read back through km_chartab, a table of one-character strings).
+
+mut X86Backend::constArrays(): bool
+    return true
+
+mut X86Backend::addConstArray(elem: string, values: [string]): string
+    m_constId += 1
+    let name = "KC" + string(m_constId)
+    let size = constElemSize(elem)
+    let dir = "dq"
+    if size == 1 then
+        dir = "db"
+    else if size == 2 then
+        dir = "dw"
+    else if size == 4 then
+        dir = "dd"
+    let text = "align " + string(size) + "\n" + name + ":\n"
+    let i = 0
+    while i < #values do
+        let row: [string] = []
+        while i < #values and #row < 16 do
+            if elem == "string" then
+                row += [addString(values[i])]
+            else
+                row += [values[i]]
+            i += 1
+        text = text + "    " + dir + " " + join(row, ", ") + "\n"
+    m_rodata += [text]
+    return name
+
+// Element at `addr` → rax (a float element as its double bits).
+mut X86Backend::constLoadElem(elem: string, addr: string)
+    let size = constElemSize(elem)
+    if elem == "f32" then
+        ins("cvtss2sd xmm0, dword [" + addr + "]")
+        ins("movq rax, xmm0")
+    else if elem == "char" then
+        m_usesCharTab = true
+        ins("movzx eax, byte [" + addr + "]")
+        ins("lea rcx, [rel km_chartab]")
+        ins("lea rax, [rcx + rax*2]")
+    else if size == 8 then
+        ins("mov rax, [" + addr + "]")
+    else if size == 4 and constElemIsSigned(elem) then
+        ins("movsxd rax, dword [" + addr + "]")
+    else if size == 4 then
+        ins("mov eax, [" + addr + "]")
+    else if size == 2 and constElemIsSigned(elem) then
+        ins("movsx rax, word [" + addr + "]")
+    else if size == 2 then
+        ins("movzx eax, word [" + addr + "]")
+    else if constElemIsSigned(elem) then
+        ins("movsx rax, byte [" + addr + "]")
+    else
+        ins("movzx eax, byte [" + addr + "]")
+
+// `xs[i]`: index in rax → element in rax.  One unsigned compare against
+// the constant length also catches a negative index; the cold path is
+// right here because it never returns.
+mut X86Backend::constIndexLoad(label: string, elem: string, count: int)
+    let ok = newLabel()
+    recordExtern("km_const_index_error")
+    ins("cmp rax, " + string(count))
+    ins("jb near " + ok)
+    ins("mov rdi, rax")
+    ins("mov rsi, " + string(count))
+    ins("and rsp, -16")
+    ins("call " + callTarget("km_const_index_error"))
+    label(ok)
+    ins("lea rcx, [rel " + label + "]")
+    constLoadElem(elem, "rcx + rax*" + string(constElemSize(elem)))
+
+// `for x in xs` over a constant array: a counter in a frame slot.
+mut X86Backend::constForInInit(viOff: int)
+    ins("mov qword [rbp - " + string(viOff) + "], 0")
+
+mut X86Backend::constForInHead(viOff: int, count: int, endL: string)
+    ins("cmp qword [rbp - " + string(viOff) + "], " + string(count))
+    ins("jge near " + endL)
+
+mut X86Backend::constForInElem(viOff: int, xOff: int, label: string, elem: string)
+    ins("mov rax, [rbp - " + string(viOff) + "]")
+    ins("lea rcx, [rel " + label + "]")
+    constLoadElem(elem, "rcx + rax*" + string(constElemSize(elem)))
+    ins("mov [rbp - " + string(xOff) + "], rax")
+
+mut X86Backend::fastCalls(): bool
+    return not m_dbgOn
+
+// The n arguments were spilled with pushAcc() in order; pop them into
+// the argument registers and call the function's fast entry.
+mut X86Backend::callFast(name: string, n: int)
+    let k = n - 1
+    while k >= 0 do
+        ins("pop " + fastArgReg(k))
+        k -= 1
+    ins("mov rbx, rsp")
+    ins("and rsp, -16")
+    ins("call " + asmSym(mangle(name)) + "$f")
+    ins("mov rsp, rbx")
 
 void X86Backend::endFunction()
     ins("xor eax, eax")
@@ -824,21 +965,43 @@ mut X86Backend::arrayRepeat()
 // it in place (the handle may move, and is stored back).
 mut X86Backend::arrayPushTo(off: int)
     m_usesAppend = true
-    ins("mov rsi, rax")
+    let slow = newLabel()
+    let done = newLabel()
     ins("mov rdi, [rbp - " + string(off) + "]")
+    arrayPushFast(slow, done)
+    ins("mov rsi, rax")
     emitCall("km_array_push")
     ins("mov [rbp - " + string(off) + "], rax")
+    label(done)
+
+// The inline half of a vector `push_back`: rdi = array handle, rax = the
+// value.  While len < cap the element is stored and len bumped right here;
+// otherwise control continues at `slow` (just after this sequence) to grow
+// through the runtime.  The caller emits the slow path, then `done`.
+mut X86Backend::arrayPushFast(slow: string, done: string)
+    ins("mov rdx, [rdi]")
+    ins("cmp rdx, [rdi + 8]")
+    ins("jge near " + slow)
+    ins("mov [rdi + rdx*8 + 16], rax")
+    ins("add qword [rdi], 1")
+    ins("jmp near " + done)
+    label(slow)
 
 // `obj.field += [v]` — value in rax, receiver spilled by pushAcc().
 mut X86Backend::arrayPushToField(idx: int)
     m_usesAppend = true
+    let slow = newLabel()
+    let done = newLabel()
     ins("mov rsi, rax")
-    ins("pop rax")
-    ins("mov rdi, [rax + " + string(8 + idx * 8) + "]")
-    ins("push rax")
+    ins("pop rcx")
+    ins("mov rdi, [rcx + " + string(8 + idx * 8) + "]")
+    ins("mov rax, rsi")
+    arrayPushFast(slow, done)
+    ins("push rcx")
     emitCall("km_array_push")
     ins("pop rcx")
     ins("mov [rcx + " + string(8 + idx * 8) + "], rax")
+    label(done)
 
 mut X86Backend::inPlaceAppend(): bool
     return true
@@ -1768,6 +1931,13 @@ fn X86Backend::footer(): string
     if m_usesExportInit then
         r = r + "\nsection .bss\nkm_export_ready: resb 8\n"
     r = r + "\nsection .rodata\nkm_abi_gc: dq 1\n" + join(m_rodata, "")
+    if m_usesCharTab then
+        // 256 one-character strings (the char, then a NUL), addressed by km_chartab + 2*code
+        r = r + "km_chartab:\n"
+        let cc = 0
+        while cc < 256 do
+            r = r + "    db " + string(cc) + ", 0\n"
+            cc += 1
     if m_dbgOn then
         // KM_DEBUG: line table for the runtime's call-chain reports.
         // `dd count`, then count rows of `dd offset-in-.text, line, file`

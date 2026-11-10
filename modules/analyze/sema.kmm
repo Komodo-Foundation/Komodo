@@ -694,6 +694,9 @@ public
         if g.isExtern then
             checkExternVar(g)
 
+        if g.constArray then
+            checkConstArray(g)
+
         let declared: Type? = null
         if g.declaredType != null then
             declared = parseTypeStr(g.declaredType)
@@ -1116,6 +1119,8 @@ private
 
     // function-signature registry (`m_fnIdx` hashes m_fnNames)
     m_fnNames: [string] = []
+    m_constArrs: [string] = []       // constant-array names (`x := [..]`)
+    m_constOk: bool = false          // next Identifier may name one (index / # / for-in)
     m_fnIdx: StrIndex
     m_fnOwner: [string] = []
     m_fnParamTypes: [[string]] = []

@@ -1,0 +1,4 @@
+import console
+xs: [u8] := [1, "two", 3]
+void main()
+    console.print(xs[0])

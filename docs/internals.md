@@ -519,13 +519,5 @@ will cost you time when you touch the area.
 
 ## 14. Stale documentation
 
-The following are out of date. They are noted here, not fixed, because this
-document is the only file this change touches.
-
-- [`README.md`](../README.md), the *Layout* table, names files that moved in
-  commit `f49fc70`, for example `modules/lexer.kmm`, `modules/sema*.kmm` and
-  `modules/backend.kmm`. The real paths are in section 2 above.
-- [`modules/backend/backend.kmm`](../modules/backend/backend.kmm), line 16,
-  says "Two ship today", but there are three backends (x86, stackvm, c).
-- [`modules/km_compiler.kmm`](../modules/km_compiler.kmm)'s header lists only the
-  x86 and stackvm backends and omits `support/strindex.kmm`.
+None known. Check the README *Layout* table, the `backend.kmm` and
+`km_compiler.kmm` header comments whenever files move or a backend is added.

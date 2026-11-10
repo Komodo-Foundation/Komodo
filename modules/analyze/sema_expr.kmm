@@ -87,6 +87,10 @@ mut Analyzer::inferRaw(e: Expression?): Type
 // ── identifiers: local → param → self-field → macro → error ──────────
 
 mut Analyzer::inferIdentifier(e: Identifier): Type
+    let constOk = m_constOk
+    m_constOk = false
+    if not constOk and e.name in m_constArrs then
+        err(e, "constant array '" + e.name + "' can only be indexed, measured with `#`, or iterated with `for … in`")
     if scopeHas(e.name) then
         if isMoved(e.name) then
             err(e, "use of moved value '" + e.name + "' — a `unique` value moved away at " + movedAt(e.name) + " leaves nothing behind")
@@ -311,7 +315,9 @@ mut Analyzer::unify(a: Type, b: Type): Type
 // ── unary operators ────────────────────────────────────────────────
 
 mut Analyzer::inferUnary(e: UnaryOp): Type
+    m_constOk = e.op == "#" and e.operand is Identifier
     let ot = inferExpr(e.operand)
+    m_constOk = false
     if e.op == "#" then
         return tPrim("int")
     if e.op == "not" or e.op == "!" then
@@ -795,7 +801,9 @@ mut Analyzer::inferMember(e: MemberExpr): Type
     return fieldReadType(base.name, e.member)
 
 mut Analyzer::inferIndex(e: IndexExpr): Type
+    m_constOk = e.object is Identifier
     let ot = inferExpr(e.object)
+    m_constOk = false
     inferExpr(e.index)
     if ot.kind == "any" then
         return tAny
