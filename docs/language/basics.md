@@ -913,8 +913,8 @@ void main()
 example.km:2:5: error: `break` outside a loop
 ```
 
-Some errors have no location. A `fn` that mutates state and a missing return
-both print without one in the current build:
+A `fn` that mutates state and a missing return are reported at the
+function's declaration:
 
 ```km
 struct Box
@@ -929,7 +929,7 @@ void main()
 ```
 
 ```text
-error: pure `fn poke` mutates state — declare it `mut`
+example.km:4:1: error: pure `fn poke` mutates state — declare it `mut`
 ```
 
 ```km
@@ -942,7 +942,7 @@ void main()
 ```
 
 ```text
-error: function 'pick' must return a value on every path
+example.km:1:1: error: function 'pick' must return a value on every path
 ```
 
 **Warnings** (lint) flag code that is legal but probably wrong. They are
