@@ -21,6 +21,8 @@ jobs:
         run: ./run-sema-tests.sh
       - name: Documentation snippets compile and print what the docs say
         run: python3 tools/check-docs.py
+      - name: Size and speed budgets
+        run: KM_PERF_SLACK=3 tools/perf-budget.sh
       - name: Binding generator
         run: bash tests/bind/run.sh
       - name: The compiler reproduces itself

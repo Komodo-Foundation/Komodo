@@ -46,6 +46,7 @@ write a useful program with only the standard library. Status as of 0.1.0.
 ## 6. Release engineering
 - [x] CI (build, suites, wasm), Debian package, installer, Docker image
 - [ ] Versioning policy + deprecation rules in `CONTRIBUTING.md`
+- [x] Size/speed budgets enforced in CI (`tools/perf-budget.sh`)
 - [ ] Reproducible release builds, checksums, signed tags
 - [ ] Website/landing page built from `docs/`
 - [ ] A "release candidate" period with at least three real projects written in

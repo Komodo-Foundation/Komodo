@@ -30,6 +30,13 @@ The compiler builds in about two seconds from the checked-in seed
 that understands it is committed (land the compiler change, refresh the seed,
 then use the syntax).
 
+## Keep it lightweight
+
+Komodo's pitch is a small, fast compiler. `tools/perf-budget.sh` (run in CI) fails
+if `kmc`, the compiler source, the bootstrap seed, a hello-world binary or the
+build times grow past their budgets. Prefer adding small functions alongside
+existing code over new layers, and say why in the commit if you raise a budget.
+
 ## Tests
 
 - `examples/<name>.km` + `<name>.expected`: a program and its exact output. It
