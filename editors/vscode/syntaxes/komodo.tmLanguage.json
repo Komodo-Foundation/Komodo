@@ -1,0 +1,172 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Komodo",
+  "scopeName": "source.komodo",
+  "fileTypes": ["km", "kmm"],
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#chars" },
+    { "include": "#numbers" },
+    { "include": "#declarations" },
+    { "include": "#keywords" },
+    { "include": "#constants" },
+    { "include": "#types" },
+    { "include": "#builtins" },
+    { "include": "#modifiers" },
+    { "include": "#operators" },
+    { "include": "#modules" },
+    { "include": "#members" },
+    { "include": "#calls" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.block.documentation.komodo",
+          "begin": "/\\*\\*(?!/)",
+          "end": "\\*/",
+          "captures": { "0": { "name": "punctuation.definition.comment.komodo" } }
+        },
+        {
+          "name": "comment.block.komodo",
+          "begin": "/\\*",
+          "end": "\\*/",
+          "captures": { "0": { "name": "punctuation.definition.comment.komodo" } }
+        },
+        {
+          "name": "comment.line.double-slash.komodo",
+          "match": "//.*$"
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.komodo",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [
+            { "name": "constant.character.escape.komodo", "match": "\\\\(?:[ntr0\\\\\"]|.)" }
+          ]
+        },
+        {
+          "name": "string.template.komodo",
+          "begin": "`",
+          "end": "`",
+          "patterns": [
+            { "name": "constant.character.escape.komodo", "match": "\\\\[\\s\\S]" },
+            {
+              "name": "meta.embedded.line.komodo",
+              "begin": "\\{",
+              "end": "\\}",
+              "beginCaptures": { "0": { "name": "punctuation.section.embedded.begin.komodo" } },
+              "endCaptures": { "0": { "name": "punctuation.section.embedded.end.komodo" } },
+              "patterns": [{ "include": "$self" }]
+            }
+          ]
+        }
+      ]
+    },
+    "chars": {
+      "name": "string.quoted.single.komodo",
+      "match": "'(?:[^'\\\\]|\\\\.)'"
+    },
+    "numbers": {
+      "patterns": [
+        { "name": "constant.numeric.hex.komodo", "match": "\\b0[xX][0-9a-fA-F_]+\\b" },
+        { "name": "constant.numeric.binary.komodo", "match": "\\b0[bB][01_]+\\b" },
+        { "name": "constant.numeric.float.komodo", "match": "\\b[0-9][0-9_]*\\.[0-9][0-9_]*[fF]?\\b" },
+        { "name": "constant.numeric.integer.komodo", "match": "\\b[0-9][0-9_]*\\b" }
+      ]
+    },
+    "declarations": {
+      "patterns": [
+        {
+          "match": "\\b(fn|void|mut)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "storage.type.komodo" },
+            "2": { "name": "entity.name.function.komodo" }
+          }
+        },
+        {
+          "match": "\\b(struct|class|enum)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "storage.type.komodo" },
+            "2": { "name": "entity.name.type.komodo" }
+          }
+        },
+        {
+          "match": "\\b(module)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.other.komodo" },
+            "2": { "name": "entity.name.namespace.komodo" }
+          }
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.komodo",
+          "match": "\\b(if|then|else|while|do|for|to|down|until|in|match|case|return|throw|break|continue)\\b"
+        },
+        {
+          "name": "keyword.other.komodo",
+          "match": "\\b(let|be|new|import|link|extern|constructor)\\b"
+        },
+        {
+          "name": "keyword.operator.word.komodo",
+          "match": "\\b(and|or|not|xor|is)\\b"
+        }
+      ]
+    },
+    "modifiers": {
+      "patterns": [
+        {
+          "name": "storage.modifier.komodo",
+          "match": "\\b(public|private|abstract|shared|unique|export)\\b"
+        },
+        {
+          "name": "variable.language.self.komodo",
+          "match": "\\bself\\b"
+        }
+      ]
+    },
+    "constants": {
+      "name": "constant.language.komodo",
+      "match": "\\b(true|false|null)\\b"
+    },
+    "types": {
+      "name": "support.type.komodo",
+      "match": "\\b(int|uint|float|f32|f64|bool|char|string|i8|i16|i32|i64|u8|u16|u32|u64)\\b"
+    },
+    "builtins": {
+      "name": "support.function.builtin.komodo",
+      "match": "\\b(print|assert|copy|data|join)\\b(?=\\s*\\()"
+    },
+    "operators": {
+      "name": "keyword.operator.komodo",
+      "match": "\\+=|-=|\\*=|/=|%=|==|!=|<=|>=|<<|>>|[-+*/%<>=!&|^?#]"
+    },
+    "modules": {
+      "patterns": [
+        {
+          "match": "([A-Za-z_][A-Za-z0-9_]*)(::)",
+          "captures": {
+            "1": { "name": "entity.name.namespace.komodo" },
+            "2": { "name": "punctuation.separator.namespace.komodo" }
+          }
+        }
+      ]
+    },
+    "members": {
+      "match": "\\.([A-Za-z_][A-Za-z0-9_]*)",
+      "captures": { "1": { "name": "variable.other.member.komodo" } }
+    },
+    "calls": {
+      "name": "entity.name.function.call.komodo",
+      "match": "\\b[A-Za-z_][A-Za-z0-9_]*(?=\\s*\\()"
+    }
+  }
+}
