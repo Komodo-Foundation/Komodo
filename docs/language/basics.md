@@ -856,7 +856,9 @@ argument, recursively, and returns `null` when nothing matches. Check for
 ## Diagnostics
 
 The analyser checks a program before it is built. It reports three kinds of
-message.
+message. The examples below show the one-line form, which is what tools read;
+on a terminal the compiler prints a richer layout with a source snippet and an
+explanation, see [Diagnostics](../diagnostics.md).
 
 **Errors** stop compilation with a non-zero exit status. Most carry a
 location in the form `file:line:col: error: message`:

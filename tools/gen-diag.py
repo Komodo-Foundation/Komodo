@@ -76,7 +76,9 @@ def page(e):
         t += ['**How to fix it:** ' + re.sub(r'\{\d\}', '…', e['help']), '']
     if 'bad' in e:
         strict = e.get('mode') == 'strict'
-        multi = bool(e['files'])
+        text = '\n'.join(e['bad'] + e.get('fix', []))
+        # examples that cannot link on their own (C symbols, no main) are only compiled by tests/diag
+        multi = bool(e['files']) or 'extern ' in text or 'export ' in text or 'void main' not in text
         t += ['## Example', '']
         for n, body in e['files'].items():
             t += ['File `' + n + '`:', '', '<!-- doc-skip -->', '```km'] + body + ['```', '']
