@@ -708,6 +708,17 @@ int64_t km_str_kw(const char *s, int64_t start, const char *kw)
     return km_str_starts(s, kw);
 }
 
+/* x86 peephole: may this asm line sit inside a spill span?  (straight-line
+ * code only: no label, jump, call, push/pop, stack-pointer use or %-directive).
+ * One pass over the line instead of eight substring scans. */
+int64_t km_asm_spanbad(const char *l)
+{
+    size_t n = strlen(l);
+    if (n == 0 || l[0] == '%' || l[n - 1] == ':') return 1;
+    if (n >= 5 && l[0] == ' ' && l[1] == ' ' && l[2] == ' ' && l[3] == ' ' && l[4] == 'j') return 1;
+    return strstr(l, "rsp") || strstr(l, "call") || strstr(l, "push") || strstr(l, "pop");
+}
+
 /* byte at index i (caller guarantees 0 <= i <= strlen), as an int */
 int64_t km_str_byte(const char *s, int64_t i) { return (unsigned char)s[i]; }
 int64_t km_str_ends(const char *s, const char *p)

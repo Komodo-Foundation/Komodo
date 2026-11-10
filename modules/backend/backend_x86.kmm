@@ -1419,6 +1419,7 @@ fn asmHas(line: string, sub: string): bool
 extern fn km_str_starts(s: string, p: string): int
 extern fn km_str_ends(s: string, p: string): int
 extern fn km_str_byte(s: string, i: int): int
+extern fn km_asm_spanbad(s: string): int
 
 fn asmStarts(line: string, p: string): bool
     return km_str_starts(line, p) == 1
@@ -1428,17 +1429,7 @@ fn asmEnds(line: string, p: string): bool
 
 // A line that may sit inside a spill span: straight-line code only.
 fn spanSafe(line: string): bool
-    if line.length == 0 or line[0] == "%" then
-        return false
-    if line[line.length - 1] == ':' then
-        return false
-    if asmStarts(line, "    j") then
-        return false
-    if asmHas(line, "rsp") or asmHas(line, "call") then
-        return false
-    if asmHas(line, "push") or asmHas(line, "pop") then
-        return false
-    return true
+    return km_asm_spanbad(line) == 0
 
 // Index of the first line at or after `start` equal to `stop`, provided
 // every line before it is span-safe; -1 otherwise.
