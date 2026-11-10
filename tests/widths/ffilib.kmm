@@ -1,0 +1,9 @@
+module ffilib
+
+link "ffi.c"
+
+extern fn w_inc8(x: u8): u8
+extern fn w_neg32(x: i32): i32
+extern fn w_add32(a: u32, b: u32): u32
+extern fn w_big(x: u64): u64
+extern fn w_half(x: f32): f32

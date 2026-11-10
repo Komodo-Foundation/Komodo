@@ -26,6 +26,7 @@ mut Analyzer::inferExpr(e: Expression?): Type
     // falls back to its own classification instead of trusting "any".
     if stripNull(t).kind != "any" then
         e.resolvedType = typeToLegacy(t)
+        e.numKind = narrowKind(stripNull(t).kind)
     // An `extern type` handle is a plain pointer-sized word at run time —
     // hand codegen "int" so it never treats the value as a struct.
     let bt = stripNull(t)
@@ -36,9 +37,9 @@ mut Analyzer::inferExpr(e: Expression?): Type
 mut Analyzer::inferRaw(e: Expression?): Type
 
     if e is IntLiteral then
-        return tPrim("int")
+        return new Type("int", null, "lit:" + e.value)
     if e is FloatLiteral then
-        return tPrim("float")
+        return new Type("float", null, "lit")
     if e is BoolLiteral then
         return tPrim("bool")
     if e is StringLiteral then
@@ -208,6 +209,8 @@ mut Analyzer::inferBinary(e: BinaryOp): Type
         err(e, "operator '" + e.op + "' is not defined for the opaque handle type '" + hn + "'")
 
     if isCompareOp(e.op) then
+        if isIntKind(lb.kind) and isIntKind(rb.kind) then
+            intJoin(e, lb, rb)
         return tPrim("bool")
 
     if lt.kind == "any" or rt.kind == "any" then
@@ -230,8 +233,54 @@ mut Analyzer::inferBinary(e: BinaryOp): Type
     if e.op == "*" and lt.kind == "array" and isNumeric(rt) then
         return lt
     if legacyOf(lt) == "float" or legacyOf(rt) == "float" then
-        return tPrim("float")
+        return floatJoin(e, lb, rb)
+    if isIntKind(lb.kind) and isIntKind(rb.kind) then
+        return intJoin(e, lb, rb)
     return tPrim("int")
+
+// float arithmetic: a plain `float` wins; else `f32` (a float literal
+// operand adopts it, so it rounds to single precision too); else float.
+mut Analyzer::floatJoin(e: BinaryOp, lb: Type, rb: Type): Type
+    if (lb.kind == "float" and not isLit(lb)) or (rb.kind == "float" and not isLit(rb)) then
+        return tPrim("float")
+    if lb.kind == "f32" or rb.kind == "f32" then
+        if e.left is FloatLiteral then
+            e.left.numKind = "f32"
+        if e.right is FloatLiteral then
+            e.right.numKind = "f32"
+        return tPrim("f32")
+    return tPrim("float")
+
+// the integer type of `l <op> r`: a literal adopts the other side's type
+// (range-checked), equal kinds stay, a lossless widening picks the wider,
+// anything else needs an explicit conversion.  Shifts keep the left type.
+mut Analyzer::intJoin(e: BinaryOp, lb: Type, rb: Type): Type
+    let ll = isLit(lb)
+    let rl = isLit(rb)
+    if e.op == "<<" or e.op == ">>" then
+        if ll then
+            return tPrim("int")
+        return lb
+    if ll and rl then
+        return tPrim("int")
+    if ll then
+        if not litFits(litText(lb), rb.kind) then
+            err(e, "literal " + litText(lb) + " does not fit in " + rb.kind)
+        return rb
+    if rl then
+        if not litFits(litText(rb), lb.kind) then
+            err(e, "literal " + litText(rb) + " does not fit in " + lb.kind)
+        return lb
+    let lc = canonInt(lb.kind)
+    let rc = canonInt(rb.kind)
+    if lc == rc then
+        return lb
+    if intWidens(lc, rc) then
+        return rb
+    if intWidens(rc, lc) then
+        return lb
+    err(e, "cannot mix '" + lb.kind + "' and '" + rb.kind + "' in '" + e.op + "' — convert one explicitly, e.g. " + rb.kind + "(x)")
+    return lb
 
 mut Analyzer::isCompareOp(op: string): bool
     if op == "==" or op == "!=" then
@@ -274,6 +323,11 @@ mut Analyzer::inferUnary(e: UnaryOp): Type
     if e.op == "not" or e.op == "!" then
         return tPrim("bool")
     // `-x`
+    if isLit(ot) and ot.kind == "int" then
+        let v = litText(ot)
+        if #v > 0 and v[0] == "-" then
+            return new Type("int", null, "lit:" + v[1 to #v])
+        return new Type("int", null, "lit:-" + v)
     return ot
 
 // ── calls: free fn / method / stdlib / extern / builtin ─────────────
@@ -339,6 +393,13 @@ mut Analyzer::inferCall(e: CallExpr): Type
         if not isNumeric(it) and it.kind != "bool" and it.kind != "char" and it.kind != "any" then
             err(e, "'int' expects a number, got '" + typeToString(it) + "'")
         return tPrim("int")
+
+    // `u8(x)` … `i64(x)` / `f32(x)` — truncating conversions.
+    if isConvName(e.name) and #e.args == 1 then
+        let ct = stripNull(inferExpr(e.args[0]))
+        if not isNumeric(ct) and ct.kind != "bool" and ct.kind != "char" and ct.kind != "any" then
+            err(e, "'" + e.name + "' expects a number, got '" + typeToString(ct) + "'")
+        return tPrim(e.name)
 
     // `join(parts, sep)` — [string] joined into one string.
     if e.name == "join" then
@@ -764,5 +825,8 @@ mut Analyzer::inferArray(e: ArrayExpr): Type
         if acc == null then
             acc = et
         else
-            acc = unify(acc, et)
+            if isLit(et) and isLit(acc or et) and #et.name > #(acc or et).name then
+                acc = et
+            else
+                acc = unify(acc or et, et)
     return tArray(acc or tNever)
