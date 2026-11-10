@@ -9,7 +9,8 @@ runs="${1:-30}"; [[ "$runs" == -- ]] && runs=30
 args=(main.km x86); if [[ " $* " == *" -- "* ]]; then args=("${@:$(( $(printf '%s\n' "$@" | grep -nx -- '--' | cut -d: -f1) + 1 ))}"); fi
 out=".build/kmc.prof"
 gcc -O1 -c tools/km-prof.c -o .build/km-prof.o
-gcc -no-pie -o "$out" .build/asm/*.o .build/obj/*.o .build/km-prof.o -lm -l:libgc.so.1
+nasm -f elf64 main.km.asm -o .build/km-prof-main.o      # whole program: no stale split chunks
+gcc -no-pie -o "$out" .build/km-prof-main.o .build/obj/*.o .build/km-prof.o -lm -l:libgc.so.1
 nm -n "$out" | grep -E ' [TtW] ' | grep -vE '\.L[0-9]+$' > .build/prof.syms
 log=.build/prof.raw; rm -f "$log"
 for ((i = 0; i < runs; i++)); do KM_PROF_OUT="$log" "$out" "${args[@]}" >/dev/null; done

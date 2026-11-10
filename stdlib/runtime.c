@@ -693,6 +693,23 @@ int64_t km_str_starts(const char *s, const char *p)
     while (*p) if (*s++ != *p++) return 0;
     return 1;
 }
+/* Line scanning for the driver (main.km `gather`): index of the next '\n' at
+ * or after `start` (strlen when none), and whether the line starting at
+ * `start` opens (after blanks) with `kw`. */
+int64_t km_str_nl(const char *s, int64_t start)
+{
+    const char *p = strchr(s + start, '\n');
+    return p ? (int64_t)(p - s) : (int64_t)(start + strlen(s + start));
+}
+int64_t km_str_kw(const char *s, int64_t start, const char *kw)
+{
+    s += start;
+    while (*s == ' ' || *s == '\t') s++;
+    return km_str_starts(s, kw);
+}
+
+/* byte at index i (caller guarantees 0 <= i <= strlen), as an int */
+int64_t km_str_byte(const char *s, int64_t i) { return (unsigned char)s[i]; }
 int64_t km_str_ends(const char *s, const char *p)
 {
     size_t n = strlen(s), m = strlen(p);
