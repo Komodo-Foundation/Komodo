@@ -22,7 +22,7 @@ def run(src, expect):
         p = subprocess.run([komodo, '-q', 'main.km'], cwd=d, capture_output=True, text=True, timeout=120)
         out = (p.stdout + p.stderr)
         # drop the `komodo:` chatter and the source-line snippet under each error
-        out = '\n'.join(l for l in out.splitlines() if not l.startswith('komodo:') and not re.match(r'\s*\d*\s*\|', l))
+        out = '\n'.join(l for l in out.splitlines() if not l.startswith('komodo:') and not re.match(r'\s*(\d*\s*\||= help:)', l))
         if expect is None:
             return ('error:' not in out and 'undefined reference' not in out), out
         want = expect.strip()

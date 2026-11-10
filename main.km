@@ -60,7 +60,7 @@ void main(args)
         // problem is actually in rather than the merged unit
         let raw = km_error_message() or "compilation failed"
         let located = km_compiler::locate(errorLine(raw), gathered.deps, gathered.starts)
-        km_fail(located + snippet(located))
+        km_fail(located + snippet(located) + hint(located))
     if target == "check" then
         return                        // analysed clean; diagnostics already printed
     let asm = compiled or ""          // km_fail above does not return
@@ -71,6 +71,41 @@ void main(args)
     km_compiler::save(asm, outputPath)
 
 extern void km_fail(msg: string)
+
+// `s` contains `sub`
+fn has(s: string, sub: string) : bool
+    let i = 0
+    while i + sub.length <= s.length do
+        if s[i to i + sub.length] == sub then
+            return true
+        i += 1
+    return false
+
+// A "\n  = help: …" line for the common mistakes, or "".  Matches on the
+// message text, so a message with its own suggestion ("did you mean") is left alone.
+fn hint(msg: string) : string
+    let h = ""
+    if has(msg, "did you mean") then
+        h = ""
+    else if has(msg, "undefined name") then
+        h = "check the spelling, or declare the name with `let` before using it"
+    else if has(msg, "is not assignable to") then
+        h = "convert the value to the expected type, or change the declared type"
+    else if has(msg, "possibly null") then
+        h = "check `x != null` (or return early on `x == null`) before using it"
+    else if has(msg, "cannot reassign immutable") then
+        h = "declare the binding with `let` instead of `be` if it must change"
+    else if has(msg, "`break` outside a loop") then
+        h = "`break` is only valid inside a `while` or `for` loop"
+    else if has(msg, "must return a value") then
+        h = "add a `return` on every path through the function"
+    else if has(msg, "is private to") then
+        h = "it is only visible inside the class or module that declares it"
+    else if has(msg, "use of moved value") then
+        h = "the value was moved earlier; use it before the move or pass a copy"
+    if h == "" then
+        return ""
+    return "\n  = help: " + h
 
 fn spaces(n: int) : string
     let out = ""
