@@ -9,7 +9,7 @@ fn words_of(text: string) : [string]
     let words: [string] = []
     for w in string.split(string.to_lower(text), " ")
         let clean = string.trim(w)
-        if string.length(clean) > 0 then
+        if #clean > 0 then
             words += [clean]
     return words
 
