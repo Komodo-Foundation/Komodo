@@ -7,7 +7,7 @@ link SDL2
 // the link step automatically. No flags on the command line.
 //
 // This is the same pattern any C library uses: an interface module of
-// `extern fn` prototypes (native System V AMD64 ABI — see design.md's
+// `extern fn` prototypes (native System V AMD64 ABI — see the language reference's
 // "Foreign functions" section) plus one `link` line naming what the
 // linker needs — `link Name` for a `-lName` system library, or
 // `link "path/to/file.c"` for a companion source file to compile and
