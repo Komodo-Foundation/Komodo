@@ -30,7 +30,12 @@ What it does:
   temporary copy of the source tree. The project directory is never written to.
 - Document symbols list the top-level `fn`, `mut`, `void`, `struct`, `class`,
   `enum` and `module` declarations.
-- Not yet: completion, hover, go-to-definition, formatting.
+- Go to Definition, hover (declaration and doc comment) and completion
+  (declarations, keywords, built-ins). These match top-level names by text in
+  the open file's directory tree, so they do not yet resolve types or module
+  members.
+- Not yet: rename, find references, and type-aware lookups. Formatting is in
+  `komodo fmt`, which the VS Code extension uses.
 
 Point your editor at the script with its absolute path, for example
 `/home/you/Komodo/tools/km-lsp`. It speaks over stdio, so no arguments are
