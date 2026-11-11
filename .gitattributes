@@ -1,2 +1,8 @@
-*.km linguist-language=Komodo
-*.kmm linguist-language=Komodo
+# GitHub language bar. Linguist has no "Komodo" language yet, so it ignores
+# .km/.kmm and would otherwise label the repo by its support code (shell CLI,
+# C runtime, awk/python tools, editor plugins). Keep that out of the stats;
+# .km/.kmm count automatically once Komodo is added to Linguist
+# (.linguist-language.yml is the entry to submit upstream).
+* linguist-detectable=false
+*.km linguist-language=Komodo linguist-detectable=true
+*.kmm linguist-language=Komodo linguist-detectable=true

@@ -52,9 +52,6 @@ fn compile(source: string, target: string): string
 // analyser always prints non-fatal warnings for bad-practice constructs
 // — `x / 0`, `x == x`, `x = x`, a constant `if`, an empty loop body —
 // which `strict` likewise escalates to errors.
-fn compileWith(source: string, target: string, strict: bool): string
-    return compileOpt(source, target, strict, "none")
-
 // `opt` is one of "none" / "low" / "medium" / "max" — see optimize.kmm.
 fn compileOpt(source: string, target: string, strict: bool, opt: string): string
     return compileMapped(source, target, strict, opt, [], [])

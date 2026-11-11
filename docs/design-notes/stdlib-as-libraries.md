@@ -195,7 +195,7 @@ same ABI, slightly less "dispatches to the overloads".
 - `stdlib/file.kmm`, `stdlib/file.c`
 - `stdlib/console.kmm`, `stdlib/console.c`
 - `stdlib/km_runtime.h`  (drop stdlib prototype blocks)
-- `modules/codegen_expr.kmm`  (dotted-name mangle; `print` builtin lowering)
+- `modules/codegen/codegen_expr.kmm`  (dotted-name mangle; `print` builtin lowering)
 - `main.km`  (module-relative `link` path; `import console`)
 - `build.sh`, `krun.sh`, `build-self.sh`  (read `.links`; drop `stdlib/*.c` glob)
 - `komodo`  (always-linked set: `runtime.c` + `km_error.c`)

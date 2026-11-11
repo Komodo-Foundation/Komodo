@@ -34,7 +34,7 @@ length or a builder type exists.
    global or array element, captured, or passed to a function that keeps it.
    Non-escaping temporaries are freed at scope exit (or reused each loop
    iteration). Anything unproven stays GC-managed. No syntax change.
-   Best done on the typed IR (`docs/design-notes/typed-ir.md`), which has
+   Best done on a typed IR (not written yet), which would have
    the per-expression types this needs.
 2. **N-ary concat.** `a + b + c + d` becomes one `km_str_concat_n`: measure
    total length, allocate once, copy once. Needs a backend operation in
