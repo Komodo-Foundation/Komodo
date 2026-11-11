@@ -39,7 +39,20 @@ needed. Set the language id to `komodo` and the file pattern to `*.km` and
 
 ## VS Code
 
-Install the grammar by linking the extension folder:
+From the Marketplace (search "Komodo" in the Extensions view, or):
+
+```bash
+code --install-extension komodo-foundation.komodo-lang
+```
+
+From a `.vsix` file, built from a checkout with `vsce` (needs Node):
+
+```bash
+cd editors/vscode && npx @vscode/vsce package    # writes komodo-lang-0.1.0.vsix
+code --install-extension komodo-lang-0.1.0.vsix
+```
+
+Or, while working on the grammar, link the folder so edits show up on reload:
 
 ```bash
 ln -s /path/to/Komodo/editors/vscode ~/.vscode/extensions/komodo-foundation.komodo-lang-0.1.0

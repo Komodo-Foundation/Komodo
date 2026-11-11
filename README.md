@@ -47,6 +47,8 @@ or as a Debian/Ubuntu package (`packaging/build-deb.sh`, then `sudo apt install 
 
 Requirements: Linux x86-64 with `nasm`, `gcc` and the Boehm GC (`libgc`); `g++`, `pkg-config`, `emcc` and `node` are optional (C++ interop, library lookup, the WebAssembly target). The compiler builds itself from a checked-in seed on first run (about 2 seconds); `komodo upgrade` updates the installation.
 
+Editor support: install the VS Code extension with `code --install-extension komodo-foundation.komodo-lang` (or from a checkout, see [editors/README.md](editors/README.md#vs-code)). Vim, Emacs and a language server are covered there too.
+
 ## Using it
 
 ```bash
