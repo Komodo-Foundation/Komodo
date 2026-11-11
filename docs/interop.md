@@ -183,6 +183,12 @@ Each of these leaves a `// skipped: name (reason)` line in the output.
 | C++ | Bind an `extern "C"` wrapper, or name mangled symbols with `= "symbol"`. See `tests/examples/ffi_cxx.km`. |
 | Targets | FFI works on the x86 target only. `-t c`, `-t wasm` and `-t stackvm` reject or only compile it. |
 
+### Ready-made bindings
+
+The repository's [`bindings/`](../bindings/README.md) folder has tested bindings
+for `sqlite3`, `zlib` and `pcre2`, each with a runnable example. Use them when
+you want a curated, documented module; `import zlib` without one still works.
+
 ## Part 2. Using Komodo from C, C++, Rust and Python
 
 A function marked `export fn` gets an unmangled C symbol:

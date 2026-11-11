@@ -1,0 +1,6 @@
+// requires: zlib
+import zlib
+
+void main()
+    print(zlib::crc32(0, "hello", 5))
+    print(zlib::adler32(1, "hello", 5))

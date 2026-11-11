@@ -1,0 +1,11 @@
+// requires: libpcre2-8
+import pcre2
+
+void main()
+    let re = pcre2::km_pcre2_compile("^[a-z]+[0-9]+$")
+    print(pcre2::km_pcre2_matches(re, "abc123"))
+    print(pcre2::km_pcre2_matches(re, "abc-123"))
+    pcre2::pcre2_code_free_8(re)
+    let color = pcre2::km_pcre2_compile("colou?r")
+    print(pcre2::km_pcre2_matches(color, "the color red"))
+    pcre2::pcre2_code_free_8(color)

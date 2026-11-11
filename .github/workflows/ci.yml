@@ -12,7 +12,7 @@ jobs:
       - name: Install toolchain
         run: |
           sudo apt-get update
-          sudo apt-get install -y nasm gcc g++ libgc-dev libgc1 pkg-config zlib1g-dev
+          sudo apt-get install -y nasm gcc g++ libgc-dev libgc1 pkg-config zlib1g-dev libsqlite3-dev libpcre2-dev
       - name: Build the compiler (bootstraps from the checked-in seed)
         run: ./build-self.sh
       - name: Examples, interop and wasm-free suites
@@ -25,6 +25,8 @@ jobs:
         run: KM_PERF_SLACK=3 tools/perf-budget.sh
       - name: Binding generator
         run: bash tests/bind/run.sh
+      - name: Ready-made bindings build and run
+        run: scripts/build-bindings.sh
       - name: Rich diagnostics, error codes and komodo explain
         run: bash tests/diag/run.sh
       - name: The compiler reproduces itself

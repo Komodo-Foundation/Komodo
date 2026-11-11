@@ -14,6 +14,7 @@ Rules for code examples: the language reference is authoritative. Check syntax t
 - [Getting started](docs/getting-started.md): install, first program, tour.
 - [The komodo command](docs/cli.md): build, run, test, targets, lib.
 - [C and C++ interop](docs/interop.md): binding system libraries, native/ code, exporting to C.
+- [Ready-made bindings](bindings/README.md): sqlite3, zlib and pcre2 modules with examples; how to add one.
 - [FFI reference](docs/ffi.md): extern fn, callbacks, structs by value, shared libraries.
 - [Diagnostics](docs/diagnostics.md) and [debugging](docs/debugging.md).
 - [Editor support](editors/README.md): VS Code, Vim, Emacs, language server.
