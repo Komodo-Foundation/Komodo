@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.1
+
+- Komodo Dark: conventional syntax colors (muted keywords, strings, numbers, types, comments); green kept as the accent.
+
 ## 0.3.0
 
 - Komodo Dark color theme: near-black background, Komodo green accent, tuned for Komodo token scopes.
