@@ -28,12 +28,13 @@ module km_compiler
 fn Codegen::isFreeFn(func: FunctionDecl): bool
     return func.ownerClass == null and not func.isExtern and not func.isPrototype
 
-// A free function the backend may give a register-argument entry (see
-// Backend.declareFastFn): 1–6 fixed parameters, not `main`, not exported.
+// A function (free or method) the backend may give a register-argument
+// entry (see Backend.declareFastFn): 1–6 fixed parameters, not `main`,
+// not exported.  A method's receiver is its first parameter.
 mut Codegen::fastEntry(func: FunctionDecl): bool
     if not m_backend.fastCalls() then
         return false
-    return isFreeFn(func) and not func.isExport and not func.variadic and not func.isConstructor and func.name != "main" and #func.params >= 1 and #func.params <= 6
+    return not func.isExport and not func.variadic and not func.isConstructor and func.name != "main" and #func.params >= 1 and #func.params <= 6
 
 // Coarse parameter type, matched to what `exprType` / the call ABI can
 // tell apart: `int` (also bool / char / int widths / unknown),
