@@ -3771,6 +3771,11 @@ main.km:4:5: warning: unreachable code
   `error: match on enum 'Color' is not exhaustive — missing: Blue`
 - `==` comparing a value with itself is an error.
 
+`komodo lint file.km` reports the same extra checks as warnings without
+failing the build, plus a `let` that reuses a name already declared in the
+function and a comparison with `true` or `false` (see `docs/cli.md`). A
+local or parameter whose name starts with `_` is never reported as unused.
+
 The `--strict` example below is verified by hand with `komodo --strict`. The
 checker does not pass flags.
 

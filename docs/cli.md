@@ -42,6 +42,7 @@ Everything after the file is passed to your program:
 | `komodo build [file]` | Build an executable: `./<project name>` (or the file name without `.km`), or `-o <path>`. Does not run it. |
 | `komodo test [path...]` | Build and run every `*_test.km` file, plus every `.km` under a `tests/` directory that defines `void main()`. Exit status 0 means pass. Prints one `ok` / `FAIL` line per file (output shown for failures) and a summary; exits 1 if any failed. Paths may be files or directories (default `.`). |
 | `komodo check [file\|dir]` | Analyse only. Prints the compiler's diagnostics to stdout, one per line, as `file:line:col: error: …` (or `warning: …`), and exits 1 if there is an error. A clean program prints nothing and exits 0. Nothing is linked or run. It writes only the work directory `.komodo/` and `komodo_bindings/` (auto-bound imports), as a normal run does. Honours `--strict`. See [Checking](#checking). |
+| `komodo lint [file\|dir]` | `komodo check` plus lint warnings: the `--strict` checks (unused locals and parameters, non-exhaustive enum `match`, untyped parameters) reported as warnings, a `let` that reuses a name already declared in the function, and `== true` / `== false`. Same output format and exit status as `check`. See [Linting](#linting). |
 | `komodo explain <code>` | The long explanation of an error code such as `K0001`, with a wrong example and its fix. See [Diagnostics](diagnostics.md). |
 | `komodo repl` | The interactive prompt, see [REPL](#repl). |
 | `komodo new <name>` | Create `<name>/` with `main.km`, `tests/smoke_test.km` and a `.gitignore`. |
@@ -300,6 +301,31 @@ The exit status is 1 when there is an error, and 0 otherwise. Warnings are
 printed but do not fail the check, unless `--strict` makes them errors. A clean
 program prints nothing. An import that cannot be found is reported at its line,
 as `cannot find module`, followed by the same library hint as a build.
+
+## Linting
+
+`komodo lint` is `komodo check` with more warnings. It reports, as warnings
+that do not fail the run:
+
+- everything `komodo check` reports;
+- a local or parameter that is never used (prefix the name with `_` to keep it);
+- a `match` on an enum that misses a variant and has no `else`;
+- a parameter with no type;
+- a `let` that reuses a name already declared in the same function (locals
+  are function-scoped, so the inner `let` overwrites the outer variable);
+- a comparison with `true` or `false`.
+
+```bash
+komodo lint app.km
+```
+
+```text
+app.km:7:9: warning: 'x' is already declared in this function; this `let` reuses it
+app.km:5:5: warning: 'y' is declared but never used
+```
+
+The exit status is 1 only when there is an error. `komodo lint --strict` makes
+every warning an error.
 
 ## Caching
 

@@ -12,6 +12,7 @@
 #          mean" suggestion is shown separately, in addition
 #   span:  block  -> underline the whole indented block that starts at the position
 #   mode:  strict -> the example needs `komodo --strict`
+#          lint   -> the warning comes only from `komodo lint`
 #   file NAME:     a companion file the example imports (indented 2 spaces)
 #   bad: / fix:    a minimal wrong program and its corrected form (indented 2
 #                  spaces); tests/diag/run.sh compiles every one of them
@@ -1791,6 +1792,42 @@ fix:
   void main()
       let x = 1
       print(x)
+
+@ K0169 reused local name
+match: '*' is already declared in this function; this `let` reuses it
+mode: lint
+why: Komodo locals are function-scoped, so a second `let {1}` in an inner block does not make a new variable: it assigns the existing one, and the new value is still there after the block.
+help: Give the inner variable a different name, or drop `let` if reassigning '{1}' is intended.
+bad:
+  void main()
+      let x = 1
+      if x > 0 then
+          let x = 5
+          print(x)
+      print(x)
+fix:
+  void main()
+      let x = 1
+      if x > 0 then
+          let y = 5
+          print(y)
+      print(x)
+
+@ K0170 comparison with a bool literal
+match: comparison with a bool literal; use the value or `not` directly
+mode: lint
+why: `x == true` is the same as `x`, and `x == false` is the same as `not x`; the longer form only adds noise.
+help: Write the bool value itself, or `not` it.
+bad:
+  void main()
+      let ok = true
+      if ok == true then
+          print("yes")
+fix:
+  void main()
+      let ok = true
+      if ok then
+          print("yes")
 
 # ── syntax ───────────────────────────────────────────────────────────
 

@@ -8,6 +8,9 @@
 #                                 contain the .experr — and the SAME file
 #                                 compiled in default mode must succeed
 #                                 (proves the lint is strict-only)
+#   tests/sema/lint/<name>.km     analysed with kmc's `lint` target; it must
+#                                 succeed and print exactly <name>.expout
+#                                 (paths relative to tests/sema/lint)
 #
 # Uses the native self-hosted compiler (kmc); build one with
 # ./build-self.sh.  Set $KMC to override.
@@ -81,6 +84,21 @@ for src in tests/sema/strict/*.km; do
     else
         echo "FAIL     $name (should compile in default mode)"
         sed 's/^/           /' "$work/e2"; fail=$((fail+1))
+    fi
+done
+
+for src in tests/sema/lint/*.km; do
+    [[ -e "$src" ]] || continue
+    base="$(basename "$src" .km)"
+    name="lint/$base"
+    match "$name" || continue
+    if got="$("$kmc" "$src" lint 2>&1 | sed 's#^tests/sema/lint/##')" && \
+       [[ "$got" == "$(cat "tests/sema/lint/$base.expout")" ]]; then
+        echo "ok       $name"; pass=$((pass+1))
+    else
+        echo "FAIL     $name"
+        diff <(printf '%s\n' "$got") "tests/sema/lint/$base.expout" | sed 's/^/           /'
+        fail=$((fail+1))
     fi
 done
 

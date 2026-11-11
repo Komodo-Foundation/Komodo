@@ -2,7 +2,7 @@
 """Verify the diagnostics catalog: every entry is complete, and every
 example in it really behaves as documented when compiled with $KMC.
 
-  bad:  `kmc main.km check [strict] rich` must report that entry's code
+  bad:  `kmc main.km check|lint [strict] rich` must report that entry's code
   fix:  `kmc main.km check [strict]` must print nothing and succeed
   all:  why + help present, codes unique, `komodo explain` page exists
 """
@@ -28,7 +28,8 @@ def run(e, body, extra):
         for n, text in e['files'].items():
             Path(d, n).write_text('\n'.join(text) + '\n')
         Path(d, 'main.km').write_text('\n'.join(body) + '\n')
-        args = [kmc, 'main.km', 'x86' if e.get('mode') == 'compile' else 'check'] + (['strict'] if e.get('mode') == 'strict' else []) + extra
+        tgt = {'compile': 'x86', 'lint': 'lint'}.get(e.get('mode'), 'check')
+        args = [kmc, 'main.km', tgt] + (['strict'] if e.get('mode') == 'strict' else []) + extra
         p = subprocess.run(args, cwd=d, capture_output=True, text=True, timeout=20)
         out = ''.join(l + '\n' for l in (p.stdout + p.stderr).splitlines() if not l.startswith('wrote '))
         return p.returncode, out
