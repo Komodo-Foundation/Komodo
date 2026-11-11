@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.1
+
+- Breakpoints can be set in `.km` and `.kmm` files.
+- The debugger finds Komodo sources when the working directory is not the file's directory.
+
 ## 0.2.0
 
 - Language server client for `tools/km-lsp`: compiler diagnostics on open and save, document outline.

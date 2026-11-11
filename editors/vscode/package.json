@@ -2,7 +2,7 @@
   "name": "komodo-lang",
   "displayName": "Komodo",
   "description": "Komodo language support: highlighting, diagnostics, outline, formatting, run/build/test tasks and debugging for .km and .kmm files.",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "license": "MIT",
   "publisher": "komodo-foundation",
   "icon": "icon.png",
@@ -316,6 +316,11 @@
             }
           }
         ]
+      }
+    ],
+    "breakpoints": [
+      {
+        "language": "komodo"
       }
     ]
   },

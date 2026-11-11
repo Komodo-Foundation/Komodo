@@ -245,12 +245,15 @@ const debugProvider = {
         const cwd = cfg.cwd || (folder ? folder.uri.fsPath : path.dirname(file));
         const args = cfg.args || [];
         if (type === 'lldb') {
-            return { type, request: 'launch', name: cfg.name, program: exe, args, cwd, stopOnEntry: !!cfg.stopAtEntry };
+            return { type, request: 'launch', name: cfg.name, program: exe, args, cwd, stopOnEntry: !!cfg.stopAtEntry,
+                relativePathBase: path.dirname(file) };
         }
         return {
             type, request: 'launch', name: cfg.name, program: exe, args, cwd,
             stopAtEntry: !!cfg.stopAtEntry, MIMode: process.platform === 'darwin' ? 'lldb' : 'gdb',
             externalConsole: false,
+            // Debug info names sources relative to the file's directory.
+            setupCommands: [{ text: `directory ${path.dirname(file)}`, ignoreFailures: true }],
         };
     },
 };
