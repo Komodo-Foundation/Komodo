@@ -140,13 +140,15 @@ mut Parser::parsePostfix(): Expression?
                 expr = new MemberExpr(expr, member)
         else if at(TokenType::OPEN_BRACKET) then
             eat()
-            // `obj[i]` indexes; `obj[a to b]` / `obj[a:b]` slices
+            // `obj[i]` indexes; `obj[a:b]` / `obj[a:b]` slices
             // (end exclusive).  Either bound may be omitted:
             // `obj[:b]`, `obj[a:]`, `obj[a to]`, `obj[:]`.
             let sStart: Expression? = null
             if not at(TokenType::COLON) and not at(TokenType::TO) and not at(TokenType::CLOSE_BRACKET) then
                 sStart = parseExpression()
             if at(TokenType::COLON) or at(TokenType::TO) then
+                if at(TokenType::TO) then
+                    m_warnings += [position() + ": warning: 'to' in a slice is deprecated: use ':' (a[i:j])"]
                 eat()
                 let sEnd: Expression? = null
                 if not at(TokenType::CLOSE_BRACKET) then

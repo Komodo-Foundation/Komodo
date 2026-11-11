@@ -5,6 +5,10 @@ public
     constructor(tokens: [Token])
         m_tokens = tokens
 
+    // Deprecation warnings found while parsing, as "LINE:COL: warning: ...".
+    mut warnings(): [string]
+        return m_warnings
+
     // "LINE:COL" of the token the parser is looking at — where a parse
     // error is reported.
     mut position(): string
@@ -162,6 +166,7 @@ public
 private
     m_tokens: [Token]
     m_pos: int = 0
+    m_warnings: [string] = []
     // `Class::method` bodies collected during the top-level sweep and
     // re-attached to their classes once parsing finishes.
     m_pendingMethods: [FunctionDecl] = []
@@ -290,7 +295,7 @@ private
         if at(TokenType::STRING) then
             let lexeme = peek().lexeme
             eat()
-            let target = lexeme[1 to (lexeme.length - 1)]
+            let target = lexeme[1:(lexeme.length - 1)]
             prog.links += [new LinkDecl(target, externLibIsPath(target))]
             skipNewlines()
             if at(TokenType::INDENT) then
@@ -325,7 +330,7 @@ private
                     throw ("expected a string literal after `=` (the C symbol name) in extern variable '" + vname + "'")
                 let vsl = peek().lexeme
                 eat()
-                vsym = vsl[1 to (vsl.length - 1)]
+                vsym = vsl[1:(vsl.length - 1)]
                 if #(vsym or "") == 0 then
                     throw ("extern variable '" + vname + "': the C symbol name after `=` is empty")
             skipNewlines()
@@ -368,7 +373,7 @@ private
                 throw ("expected a string literal after `=` (the C symbol name) in extern '" + name + "'")
             let sl = peek().lexeme
             eat()
-            symbol = sl[1 to (sl.length - 1)]
+            symbol = sl[1:(sl.length - 1)]
             if #(symbol or "") == 0 then
                 throw ("extern '" + name + "': the C symbol name after `=` is empty")
         skipNewlines()
@@ -550,7 +555,7 @@ private
         if at(TokenType::STRING) then
             let lexeme = peek().lexeme
             eat()
-            let path = lexeme[1 to (lexeme.length - 1)]
+            let path = lexeme[1:(lexeme.length - 1)]
             return new LinkDecl(path, true)
         let name = peek().lexeme
         eat()

@@ -497,8 +497,8 @@ void Codegen::pushLoop(contL: string, breakL: string)
     m_loopBreak += [breakL]
 
 void Codegen::popLoop()
-    m_loopCont = m_loopCont[0 to (#m_loopCont - 1)]
-    m_loopBreak = m_loopBreak[0 to (#m_loopBreak - 1)]
+    m_loopCont = m_loopCont[0:(#m_loopCont - 1)]
+    m_loopBreak = m_loopBreak[0:(#m_loopBreak - 1)]
 
 void Codegen::genWhile(s: WhileStmt)
     let topL = m_backend.newLabel()

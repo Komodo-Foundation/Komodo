@@ -154,7 +154,7 @@ mut Analyzer::checkParamDefaults(fd: FunctionDecl, owner: string)
 mut Analyzer::isExportableType(t: string): bool
     let b = t
     if #b > 0 and b[#b - 1] == "?" then
-        b = b[0 to (#b - 1)]
+        b = b[0:(#b - 1)]
     if isIntKind(b) or b == "bool" or b == "float" or b == "f32" or b == "f64" or b == "string" or b == "char" then
         return true
     return isExternType(b)
@@ -853,8 +853,8 @@ mut Analyzer::pathFieldType(key: string): Type?
     let dot = lastDot(key)
     if dot <= 0 then
         return null
-    let root = key[0 to dot]
-    let field = key[(dot + 1) to #key]
+    let root = key[0:dot]
+    let field = key[(dot + 1):#key]
     let rootT = tPrim("int")
     if scopeIndex(root) >= 0 then
         rootT = stripNull(scopeDeclType(root))

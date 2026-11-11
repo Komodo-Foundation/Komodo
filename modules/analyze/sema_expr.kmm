@@ -328,7 +328,7 @@ mut Analyzer::inferUnary(e: UnaryOp): Type
     if isLit(ot) and ot.kind == "int" then
         let v = litText(ot)
         if #v > 0 and v[0] == "-" then
-            return new Type("int", null, "lit:" + v[1 to #v])
+            return new Type("int", null, "lit:" + v[1:#v])
         return new Type("int", null, "lit:-" + v)
     return ot
 
@@ -340,9 +340,9 @@ mut Analyzer::inferCall(e: CallExpr): Type
     if e.receiver != null then
         let rct = inferExpr(e.receiver)
         if isNullable(rct) then
-            err(e, "receiver is possibly null — narrow it before calling '" + e.name[1 to e.name.length] + "'")
+            err(e, "receiver is possibly null — narrow it before calling '" + e.name[1:e.name.length] + "'")
         let rtn = typeToString(stripNull(rct))
-        let rmeth = e.name[1 to e.name.length]
+        let rmeth = e.name[1:e.name.length]
         let rowner = methodOwner(rtn, rmeth)
         if rowner == "" then
             err(e, "type '" + rtn + "' has no method '" + rmeth + "'" + methodHint(rtn, rmeth))
@@ -435,8 +435,8 @@ mut Analyzer::inferCall(e: CallExpr): Type
 
     let dot = dotIndex(e.name)
     if dot > 0 then
-        let recv = e.name[0 to dot]
-        let meth = e.name[(dot + 1) to e.name.length]
+        let recv = e.name[0:dot]
+        let meth = e.name[(dot + 1):e.name.length]
         if isMethodReceiver(recv) then
             return inferMethodCall(e, recv, meth)
         // `recv` is a value in scope (a local or a field of the current

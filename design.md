@@ -275,7 +275,7 @@ additive, multiplicative, unary, postfix.
 - Method / member: `recv.method(args)`, `recv.member`
 - Scope: `namespace::name` (e.g. `file::read_all`, `TokenType::EOF`)
 - Index: `arr[i]` — out-of-range throws; guard with `#arr`
-- Slice: `arr[start to end]`
+- Slice: `arr[start:end]`
 - Protected call: `name(args)?` — yields `null` if the call throws
 
 ### Strings

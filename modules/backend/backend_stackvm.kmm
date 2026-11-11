@@ -430,8 +430,8 @@ mut StackVMBackend::tryBegin()
 mut StackVMBackend::tryEnd()
     let catchL = m_tryCatch[#m_tryCatch - 1]
     let doneL = m_tryDone[#m_tryDone - 1]
-    m_tryCatch = m_tryCatch[0 to (#m_tryCatch - 1)]
-    m_tryDone = m_tryDone[0 to (#m_tryDone - 1)]
+    m_tryCatch = m_tryCatch[0:(#m_tryCatch - 1)]
+    m_tryDone = m_tryDone[0:(#m_tryDone - 1)]
     op("ENDTRY")
     op("JMP " + doneL)
     emit(catchL + ":")
@@ -447,7 +447,7 @@ void StackVMBackend::objNew(typeId: int, nFields: int)
 void StackVMBackend::objTypeId()
     op("OTID")
 
-// `s[a to b]` / `arr[a to b]` — object, start, end on the stack
+// `s[a:b]` / `arr[a:b]` — object, start, end on the stack
 void StackVMBackend::sliceStr()
     op("STRSLICE")
 

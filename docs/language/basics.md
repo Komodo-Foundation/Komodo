@@ -327,19 +327,19 @@ first if you need fixed decimals.
 
 ## Slices
 
-`a[i to j]` gives the elements from `i` up to but not including `j`. Either
+`a[i:j]` gives the elements from `i` up to but not including `j`. Either
 bound may be left out, as in `a[2:]` and `a[:5]`. The same forms work on
 strings and arrays.
 
 ```km
 void main()
     let s = "hello, world"
-    print(s[0 to 5])
-    print(s[7 to #s])
+    print(s[0:5])
+    print(s[7:#s])
     print(s[7:])
     print(s[:5])
     let xs = [10, 20, 30, 40, 50]
-    print(xs[1 to 4], xs[2:])
+    print(xs[1:4], xs[2:])
 ```
 
 ```text

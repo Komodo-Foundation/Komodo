@@ -12,15 +12,15 @@ module km_compiler
 fn headerCType(t: string, handles: [string]): string
     let b = t
     if #b > 0 and b[#b - 1] == "?" then
-        b = b[0 to (#b - 1)]
+        b = b[0:(#b - 1)]
     if b == "int" or b == "i64" then
         return "int64_t"
     if b == "uint" or b == "u64" then
         return "uint64_t"
     if b == "i8" or b == "i16" or b == "i32" then
-        return "int" + b[1 to #b] + "_t"
+        return "int" + b[1:#b] + "_t"
     if b == "u8" or b == "u16" or b == "u32" then
-        return "uint" + b[1 to #b] + "_t"
+        return "uint" + b[1:#b] + "_t"
     if b == "bool" then
         return "bool"
     if b == "float" or b == "f64" then
@@ -34,7 +34,7 @@ fn headerCType(t: string, handles: [string]): string
 fn headerIsHandle(t: string): bool
     let b = t
     if #b > 0 and b[#b - 1] == "?" then
-        b = b[0 to (#b - 1)]
+        b = b[0:(#b - 1)]
     let known = ["int", "i64", "uint", "u64", "i8", "i16", "i32", "u8", "u16", "u32", "bool", "float", "f64", "f32", "string"]
     return not (b in known)
 

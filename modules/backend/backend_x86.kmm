@@ -189,7 +189,7 @@ mut X86Backend::addString(lexeme: string): string
     m_stringId += 1
     let name = "LS" + string(m_stringId)
     poolAdd("s:" + lexeme, name)
-    let raw = lexeme[1 to (lexeme.length - 1)]
+    let raw = lexeme[1:(lexeme.length - 1)]
     // NASM back-quoted strings use `` ` `` as the delimiter, so any
     // backtick inside the literal has to be escaped.
     let body = ""
@@ -472,7 +472,7 @@ mut X86Backend::declareExternGlobal(name: string, symbol: string, rawType: strin
     m_xgSyms += [symbol]
     let t = rawType
     if #t > 0 and t[#t - 1] == "?" then
-        t = t[0 to (#t - 1)]
+        t = t[0:(#t - 1)]
     if t == "f64" then
         t = "float"
     m_xgTypes += [t]
@@ -795,7 +795,7 @@ mut X86Backend::strLen()
     ins("mov rdi, rax")
     emitCall("km_str_len")
 
-// `s[a to b]` — object spilled first (deeper), start spilled next, end in
+// `s[a:b]` — object spilled first (deeper), start spilled next, end in
 // rax.  → km_str_slice(s, start, end); fresh char* in rax.
 mut X86Backend::sliceStr()
     ins("mov rdx, rax")
@@ -804,7 +804,7 @@ mut X86Backend::sliceStr()
     recordExtern("km_str_slice")
     emitCall("km_str_slice")
 
-// `arr[a to b]` — same operand layout → km_array_slice; fresh handle in rax.
+// `arr[a:b]` — same operand layout → km_array_slice; fresh handle in rax.
 mut X86Backend::sliceArray()
     ins("mov rdx, rax")
     ins("pop rsi")
@@ -1599,8 +1599,8 @@ mut X86Backend::tryBegin()
 mut X86Backend::tryEnd()
     let catchL = m_tryCatch[#m_tryCatch - 1]
     let doneL = m_tryDone[#m_tryDone - 1]
-    m_tryCatch = m_tryCatch[0 to (#m_tryCatch - 1)]
-    m_tryDone = m_tryDone[0 to (#m_tryDone - 1)]
+    m_tryCatch = m_tryCatch[0:(#m_tryCatch - 1)]
+    m_tryDone = m_tryDone[0:(#m_tryDone - 1)]
     // normal path: pop the landing pad, preserving the call's result
     // (km_try_pop is a C call and would otherwise clobber rax)
     ins("push rax")
@@ -1741,12 +1741,12 @@ mut X86Backend::peepholeAt(src: [string], i: int): [string]
     if i + 1 < n then
         let b = src[i + 1]
         if asmStarts(a, "    mov [") and asmEnds(a, "], rax") then
-            let mem = a[8 to (a.length - 5)]
+            let mem = a[8:(a.length - 5)]
             if b == "    mov rax, " + mem then
                 m_pSpan = 2
                 return [a]
         if asmStarts(a, "    movsd [") and asmEnds(a, "], xmm0") then
-            let mem = a[10 to (a.length - 6)]
+            let mem = a[10:(a.length - 6)]
             if b == "    movsd xmm0, " + mem then
                 m_pSpan = 2
                 return [a]
@@ -1757,7 +1757,7 @@ mut X86Backend::peepholeAt(src: [string], i: int): [string]
         let b = src[i + 1]
         if asmStarts(b, "    mov rax, ") and not asmHas(b, "rsp") and src[i + 2] == "    mov rcx, rax" and src[i + 3] == "    pop rax" then
             m_pSpan = 4
-            return ["    mov rcx, " + b[13 to b.length]]
+            return ["    mov rcx, " + b[13:b.length]]
 
     // integer left operand, longer right operand: keep left in a scratch
     // comparison straight into a branch: cmp / setcc / movzx / test / je
@@ -1771,7 +1771,7 @@ mut X86Backend::peepholeAt(src: [string], i: int): [string]
             let off = 13
             if isJe then
                 off = 12
-            let target = br[off to br.length]
+            let target = br[off:br.length]
             let cc = jccOf(src[i + 1])
             if cc != "" and src[i + 2] == "    movzx eax, al" and src[i + 3] == "    test rax, rax" and not m_keepIdx.has(target) then
                 let jump = cc
@@ -1800,7 +1800,7 @@ mut X86Backend::peepholeAt(src: [string], i: int): [string]
             let r = src[i + 2]
             if asmStarts(r, "    movsd xmm0, [") and not asmHas(r, "rsp") and src[i + 3] == "    movsd xmm1, xmm0" and src[i + 4] == "    movsd xmm0, [rsp]" and src[i + 5] == "    add rsp, 16" then
                 m_pSpan = 6
-                return ["    movsd xmm1, " + r[16 to r.length]]
+                return ["    movsd xmm1, " + r[16:r.length]]
         // float left operand, longer right operand: keep left in a scratch
         let j = spanEnd(src, i + 2, "    movsd xmm0, [rsp]")
         if j >= i + 4 and j + 1 < n and src[j - 1] == "    movsd xmm1, xmm0" and src[j + 1] == "    add rsp, 16" then
@@ -1855,14 +1855,14 @@ mut X86Backend::unPltLocalCalls()
     while i < n do
         let l = m_lines[i]
         if l.length > 1 and l[0] != " " and l[l.length - 1] == ":" then
-            defs.add(l[0 to l.length - 1], 1)
+            defs.add(l[0:l.length - 1], 1)
         i += 1
     i = 0
     while i < n do
         let l = m_lines[i]
         let k = l.length
-        if k > 19 and l[0 to 9] == "    call " and l[k - 10 to k] == " wrt ..plt" then
-            let name = l[9 to k - 10]
+        if k > 19 and l[0:9] == "    call " and l[k - 10:k] == " wrt ..plt" then
+            let name = l[9:k - 10]
             if defs.first(name) >= 0 then
                 m_lines[i] = "    call " + name
         i += 1
@@ -1910,7 +1910,7 @@ mut X86Backend::header(): string
         // fine there even when it is a reserved word
         let ex = m_externs[i]
         if #ex > 0 and ex[0] == "$" then
-            ex = ex[1 to #ex]
+            ex = ex[1:#ex]
         h = h + "extern " + ex + "\n"
         i += 1
     h = h + "\nsection .text\n\n"

@@ -103,7 +103,7 @@ struct IndexExpr : Expression
     object: Expression? = null
     index: Expression? = null
 
-// `object[start to end]` / `object[start :]` etc.
+// `object[start:end]` / `object[start :]` etc.
 struct SliceExpr : Expression
     object: Expression? = null
     start: Expression? = null

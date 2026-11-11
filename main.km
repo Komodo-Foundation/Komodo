@@ -49,10 +49,10 @@ void main(args)
             rich = true             // rustc-style diagnostics (see diag.kmm)
             if a == "color" then
                 color = true
-        else if a.length > 7 and a[0 to 7] == "render=" then
-            renderText = a[7 to a.length]       // test hook: render this one line
-        else if a.length > 6 and a[0 to 6] == "width=" then
-            width = km_compiler::dgNum(a[6 to a.length])
+        else if a.length > 7 and a[0:7] == "render=" then
+            renderText = a[7:a.length]       // test hook: render this one line
+        else if a.length > 6 and a[0:6] == "width=" then
+            width = km_compiler::dgNum(a[6:a.length])
         ai += 1
 
     // The standard library ships as `.kmm` declaration files under the
@@ -99,8 +99,8 @@ extern fn km_str_kw(s: string, start: int, kw: string): int
 fn errorLine(msg: string) : string
     let n = msg.length
     // a node synthesised by the compiler has no real position
-    if n > 5 and msg[0 to 5] == "0:0: " then
-        return "error: " + msg[5 to n]
+    if n > 5 and msg[0:5] == "0:0: " then
+        return "error: " + msg[5:n]
     let i = 0
     let fields = 0
     while fields < 2 do
@@ -112,7 +112,7 @@ fn errorLine(msg: string) : string
         i += 1
         fields += 1
     if i < n and msg[i] == " " then
-        return msg[0 to i] + " error: " + msg[(i + 1) to n]
+        return msg[0:i] + " error: " + msg[(i + 1):n]
     return "error: " + msg
 
 // `gather`'s result: the merged source, the exact file list it was built
@@ -134,13 +134,13 @@ fn dirOf(path: string) : string
         i += 1
     if cut < 0 then
         return "."
-    return path[0 to cut]
+    return path[0:cut]
 
 // True when `s` ends with `suffix`.
 fn endsWith(s: string, suffix: string) : bool
     if suffix.length > s.length then
         return false
-    return s[(s.length - suffix.length) to s.length] == suffix
+    return s[(s.length - suffix.length):s.length] == suffix
 
 // A Komodo source file? (`.km` / `.kmm`)
 fn isSource(name: string) : bool
@@ -153,7 +153,7 @@ fn moduleOf(src: string) : string
     while lineStart <= n do
         let i = km_str_nl(src, lineStart)
         if km_str_kw(src, lineStart, "module ") == 1 then
-            let m = moduleOnLine(src[lineStart to i])
+            let m = moduleOnLine(src[lineStart:i])
             if m != "" then
                 return m
         lineStart = i + 1
@@ -163,10 +163,10 @@ fn moduleOnLine(line: string) : string
     let a = 0
     while a < line.length and (line[a] == " " or line[a] == "\t") do
         a += 1
-    let rest = line[a to line.length]
+    let rest = line[a:line.length]
     if rest.length < 8 then
         return ""
-    if rest[0 to 7] != "module " then
+    if rest[0:7] != "module " then
         return ""
     let b = 7
     while b < rest.length and rest[b] == " " do
@@ -174,7 +174,7 @@ fn moduleOnLine(line: string) : string
     let s = b
     while s < rest.length and rest[s] != " " and rest[s] != "\r" and rest[s] != "\n" do
         s += 1
-    return rest[b to s]
+    return rest[b:s]
 
 // Read `rootPath`, everything reachable from its `import` lines, and —
 // for every module file pulled in — every sibling file declaring that
@@ -199,7 +199,7 @@ fn gather(rootPath: string, stdlibProbe: string) : GatherResult
 
     while #queue > 0 do
         let p = queue[0]
-        queue = queue[1 to #queue]
+        queue = queue[1:#queue]
         if (p in seen) then
             continue
         seen += [p]
@@ -226,7 +226,7 @@ fn gather(rootPath: string, stdlibProbe: string) : GatherResult
         //     kept as given (relative to the working directory).
         for t in externLinkTargets(src) do
             let tok = t
-            if tok.length > 0 and tok[0 to 1] != "-" and tok[0 to 1] != "/" then
+            if tok.length > 0 and tok[0:1] != "-" and tok[0:1] != "/" then
                 if file::exists(dirOf(p) + "/" + tok) then
                     tok = dirOf(p) + "/" + tok
             if not (tok in links) then
@@ -250,7 +250,7 @@ fn gather(rootPath: string, stdlibProbe: string) : GatherResult
                 // already absolute — so a library can ship its C shim
                 // next to its .kmm and still be `import`ed from anywhere.
                 let tok = t
-                if tok.length > 0 and tok[0 to 1] != "-" and tok[0 to 1] != "/" then
+                if tok.length > 0 and tok[0:1] != "-" and tok[0:1] != "/" then
                     tok = base + "/" + tok
                 if not (tok in links) then
                     links += [tok]
@@ -313,7 +313,7 @@ fn linkTargets(src: string) : [string]
     while lineStart <= n do
         let i = km_str_nl(src, lineStart)
         if km_str_kw(src, lineStart, "link ") == 1 then
-            let t = linkOnLine(src[lineStart to i])
+            let t = linkOnLine(src[lineStart:i])
             if t != "" then
                 out += [t]
         lineStart = i + 1
@@ -323,10 +323,10 @@ fn linkOnLine(line: string) : string
     let a = 0
     while a < line.length and (line[a] == " " or line[a] == "\t") do
         a += 1
-    let rest = line[a to line.length]
+    let rest = line[a:line.length]
     if rest.length < 6 then
         return ""
-    if rest[0 to 5] != "link " then
+    if rest[0:5] != "link " then
         return ""
     let b = 5
     while b < rest.length and rest[b] == " " do
@@ -337,11 +337,11 @@ fn linkOnLine(line: string) : string
         let s = b + 1
         while s < rest.length and rest[s] != "\"" do
             s += 1
-        return rest[(b + 1) to s]
+        return rest[(b + 1):s]
     let s = b
     while s < rest.length and rest[s] != " " and rest[s] != "\r" and rest[s] != "\n" do
         s += 1
-    return "-l" + rest[b to s]
+    return "-l" + rest[b:s]
 
 // Linker tokens from block-`extern "..."` headers.  A bare name becomes
 // `-lname`; a path or flag (contains `/` or `.`, or starts `-`) passes
@@ -354,7 +354,7 @@ fn externLinkTargets(src: string) : [string]
     while lineStart <= n do
         let i = km_str_nl(src, lineStart)
         if km_str_kw(src, lineStart, "extern ") == 1 then
-            let t = externOnLine(src[lineStart to i])
+            let t = externOnLine(src[lineStart:i])
             if t != "" then
                 out += [t]
         lineStart = i + 1
@@ -364,10 +364,10 @@ fn externOnLine(line: string) : string
     let a = 0
     while a < line.length and (line[a] == " " or line[a] == "\t") do
         a += 1
-    let rest = line[a to line.length]
+    let rest = line[a:line.length]
     if rest.length < 9 then
         return ""
-    if rest[0 to 7] != "extern " then
+    if rest[0:7] != "extern " then
         return ""
     let b = 7
     while b < rest.length and rest[b] == " " do
@@ -377,7 +377,7 @@ fn externOnLine(line: string) : string
     let s = b + 1
     while s < rest.length and rest[s] != "\"" do
         s += 1
-    let name = rest[(b + 1) to s]
+    let name = rest[(b + 1):s]
     if name.length == 0 then
         return ""
     if name[0] == "-" then
@@ -398,7 +398,7 @@ fn importPos(src: string, name: string) : string
     let n = src.length              // a strlen — measure once, not per char
     while i <= n do
         if i == n or src[i] == "\n" then
-            let text = src[lineStart to i]
+            let text = src[lineStart:i]
             if importOnLine(text) == name then
                 return string(line) + ":" + string(importNameCol(text))
             line += 1
@@ -424,7 +424,7 @@ fn importNames(src: string) : [string]
     while lineStart <= n do
         let i = km_str_nl(src, lineStart)
         if km_str_kw(src, lineStart, "import ") == 1 then
-            let name = importOnLine(src[lineStart to i])
+            let name = importOnLine(src[lineStart:i])
             if name != "" then
                 names += [name]
         lineStart = i + 1
@@ -434,10 +434,10 @@ fn importOnLine(line: string) : string
     let a = 0
     while a < line.length and (line[a] == " " or line[a] == "\t") do
         a += 1
-    let rest = line[a to line.length]
+    let rest = line[a:line.length]
     if rest.length < 8 then
         return ""
-    if rest[0 to 7] != "import " then
+    if rest[0:7] != "import " then
         return ""
     let b = 7
     while b < rest.length and rest[b] == " " do
@@ -445,4 +445,4 @@ fn importOnLine(line: string) : string
     let s = b
     while s < rest.length and rest[s] != " " and rest[s] != "\r" and rest[s] != "\n" do
         s += 1
-    return rest[b to s]
+    return rest[b:s]

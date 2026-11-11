@@ -1,18 +1,18 @@
-// Slice expressions `obj[a to b]` / `obj[a:b]` (end exclusive) on strings
+// Slice expressions `obj[a:b]` / `obj[a:b]` (end exclusive) on strings
 // and arrays in the self-hosted compiler.
 
 import console
 
 void main()
     let s = "hello, world"
-    console.print("s[0 to 5]:", s[0 to 5])
-    console.print("s[7 to #s]:", s[7 to #s])
+    console.print("s[0 to 5]:", s[0:5])
+    console.print("s[7 to #s]:", s[7:#s])
     console.print("s[7:]:", s[7:])
     console.print("s[:5]:", s[:5])
-    console.print("s[3 to 3]:", s[3 to 3])
+    console.print("s[3 to 3]:", s[3:3])
 
     let xs = [10, 20, 30, 40, 50]
-    let mid = xs[1 to 4]
+    let mid = xs[1:4]
     console.print("mid[0]:", mid[0])
     console.print("mid[2]:", mid[2])
     console.print("#mid:", #mid)
@@ -22,6 +22,6 @@ void main()
     console.print("tail[0]:", tail[0])
 
     // the idiom the compiler itself leans on: drop the last element
-    let front = xs[0 to #xs - 1]
+    let front = xs[0:#xs - 1]
     console.print("#front:", #front)
     console.print("front last:", front[#front - 1])

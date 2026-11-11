@@ -1027,26 +1027,29 @@ main.km:3:11: error: cannot add 'string' and 'int' (use string(x) or an interpol
 | `recv.field` | field access |
 | `mod::name` / `mod.name` | module member (section 14) |
 | `arr[i]` | element; out of range throws |
-| `arr[a to b]` | slice |
+| `arr[a:b]` | slice |
 | `f(args)?` | protected call (section 16) |
 | `Type::Variant` | enum value (section 12) |
 
 ### 7.1 Slices
 
-`a[i to j]` gives the elements from `i` up to, not including, `j`. Either bound
-may be left out: `a[2:]`, `a[:5]`. A slice is a new value: changing it does
-not change the original.
+`a[i:j]` gives the elements from `i` up to, not including, `j`. Either bound
+may be left out: `a[2:]`, `a[:5]`. A negative bound counts from the end, so
+`a[-2:]` is the last two items and `a[:-1]` is all but the last. Bounds past
+either end are clamped, so `a[0:99]` is the whole thing. A slice is a new
+value: changing it does not change the original. Strings follow the same
+rules. The older spelling `a[i to j]` still works but warns; use `:`.
 
 ```km
 void main()
     let s = "hello, world"
-    print(s[0 to 5])
-    print(s[7 to #s])
+    print(s[0:5])
+    print(s[7:#s])
     print(s[7:])
     print(s[:5])
     let xs = [10, 20, 30, 40, 50]
-    print(xs[1 to 4], xs[2:])
-    let ys = xs[0 to 2]
+    print(xs[1:4], xs[2:])
+    let ys = xs[0:2]
     xs[0] = 9
     print(ys[0], xs[0])
 ```

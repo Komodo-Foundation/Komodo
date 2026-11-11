@@ -437,15 +437,25 @@ const char *km_str_join(KmArray *parts, const char *sep)
     return out;
 }
 
-/* `arr[start to end]` — a fresh array holding the half-open range.
- * `end < 0` (or past the end) means "to the length"; bounds are clamped. */
+/* Slice bounds: a negative bound counts from the end (-1 is the last item),
+ * then every bound is clamped to 0..n. */
+static int64_t km_slice_bound(int64_t i, int64_t n)
+{
+    if (i < 0) {
+        i += n;
+        if (i < 0) i = 0;
+    }
+    if (i > n) i = n;
+    return i;
+}
+
+/* `arr[start to end]` — a fresh array holding the half-open range, with the
+ * same bounds rule as strings (km_slice_bound). */
 KmArray *km_array_slice(KmArray *a, int64_t start, int64_t end)
 {
     int64_t n = a->len;
-    if (end < 0 || end > n)
-        end = n;
-    if (start < 0)
-        start = 0;
+    start = km_slice_bound(start, n);
+    end = km_slice_bound(end, n);
     if (start > end)
         start = end;
     int64_t len = end - start;
@@ -468,18 +478,15 @@ KmArray *km_array_repeat(KmArray *a, int64_t n)
 
 /* ── string operators ── */
 
-/* `s[start to end]` — a fresh NUL-terminated substring, same clamping. */
+/* `s[start to end]` — a fresh NUL-terminated substring. */
 const char *km_str_slice(const char *s, int64_t start, int64_t end)
 {
     if (!s) s = "";
-    /* Only measure as far as `end`: a short slice of a int64_t string (a
-     * lexer cutting tokens out of its source) must not cost a full
-     * strlen each time. */
-    int64_t n = end < 0 ? (int64_t)strlen(s) : (int64_t)strnlen(s, (size_t)end);
-    if (end < 0 || end > n)
-        end = n;
-    if (start < 0)
-        start = 0;
+    /* Only measure as far as `end` when both bounds are non-negative: a short
+     * slice of a long string must not cost a full strlen each time. */
+    int64_t n = (start < 0 || end < 0) ? (int64_t)strlen(s) : (int64_t)strnlen(s, (size_t)end);
+    start = km_slice_bound(start, n);
+    end = km_slice_bound(end, n);
     if (start > end)
         start = end;
     return km_strndup(s + start, (size_t)(end - start));
@@ -784,16 +791,14 @@ int64_t km_str_ends(const char *s, const char *p)
 }
 
 /* `s[start to end]` for a caller that already knows `n == #s` — the same
- * clamping as km_str_slice, without re-measuring `s`.  The lexer cuts
+ * bounds rule as km_str_slice, without re-measuring `s`.  The lexer cuts
  * every token out of a source of hundreds of KB; measuring up to `end`
  * each time made that quadratic. */
 const char *km_str_sub(const char *s, int64_t n, int64_t start, int64_t end)
 {
     if (!s) { s = ""; n = 0; }
-    if (end < 0 || end > n)
-        end = n;
-    if (start < 0)
-        start = 0;
+    start = km_slice_bound(start, n);
+    end = km_slice_bound(end, n);
     if (start > end)
         start = end;
     return km_strndup(s + start, (size_t)(end - start));

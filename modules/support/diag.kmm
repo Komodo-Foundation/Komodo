@@ -58,16 +58,16 @@ fn dgIndexFrom(s: string, sub: string, from: int): int
     let m = sub.length
     let i = from
     while i + m <= n do
-        if s[i to (i + m)] == sub then
+        if s[i:(i + m)] == sub then
             return i
         i += 1
     return 0 - 1
 
 fn dgStarts(s: string, p: string): bool
-    return s.length >= p.length and s[0 to p.length] == p
+    return s.length >= p.length and s[0:p.length] == p
 
 fn dgEnds(s: string, p: string): bool
-    return s.length >= p.length and s[(s.length - p.length) to s.length] == p
+    return s.length >= p.length and s[(s.length - p.length):s.length] == p
 
 fn dgSplit(s: string, sep: string): [string]
     let out: [string] = []
@@ -75,9 +75,9 @@ fn dgSplit(s: string, sep: string): [string]
     while true do
         let j = dgIndexFrom(s, sep, i)
         if j < 0 then
-            out += [s[i to s.length]]
+            out += [s[i:s.length]]
             return out
-        out += [s[i to j]]
+        out += [s[i:j]]
         i = j + sep.length
     return out
 
@@ -105,7 +105,7 @@ fn dgParse(text: string): DiagItem
     let sevs = ["error", "warning"]
     for sv in sevs do
         if dgStarts(text, sv + ": ") then
-            return new DiagItem("", 0, 0, sv, text[(sv.length + 2) to text.length], true)
+            return new DiagItem("", 0, 0, sv, text[(sv.length + 2):text.length], true)
     let i = 0
     let n = text.length
     while i < n do
@@ -118,8 +118,8 @@ fn dgParse(text: string): DiagItem
                 while k < n and dgIsDigit(text[k]) do
                     k += 1
                 for sv in sevs do
-                    if dgStarts(text[k to n], ": " + sv + ": ") then
-                        return new DiagItem(text[0 to i], dgNum(text[(i + 1) to j]), dgNum(text[(j + 1) to k]), sv, text[(k + sv.length + 4) to n], true)
+                    if dgStarts(text[k:n], ": " + sv + ": ") then
+                        return new DiagItem(text[0:i], dgNum(text[(i + 1):j]), dgNum(text[(j + 1):k]), sv, text[(k + sv.length + 4):n], true)
         i += 1
     return new DiagItem("", 0, 0, "error", "", false)
 
@@ -143,12 +143,12 @@ fn dgGlob(pat: string, s: string): [string]
             // the tail must be a suffix, and must not overlap what is consumed
             if s.length - seg.length < pos or not dgEnds(s, seg) then
                 return fail
-            caps += [s[pos to (s.length - seg.length)]]
+            caps += [s[pos:(s.length - seg.length)]]
             return caps
         let at = dgIndexFrom(s, seg, pos)
         if at < 0 then
             return fail
-        caps += [s[pos to at]]
+        caps += [s[pos:at]]
         pos = at + seg.length
         k += 1
     return caps
@@ -158,8 +158,8 @@ fn dgSplitSuggest(msg: string): [string]
     let tag = " (did you mean '"
     let at = dgIndexFrom(msg, tag, 0)
     if at >= 0 and dgEnds(msg, "'?)") then
-        let sug = msg[(at + tag.length) to (msg.length - 3)]
-        return [msg[0 to at], sug]
+        let sug = msg[(at + tag.length):(msg.length - 3)]
+        return [msg[0:at], sug]
     return [msg, ""]
 
 // ── colour ──
@@ -188,7 +188,7 @@ fn dgExpand(s: string): string
         if s[i] == "\t" then
             out += "    "
         else if s[i] != "\r" then
-            out += s[i to (i + 1)]
+            out += s[i:(i + 1)]
         i += 1
     return out
 
@@ -258,7 +258,7 @@ fn dgClip(e: string, avail: int, keep: int): [string]
         post = "..."
     else
         stop = e.length
-    let body = e[(start + pre.length) to (stop - post.length)]
+    let body = e[(start + pre.length):(stop - post.length)]
     return [pre + body + post, string(start - pre.length)]
 
 // one `NNN | text` row
@@ -309,7 +309,7 @@ mut dgSnippet(d: DiagItem, label: string, span: string): string
     let e = dgExpand(srcLine)
     let cs = dgWidthOf(srcLine, d.col - 1)
     let tl = dgTokLen(srcLine, d.col - 1)
-    let cw = dgWidthOf(srcLine[(d.col - 1) to (d.col - 1 + tl)], tl)
+    let cw = dgWidthOf(srcLine[(d.col - 1):(d.col - 1 + tl)], tl)
     if last == ln then
         let clipped = dgClip(e, avail, cs)
         let shift = dgNum(clipped[1])
@@ -349,7 +349,7 @@ fn dgFill(tpl: string, caps: [string]): string
         let tag = "{" + string(i) + "}"
         let at = dgIndexFrom(out, tag, 0)
         while at >= 0 do
-            out = out[0 to at] + caps[i] + out[(at + 3) to out.length]
+            out = out[0:at] + caps[i] + out[(at + 3):out.length]
             at = dgIndexFrom(out, tag, at + caps[i].length)
         i += 1
     return out
@@ -452,4 +452,4 @@ mut diagReport(items: [string]): string
         out += dgPaint("1;31", "error") + dgPaint("1", ": aborting due to " + string(errs) + " errors") + "\n"
     else
         out += dgPaint("1;31", "error") + dgPaint("1", ": aborting due to previous error") + "\n"
-    return out[0 to (out.length - 1)]
+    return out[0:(out.length - 1)]
