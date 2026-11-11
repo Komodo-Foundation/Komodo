@@ -58,6 +58,6 @@ per-type grouping, and both operands are written out, but there is no `self`.
 
 ## Decisions needed from Lukas
 
-1. Confirm the syntax `fn(operator +)(other)` inside the struct, and what `ex:` means.
+1. Syntax `fn(operator +)(other)` inside the struct: confirmed by Lukas.
 2. Ordering: declare each of `< <= > >=`, or derive all four from `<`?
 3. Include `+=`-style compound forms now (desugared to `a = a + b`) or later?
