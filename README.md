@@ -76,6 +76,43 @@ komodo lib                      # .o, .a, .so and a C/C++ header for `export fn`
 
 Everything else is in the docs.
 
+## Memory management
+
+Memory is garbage-collected, so nothing is freed by hand. Two modifiers control how an object can be shared:
+
+- **`shared struct`** (the default; plain `struct` means the same) — values alias. `let b = a` gives two names for one object. `copy(a)` makes a deep copy.
+- **`unique struct`** — one owner. Assigning it to another name or returning it moves it, and the old name is invalid until it is assigned again. Passing it to a function only borrows it.
+
+`class` takes the same modifiers.
+
+```km
+import console
+
+shared struct Box
+    v: int
+
+unique struct Handle
+    id: int
+
+void main()
+    let a = new Box(1)
+    let b = a
+    b.v = 7
+    console.print("shared:", a.v)
+
+    let h = new Handle(1)
+    let g = h
+    h = new Handle(2)
+    console.print("unique:", h.id, g.id)
+```
+
+```text
+shared: 7
+unique: 2 1
+```
+
+Full rules: [language reference, section 15](docs/language/reference.md#15-memory-and-ownership).
+
 ## Documentation
 
 | | |
