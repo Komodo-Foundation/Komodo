@@ -2,22 +2,56 @@
   "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
   "name": "Komodo",
   "scopeName": "source.komodo",
-  "fileTypes": ["km", "kmm"],
+  "fileTypes": [
+    "km",
+    "kmm"
+  ],
   "patterns": [
-    { "include": "#comments" },
-    { "include": "#strings" },
-    { "include": "#chars" },
-    { "include": "#numbers" },
-    { "include": "#declarations" },
-    { "include": "#keywords" },
-    { "include": "#constants" },
-    { "include": "#types" },
-    { "include": "#builtins" },
-    { "include": "#modifiers" },
-    { "include": "#operators" },
-    { "include": "#modules" },
-    { "include": "#members" },
-    { "include": "#calls" }
+    {
+      "include": "#comments"
+    },
+    {
+      "include": "#strings"
+    },
+    {
+      "include": "#chars"
+    },
+    {
+      "include": "#numbers"
+    },
+    {
+      "include": "#declarations"
+    },
+    {
+      "include": "#keywords"
+    },
+    {
+      "include": "#constants"
+    },
+    {
+      "include": "#builtins"
+    },
+    {
+      "include": "#types"
+    },
+    {
+      "include": "#modifiers"
+    },
+    {
+      "include": "#operators"
+    },
+    {
+      "include": "#modules"
+    },
+    {
+      "include": "#members"
+    },
+    {
+      "include": "#typenames"
+    },
+    {
+      "include": "#calls"
+    }
   ],
   "repository": {
     "comments": {
@@ -26,17 +60,44 @@
           "name": "comment.block.documentation.komodo",
           "begin": "/\\*\\*(?!/)",
           "end": "\\*/",
-          "captures": { "0": { "name": "punctuation.definition.comment.komodo" } }
+          "captures": {
+            "0": {
+              "name": "punctuation.definition.comment.komodo"
+            }
+          },
+          "patterns": [
+            {
+              "name": "keyword.other.todo.komodo",
+              "match": "\\b(TODO|FIXME|XXX|NOTE)\\b"
+            }
+          ]
         },
         {
           "name": "comment.block.komodo",
           "begin": "/\\*",
           "end": "\\*/",
-          "captures": { "0": { "name": "punctuation.definition.comment.komodo" } }
+          "captures": {
+            "0": {
+              "name": "punctuation.definition.comment.komodo"
+            }
+          },
+          "patterns": [
+            {
+              "name": "keyword.other.todo.komodo",
+              "match": "\\b(TODO|FIXME|XXX|NOTE)\\b"
+            }
+          ]
         },
         {
+          "begin": "//",
+          "end": "$",
           "name": "comment.line.double-slash.komodo",
-          "match": "//.*$"
+          "patterns": [
+            {
+              "name": "keyword.other.todo.komodo",
+              "match": "\\b(TODO|FIXME|XXX|NOTE)\\b"
+            }
+          ]
         }
       ]
     },
@@ -47,7 +108,10 @@
           "begin": "\"",
           "end": "\"",
           "patterns": [
-            { "name": "constant.character.escape.komodo", "match": "\\\\(?:[ntr0\\\\\"]|.)" }
+            {
+              "name": "constant.character.escape.komodo",
+              "match": "\\\\(?:[ntr0\\\\\"]|.)"
+            }
           ]
         },
         {
@@ -55,14 +119,29 @@
           "begin": "`",
           "end": "`",
           "patterns": [
-            { "name": "constant.character.escape.komodo", "match": "\\\\[\\s\\S]" },
+            {
+              "name": "constant.character.escape.komodo",
+              "match": "\\\\[\\s\\S]"
+            },
             {
               "name": "meta.embedded.line.komodo",
               "begin": "\\{",
               "end": "\\}",
-              "beginCaptures": { "0": { "name": "punctuation.section.embedded.begin.komodo" } },
-              "endCaptures": { "0": { "name": "punctuation.section.embedded.end.komodo" } },
-              "patterns": [{ "include": "$self" }]
+              "beginCaptures": {
+                "0": {
+                  "name": "punctuation.section.embedded.begin.komodo"
+                }
+              },
+              "endCaptures": {
+                "0": {
+                  "name": "punctuation.section.embedded.end.komodo"
+                }
+              },
+              "patterns": [
+                {
+                  "include": "$self"
+                }
+              ]
             }
           ]
         }
@@ -74,10 +153,22 @@
     },
     "numbers": {
       "patterns": [
-        { "name": "constant.numeric.hex.komodo", "match": "\\b0[xX][0-9a-fA-F_]+\\b" },
-        { "name": "constant.numeric.binary.komodo", "match": "\\b0[bB][01_]+\\b" },
-        { "name": "constant.numeric.float.komodo", "match": "\\b[0-9][0-9_]*\\.[0-9][0-9_]*[fF]?\\b" },
-        { "name": "constant.numeric.integer.komodo", "match": "\\b[0-9][0-9_]*\\b" }
+        {
+          "name": "constant.numeric.hex.komodo",
+          "match": "\\b0[xX][0-9a-fA-F_]+\\b"
+        },
+        {
+          "name": "constant.numeric.binary.komodo",
+          "match": "\\b0[bB][01_]+\\b"
+        },
+        {
+          "name": "constant.numeric.float.komodo",
+          "match": "\\b[0-9][0-9_]*\\.[0-9][0-9_]*[fF]?\\b"
+        },
+        {
+          "name": "constant.numeric.integer.komodo",
+          "match": "\\b[0-9][0-9_]*\\b"
+        }
       ]
     },
     "declarations": {
@@ -85,22 +176,34 @@
         {
           "match": "\\b(fn|void|mut)\\s+([A-Za-z_][A-Za-z0-9_]*)",
           "captures": {
-            "1": { "name": "storage.type.komodo" },
-            "2": { "name": "entity.name.function.komodo" }
+            "1": {
+              "name": "storage.type.komodo"
+            },
+            "2": {
+              "name": "entity.name.function.komodo"
+            }
           }
         },
         {
           "match": "\\b(struct|class|enum)\\s+([A-Za-z_][A-Za-z0-9_]*)",
           "captures": {
-            "1": { "name": "storage.type.komodo" },
-            "2": { "name": "entity.name.type.komodo" }
+            "1": {
+              "name": "storage.type.komodo"
+            },
+            "2": {
+              "name": "entity.name.type.komodo"
+            }
           }
         },
         {
           "match": "\\b(module)\\s+([A-Za-z_][A-Za-z0-9_]*)",
           "captures": {
-            "1": { "name": "keyword.other.komodo" },
-            "2": { "name": "entity.name.namespace.komodo" }
+            "1": {
+              "name": "keyword.other.komodo"
+            },
+            "2": {
+              "name": "entity.name.namespace.komodo"
+            }
           }
         }
       ]
@@ -143,7 +246,7 @@
     },
     "builtins": {
       "name": "support.function.builtin.komodo",
-      "match": "\\b(print|assert|copy|data|join)\\b(?=\\s*\\()"
+      "match": "\\b(print|assert|copy|data|join|string|int|float)\\b(?=\\s*\\()"
     },
     "operators": {
       "name": "keyword.operator.komodo",
@@ -154,19 +257,31 @@
         {
           "match": "([A-Za-z_][A-Za-z0-9_]*)(::)",
           "captures": {
-            "1": { "name": "entity.name.namespace.komodo" },
-            "2": { "name": "punctuation.separator.namespace.komodo" }
+            "1": {
+              "name": "entity.name.namespace.komodo"
+            },
+            "2": {
+              "name": "punctuation.separator.namespace.komodo"
+            }
           }
         }
       ]
     },
     "members": {
       "match": "\\.([A-Za-z_][A-Za-z0-9_]*)",
-      "captures": { "1": { "name": "variable.other.member.komodo" } }
+      "captures": {
+        "1": {
+          "name": "variable.other.member.komodo"
+        }
+      }
     },
     "calls": {
       "name": "entity.name.function.call.komodo",
       "match": "\\b[A-Za-z_][A-Za-z0-9_]*(?=\\s*\\()"
+    },
+    "typenames": {
+      "name": "entity.name.type.komodo",
+      "match": "\\b[A-Z][A-Za-z0-9_]*\\b(?!\\s*::)"
     }
   }
 }

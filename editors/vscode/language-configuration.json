@@ -1,38 +1,135 @@
 {
   "comments": {
     "lineComment": "//",
-    "blockComment": ["/*", "*/"]
+    "blockComment": [
+      "/*",
+      "*/"
+    ]
   },
   "brackets": [
-    ["{", "}"],
-    ["[", "]"],
-    ["(", ")"]
+    [
+      "{",
+      "}"
+    ],
+    [
+      "[",
+      "]"
+    ],
+    [
+      "(",
+      ")"
+    ]
   ],
   "autoClosingPairs": [
-    { "open": "{", "close": "}" },
-    { "open": "[", "close": "]" },
-    { "open": "(", "close": ")" },
-    { "open": "\"", "close": "\"", "notIn": ["string"] },
-    { "open": "`", "close": "`", "notIn": ["string"] },
-    { "open": "/**", "close": " */", "notIn": ["string"] }
+    {
+      "open": "{",
+      "close": "}"
+    },
+    {
+      "open": "[",
+      "close": "]"
+    },
+    {
+      "open": "(",
+      "close": ")"
+    },
+    {
+      "open": "\"",
+      "close": "\"",
+      "notIn": [
+        "string"
+      ]
+    },
+    {
+      "open": "`",
+      "close": "`",
+      "notIn": [
+        "string"
+      ]
+    },
+    {
+      "open": "/**",
+      "close": " */",
+      "notIn": [
+        "string"
+      ]
+    },
+    {
+      "open": "'",
+      "close": "'",
+      "notIn": [
+        "string",
+        "comment"
+      ]
+    }
   ],
   "surroundingPairs": [
-    ["{", "}"],
-    ["[", "]"],
-    ["(", ")"],
-    ["\"", "\""],
-    ["`", "`"]
+    [
+      "{",
+      "}"
+    ],
+    [
+      "[",
+      "]"
+    ],
+    [
+      "(",
+      ")"
+    ],
+    [
+      "\"",
+      "\""
+    ],
+    [
+      "`",
+      "`"
+    ],
+    [
+      "'",
+      "'"
+    ]
   ],
   "folding": {
     "offSide": true,
     "markers": {
-      "start": "^\\s*(fn|void|mut|struct|class|enum|match|constructor|module|public|private)\\b",
-      "end": "^\\s*$"
+      "start": "^\\s*//\\s*#?region\\b",
+      "end": "^\\s*//\\s*#?endregion\\b"
     }
   },
   "indentationRules": {
     "increaseIndentPattern": "^(?!.*\\b(then|do)\\s+\\S)\\s*(((abstract|shared|unique|export|extern|public|private)\\s+)*(fn|void|mut|struct|class|enum|match|case|constructor|else|if|for|while|public|private)\\b.*|.*\\b(then|do)\\s*)$",
     "decreaseIndentPattern": "^\\s*(else|case)\\b"
   },
-  "wordPattern": "[A-Za-z_][A-Za-z0-9_]*"
+  "wordPattern": "[A-Za-z_][A-Za-z0-9_]*",
+  "onEnterRules": [
+    {
+      "beforeText": "^\\s*/\\*\\*(?!/)([^\\*]|\\*(?!/))*$",
+      "afterText": "^\\s*\\*/$",
+      "action": {
+        "indent": "indentOutdent",
+        "appendText": " * "
+      }
+    },
+    {
+      "beforeText": "^\\s*/\\*\\*(?!/)([^\\*]|\\*(?!/))*$",
+      "action": {
+        "indent": "none",
+        "appendText": " * "
+      }
+    },
+    {
+      "beforeText": "^(\\t|[ ])*[ ]\\*([ ]([^\\*]|\\*(?!/))*)?$",
+      "action": {
+        "indent": "none",
+        "appendText": "* "
+      }
+    },
+    {
+      "beforeText": "^\\s*(return|throw|break|continue)\\b.*$",
+      "action": {
+        "indent": "outdent"
+      }
+    }
+  ],
+  "autoCloseBefore": ";:.,=}])> \n\t"
 }

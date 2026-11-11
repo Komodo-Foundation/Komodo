@@ -67,5 +67,110 @@
       "else",
       "    $0"
     ]
+  },
+  "while": {
+    "prefix": "while",
+    "description": "While loop",
+    "body": [
+      "while ${1:cond}",
+      "    $0"
+    ]
+  },
+  "ifelse": {
+    "prefix": "ifelse",
+    "description": "if / else",
+    "body": [
+      "if ${1:cond}",
+      "    $2",
+      "else",
+      "    $0"
+    ]
+  },
+  "fnvoid": {
+    "prefix": "void",
+    "description": "Function with no return value",
+    "body": [
+      "void ${1:name}(${2})",
+      "    $0"
+    ]
+  },
+  "mut": {
+    "prefix": "mut",
+    "description": "Mutating method",
+    "body": [
+      "mut ${1:name}(${2})",
+      "    $0"
+    ]
+  },
+  "struct": {
+    "prefix": "struct",
+    "description": "Struct",
+    "body": [
+      "struct ${1:Name}",
+      "    ${2:field}: ${3:int}$0"
+    ]
+  },
+  "enum": {
+    "prefix": "enum",
+    "description": "Enum",
+    "body": [
+      "enum ${1:Name}",
+      "    ${2:First}",
+      "    ${3:Second}$0"
+    ]
+  },
+  "module": {
+    "prefix": "module",
+    "description": "Module file (.kmm) with public and private sections",
+    "body": [
+      "module ${1:name}",
+      "",
+      "public",
+      "    fn ${2:hello}(): ${3:string}",
+      "        $0",
+      "",
+      "private",
+      "    fn ${4:helper}()",
+      "        return"
+    ]
+  },
+  "import": {
+    "prefix": "import",
+    "description": "Import a module",
+    "body": [
+      "import ${1:console}"
+    ]
+  },
+  "macro": {
+    "prefix": "letbe",
+    "description": "Compile-time macro",
+    "body": [
+      "let ${1:NAME} be ${2:value}"
+    ]
+  },
+  "constructor": {
+    "prefix": "constructor",
+    "description": "Class constructor",
+    "body": [
+      "constructor(${1:value}: ${2:int})",
+      "    m_${1:value} = ${1:value}"
+    ]
+  },
+  "protected": {
+    "prefix": "try",
+    "description": "Protected call: null on error",
+    "body": [
+      "let ${1:result} = ${2:call}()?",
+      "if ${1:result} == null then",
+      "    $0"
+    ]
+  },
+  "test": {
+    "prefix": "test",
+    "description": "Test file body (name it *_test.km)",
+    "body": [
+      "void main()",
+      "    assert(${1:1 + 1 == 2}, \"${2:arithmetic works}\")$0"
+    ]
   }
 }
