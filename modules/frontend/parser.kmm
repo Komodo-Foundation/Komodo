@@ -395,6 +395,31 @@ private
             i += 1
         return false
 
+    // Mangled method names for overloadable operators.  Only the names
+    // are fixed here; sema lowers `a + b` to a call of `op_add` on `a`.
+    fn operatorMethodName(op: string): string
+        if op == "+" then
+            return "op_add"
+        if op == "-" then
+            return "op_sub"
+        if op == "*" then
+            return "op_mul"
+        if op == "/" then
+            return "op_div"
+        if op == "%" then
+            return "op_mod"
+        if op == "==" then
+            return "op_eq"
+        if op == "<" then
+            return "op_lt"
+        if op == "<=" then
+            return "op_le"
+        if op == ">" then
+            return "op_gt"
+        if op == ">=" then
+            return "op_ge"
+        throw "operator '" + op + "' cannot be overloaded"
+
     mut parseFunction(): FunctionDecl
         let fnLine = peek().line
         let fnCol = peek().column
@@ -409,8 +434,20 @@ private
                 isMut = true
             eat()
 
-        let name = peek().lexeme
-        eat()
+        let name = ""
+        if at(TokenType::OPEN_PAREN) then
+            // `fn(operator +)(other)` — an operator method.  Its name is
+            // a mangled identifier (`op_add`), so it survives codegen.
+            eat()                       // (
+            if peek().lexeme != "operator" then
+                throw "expected 'operator' in 'fn(operator <op>)'"
+            eat()                       // operator
+            name = operatorMethodName(peek().lexeme)
+            eat()                       // <op>
+            eat()                       // )
+        else
+            name = peek().lexeme
+            eat()
 
         // `void Codegen::genExpr(e)` — a method body written outside its
         // class.  The name before `::` is the owning class; `parseProgram`
