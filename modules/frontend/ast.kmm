@@ -356,7 +356,7 @@ struct ImportDecl : Declaration
 // relative to wherever the compiler is invoked from) — only valid inside
 // a module (a file that starts with `module <name>`; the parser rejects
 // it elsewhere). Declares what a library's interface file needs linked
-// in alongside it — see design.md's "Standard library" section and
+// in alongside it — see docs/language/reference.md's "Standard library" section and
 // stdlib/sdl2.kmm. Codegen ignores this; it is a build-time detail the
 // driver (main.km) collects into `<program>.links` for the `komodo` CLI.
 struct LinkDecl : Declaration

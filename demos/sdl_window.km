@@ -9,7 +9,7 @@
 // links it automatically. Only the shared library needs to be installed,
 // not the -dev headers. Write the same kind of file — `extern fn`
 // prototypes + one `link` line — to wire up any other C library the same
-// way; see stdlib/sdl2.kmm and design.md's "Standard library" section.
+// way; see stdlib/sdl2.kmm and docs/language/reference.md's "Standard library" section.
 //
 // Opens an 800x600 window and runs a real event loop — pumping SDL_Event
 // records through a Komodo array with `data()` — until the window is
