@@ -9,6 +9,6 @@ void main()
         total += i
     let done = total > 5
     if done then
-        print(total)
+        console.print(total)
     if not done then
-        print("small")
+        console.print("small")

@@ -304,6 +304,10 @@ private
             let base = m_tokens[#m_tokens - 2]
             if dot.type == TokenType::DOT and base.type == TokenType::IDENT and base.lexeme == "string" then
                 deprecated("'string.length(s)' is deprecated: use '#s'")
+        // bare `print(...)` is deprecated: `console.print(...)` is the one plain-output call.
+        if text == "print" and peek() == "(" and #m_tokens >= 1 then
+            if m_tokens[#m_tokens - 1].type != TokenType::DOT then
+                deprecated("'print(...)' is deprecated: use 'console.print(...)'")
         // most identifiers are not keywords — one hash probe skips the
         // whole chain of string compares below for them
         if not isKeyword(text) then

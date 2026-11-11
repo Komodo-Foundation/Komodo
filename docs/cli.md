@@ -82,7 +82,7 @@ Import the name; that is all.
 import zlib
 
 void main()
-    print(zlib::zlibVersion())
+    console.print(zlib::zlibVersion())
 ```
 
 For an `import NAME` that is neither a module of your project (a `NAME.km` or
@@ -240,8 +240,8 @@ assembly is shorter. The file is `opt.km`.
 void main()
     let n = 7
     if 2 > 3 then
-        print("never")
-    print(n * 1 + 0, 2 + 3 * 4)
+        console.print("never")
+    console.print(n * 1 + 0, 2 + 3 * 4)
 ```
 
 ```bash
@@ -271,7 +271,7 @@ Example, a program with an unused local, saved as `unused.km`:
 ```km
 void main()
     let unused = 42
-    print("hello")
+    console.print("hello")
 ```
 
 ```bash

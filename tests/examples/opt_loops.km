@@ -19,11 +19,11 @@ fn countUntil(stop: int): int
     return i
 
 fn main()
-    print(firstOver(50))
-    print(countUntil(5))
+    console.print(firstOver(50))
+    console.print(countUntil(5))
     let total = 0
     let k = 0
     while k < 4 do
         total += k
         k += 1
-    print(total)
+    console.print(total)

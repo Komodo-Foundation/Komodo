@@ -5,10 +5,10 @@ error[K0146]: match on enum 'Color' is not exhaustive — missing: Blue
  7 |     let c = Color::Red
  8 | /     match c
  9 | |         case Color::Red
-10 | |             print("red")
+10 | |             console.print("red")
 11 | |         case Color::Green
-12 | |             print("green")
-   | |__________________________^ match on enum 'Color' is not exhaustive — missing: Blue
+12 | |             console.print("green")
+   | |__________________________________^ match on enum 'Color' is not exhaustive — missing: Blue
    = help: Add a `case` for Blue, or an `else` branch.
    = why: Under `--strict`, a `match` on an enum must name every variant or end with `else`, so
           adding a variant later cannot slip through unhandled.

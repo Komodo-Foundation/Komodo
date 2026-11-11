@@ -4,8 +4,8 @@ import c_string
 import c_ctype
 
 void main()
-    print(c_string::strlen("hello"))
-    print(c_string::strcmp("abc", "abc"))
-    print(c_ctype::isdigit(55) != 0)
-    print(c_ctype::toupper(97))
-    print(c_ctype::tolower(65))
+    console.print(c_string::strlen("hello"))
+    console.print(c_string::strcmp("abc", "abc"))
+    console.print(c_ctype::isdigit(55) != 0)
+    console.print(c_ctype::toupper(97))
+    console.print(c_ctype::tolower(65))

@@ -62,7 +62,7 @@ intended is not stated as a rule; it is listed under
 
 ```km
 void main()
-    print("Hello, Komodo!")
+    console.print("Hello, Komodo!")
 ```
 
 ```text
@@ -75,7 +75,7 @@ compiler was given no arguments in this check, so `#args` is 1.
 
 ```km
 void main(args)
-    print(#args)
+    console.print(#args)
 ```
 
 ```text
@@ -112,8 +112,8 @@ comment.
 
 /** A doc comment. */
 void main()
-    print("comments are ignored") // trailing comment
-    /* outer /* inner */ print("the first */ ends the comment")
+    console.print("comments are ignored") // trailing comment
+    /* outer /* inner */ console.print("the first */ ends the comment")
 ```
 
 ```text
@@ -131,9 +131,9 @@ to a level that is already open.
 void main()
     let n = 7
     if n > 5 then
-        print("big")
+        console.print("big")
     else
-        print("small")
+        console.print("small")
 ```
 
 ```text
@@ -143,8 +143,8 @@ big
 <!-- doc-error -->
 ```km
 void main()
-    print(1)
-  print(2)
+    console.print(1)
+  console.print(2)
 ```
 
 ```text
@@ -160,7 +160,7 @@ matters.
 void main()
     let _x = 3
     let x_1 = _x + 1
-    print(x_1)
+    console.print(x_1)
 ```
 
 ```text
@@ -173,7 +173,7 @@ Case matters: `A` and `a` are different names.
 void main()
     let A = 1
     let a = 2
-    print(A, a)
+    console.print(A, a)
 ```
 
 ```text
@@ -206,7 +206,7 @@ void main()
     let public = 3
     let self = 4
     let elif = 5
-    print(type + end + public + self + elif)
+    console.print(type + end + public + self + elif)
 ```
 
 ```text
@@ -237,7 +237,7 @@ There is no exponent notation and no `0o` octal literal:
 ```km
 void main()
     let x = 0o17
-    print(x)
+    console.print(x)
 ```
 
 ```text
@@ -248,7 +248,7 @@ main.km:2:14: error: undefined name 'o17'
 ```km
 void main()
     let x = 1e3
-    print(x)
+    console.print(x)
 ```
 
 ```text
@@ -259,8 +259,8 @@ main.km:2:14: error: undefined name 'e3'
 
 ```km
 void main()
-    print(0xFF, 0b1010, 1_000_000, 0xFF_FF)
-    print(0xff + 1, 0b1111_0000)
+    console.print(0xFF, 0b1010, 1_000_000, 0xFF_FF)
+    console.print(0xff + 1, 0b1111_0000)
 ```
 
 ```text
@@ -274,8 +274,8 @@ A float literal has a `.`. The suffix `f` forces a float: `2f` is `2.0`.
 
 ```km
 void main()
-    print(1_000.5, 2.0_5)
-    print(2f, 2.5f, 2.0f * 2, 1_0f)
+    console.print(1_000.5, 2.0_5)
+    console.print(2f, 2.5f, 2.0f * 2, 1_0f)
 ```
 
 ```text
@@ -291,9 +291,9 @@ Escapes: `\n` newline, `\t` tab, `\\` backslash, `\"` quote, `\'` apostrophe,
 
 ```km
 void main()
-    print("quote:\" back:\\ apostrophe:\'")
-    print("line1\nline2")
-    print("\x41\101A café")
+    console.print("quote:\" back:\\ apostrophe:\'")
+    console.print("line1\nline2")
+    console.print("\x41\101A café")
 ```
 
 ```text
@@ -318,10 +318,10 @@ backtick string.
 void main()
     let n = 3
     let who = "world"
-    print(`hello {who}, next is {n + 1}`)
-    print(`big? {n > 2 and "yes" or "no"}`)
-    print(`literal \{braces\} and a \`tick\``)
-    print(`nested {`in {n}`}`)
+    console.print(`hello {who}, next is {n + 1}`)
+    console.print(`big? {n > 2 and "yes" or "no"}`)
+    console.print(`literal \{braces\} and a \`tick\``)
+    console.print(`nested {`in {n}`}`)
 ```
 
 ```text
@@ -339,7 +339,7 @@ need fixed decimals.
 ```km
 void main()
     let n = 7
-    print(`[{n:5}]`)
+    console.print(`[{n:5}]`)
 ```
 
 ```text
@@ -351,8 +351,8 @@ error: string(x) takes exactly one argument
 ```km
 void main()
     let c = 'a'
-    print(c, c == 'a', "abc"[1], "abc"[0] == 'a')
-    print(c == "a", '\'', '\\', '\"')
+    console.print(c, c == 'a', "abc"[1], "abc"[0] == 'a')
+    console.print(c == "a", '\'', '\\', '\"')
 ```
 
 ```text
@@ -371,7 +371,7 @@ A `char` compares equal to a one-character string. A `bool` prints as `1` or
 ```km
 void main()
     for i in 1 to 3
-        print(i)
+        console.print(i)
 ```
 
 ```text
@@ -409,7 +409,7 @@ void main()
     let d: i32 = -4
     let e: i64 = 9
     let f: uint = 2
-    print(a, b, c, d, e, f)
+    console.print(a, b, c, d, e, f)
 ```
 
 ```text
@@ -432,7 +432,7 @@ void main()
     let b: float = a
     let g: f32 = 2.5
     let h: f64 = 0.25
-    print(b, g + h, string(7.0))
+    console.print(b, g + h, string(7.0))
 ```
 
 ```text
@@ -445,7 +445,7 @@ Assigning a `float` to an `int` is an error. Use `int(x)` (section 17).
 ```km
 void main()
     let x: int = 1.5
-    print(x)
+    console.print(x)
 ```
 
 ```text
@@ -464,7 +464,7 @@ void main()
     e += [2, 3]
     let grid: [[int]] = []
     grid += [[1, 2]]
-    print(#e, e, #grid, grid[0][1])
+    console.print(#e, e, #grid, grid[0][1])
 ```
 
 ```text
@@ -476,7 +476,7 @@ Arrays and strings have `#x` and `x.length`:
 ```km
 void main()
     let xs = [1, 2]
-    print(xs.length, #xs, "ab".length)
+    console.print(xs.length, #xs, "ab".length)
 ```
 
 ```text
@@ -495,7 +495,7 @@ struct Node
 
 void main()
     let n: Node = null
-    print(n.value)
+    console.print(n.value)
 ```
 
 ```text
@@ -506,7 +506,7 @@ main.km:5:5: error: initialiser for 'n': type 'null' is not assignable to 'Node'
 void main()
     let s: string? = null
     let xs: [int]? = null
-    print(s, xs == null)
+    console.print(s, xs == null)
 ```
 
 ```text
@@ -529,14 +529,14 @@ fn find(xs: [int], want: int): int?
 void main()
     let hit = find([1, 2, 3], 2)
     if hit == null then
-        print("none")
+        console.print("none")
         return
-    print("found", hit + 1)
+    console.print("found", hit + 1)
     let miss = find([1], 9)
     if miss != null then
-        print("unexpected")
+        console.print("unexpected")
     else
-        print("miss is null")
+        console.print("miss is null")
 ```
 
 ```text
@@ -556,7 +556,7 @@ fn find(xs: [int], want: int): int?
 
 void main()
     let hit = find([1, 2, 3], 2)
-    print(hit + 1)
+    console.print(hit + 1)
 ```
 
 ```text
@@ -573,9 +573,9 @@ main.km:9:11: error: left operand of '+' is possibly null
 
 ```km
 void main()
-    print(int(3.99), int(-2.5), int(7))
-    print(string(2.0), string(true), string(42))
-    print(string(1.5) + "x", "pi~" + string(3))
+    console.print(int(3.99), int(-2.5), int(7))
+    console.print(string(2.0), string(true), string(42))
+    console.print(string(1.5) + "x", "pi~" + string(3))
 ```
 
 ```text
@@ -587,7 +587,7 @@ void main()
 <!-- doc-error -->
 ```km
 void main()
-    print(int("3"))
+    console.print(int("3"))
 ```
 
 ```text
@@ -603,7 +603,7 @@ accepts only struct and class names (section 6.5), not primitive types.
 ```km
 void main()
     let x = 1
-    print(x is int)
+    console.print(x is int)
 ```
 
 ```text
@@ -625,7 +625,7 @@ void main()
     count = count + 1
     let name: string = "Ada"
     let limit be 10
-    print(count, name, limit)
+    console.print(count, name, limit)
 ```
 
 ```text
@@ -649,12 +649,12 @@ let LIM: int be 10
 let NAMES be ["a", "b"]
 
 void main()
-    print("area:", AREA, "limit:", LIM + 1, #NAMES, NAMES[1])
+    console.print("area:", AREA, "limit:", LIM + 1, #NAMES, NAMES[1])
     let N be 10
     if WIDTH > 0
         let N be 99
-        print("inner:", N)
-    print("outer:", N)
+        console.print("inner:", N)
+    console.print("outer:", N)
 ```
 
 ```text
@@ -682,7 +682,7 @@ A `be` needs a value:
 ```km
 void main()
     let x be
-    print(x)
+    console.print(x)
 ```
 
 ```text
@@ -728,7 +728,7 @@ let a = b + 1
 let b = 2
 
 void main()
-    print(a, b)
+    console.print(a, b)
 ```
 
 ```text
@@ -740,7 +740,7 @@ error: undefined name 'b'
 let g
 
 void main()
-    print(1)
+    console.print(1)
 ```
 
 ```text
@@ -761,14 +761,14 @@ void main()
     n *= 2
     n /= 4
     n %= 7
-    print("n:", n)
+    console.print("n:", n)
     let xs = [2, 4, 6]
     xs[1] *= 10
     xs[2] -= 1
-    print(xs[0], xs[1], xs[2])
+    console.print(xs[0], xs[1], xs[2])
     let s = "x"
     s += "y"
-    print(s)
+    console.print(s)
 ```
 
 ```text
@@ -784,7 +784,7 @@ Assigning a value of the wrong type is an error:
 void main()
     let n = 1
     n = "text"
-    print(n)
+    console.print(n)
 ```
 
 ```text
@@ -797,7 +797,7 @@ Assigning to an undeclared name is an error:
 ```km
 void main()
     y = 3
-    print(y)
+    console.print(y)
 ```
 
 ```text
@@ -811,7 +811,7 @@ Loop variables and `be` names are immutable:
 void main()
     for i = 1 to 2
         i = 5
-    print(1)
+    console.print(1)
 ```
 
 ```text
@@ -845,11 +845,11 @@ question 23 before relying on them.
 
 ```km
 void main()
-    print(2 + 3 * 4, (2 + 3) * 4)
-    print(3 * 4 + 2 << 1, 1 << 2 < 5)
-    print(12 & 10 | 1 ^ 3)
-    print(not 0 == 5, 0 or 1 and 0, 1 or 0 and 0)
-    print(-2 * 3, - 2 * - 3)
+    console.print(2 + 3 * 4, (2 + 3) * 4)
+    console.print(3 * 4 + 2 << 1, 1 << 2 < 5)
+    console.print(12 & 10 | 1 ^ 3)
+    console.print(not 0 == 5, 0 or 1 and 0, 1 or 0 and 0)
+    console.print(-2 * 3, - 2 * - 3)
 ```
 
 ```text
@@ -867,9 +867,9 @@ dividend. A `float` operand makes the result a `float`.
 
 ```km
 void main()
-    print(7 / 2, 7 % 3, -7 / 2)
-    print(7 / -2, -7 % 3, 7 % -3)
-    print(1.0 / 4.0, -3.0 % 2.0)
+    console.print(7 / 2, 7 % 3, -7 / 2)
+    console.print(7 / -2, -7 % 3, 7 % -3)
+    console.print(1.0 / 4.0, -3.0 % 2.0)
 ```
 
 ```text
@@ -889,8 +889,8 @@ chain; see open question 1.
 
 ```km
 void main()
-    print(1.0 < 2.0, 5 < 6, 5 == 6, 5 != 6)
-    print((1 == 1) == 1)
+    console.print(1.0 < 2.0, 5 < 6, 5 == 6, 5 != 6)
+    console.print((1 == 1) == 1)
 ```
 
 ```text
@@ -908,7 +908,7 @@ struct A
 void main()
     let a = new A(1)
     let b = new A(1)
-    print(a == b, a != b)
+    console.print(a == b, a != b)
 ```
 
 ```text
@@ -923,10 +923,10 @@ and `y` otherwise. There is no `?:` operator.
 
 ```km
 void main()
-    print(not true, true and false, false or true)
+    console.print(not true, true and false, false or true)
     let n = 7
-    print(n > 3 and "yes" or "no")
-    print(n > 0 and 100 / n > 5)
+    console.print(n > 3 and "yes" or "no")
+    console.print(n > 0 and 100 / n > 5)
 ```
 
 ```text
@@ -944,8 +944,8 @@ yes
 
 ```km
 void main()
-    print(3 in [1, 2, 3], "ell" in "hello", 'h' in "hello")
-    print("beta" in ["alpha", "beta"])
+    console.print(3 in [1, 2, 3], "ell" in "hello", 'h' in "hello")
+    console.print("beta" in ["alpha", "beta"])
 ```
 
 ```text
@@ -956,7 +956,7 @@ void main()
 <!-- doc-error -->
 ```km
 void main()
-    print("a" in [1, 2])
+    console.print("a" in [1, 2])
 ```
 
 ```text
@@ -983,7 +983,7 @@ fn describe(s: Shape): string
 
 void main()
     let c = new Circle(0, 5)
-    print(c is Circle, c is Square, describe(c))
+    console.print(c is Circle, c is Square, describe(c))
 ```
 
 ```text
@@ -997,8 +997,8 @@ void main()
 
 ```km
 void main()
-    print("ab" * 3, "x" == "x", "x" != "y")
-    print("Komodo" + " rocks", #"Komodo")
+    console.print("ab" * 3, "x" == "x", "x" != "y")
+    console.print("Komodo" + " rocks", #"Komodo")
 ```
 
 ```text
@@ -1010,7 +1010,7 @@ Komodo rocks 6
 ```km
 void main()
     let v = 3
-    print("v: " + v)
+    console.print("v: " + v)
 ```
 
 ```text
@@ -1041,15 +1041,15 @@ not change the original.
 ```km
 void main()
     let s = "hello, world"
-    print(s[0 to 5])
-    print(s[7 to #s])
-    print(s[7:])
-    print(s[:5])
+    console.print(s[0 to 5])
+    console.print(s[7 to #s])
+    console.print(s[7:])
+    console.print(s[:5])
     let xs = [10, 20, 30, 40, 50]
-    print(xs[1 to 4], xs[2:])
+    console.print(xs[1 to 4], xs[2:])
     let ys = xs[0 to 2]
     xs[0] = 9
-    print(ys[0], xs[0])
+    console.print(ys[0], xs[0])
 ```
 
 ```text
@@ -1068,7 +1068,7 @@ Indexing past the end throws; see section 16.
 ```km
 void main()
     let xs = [1, 2, 3]
-    print(xs[5])
+    console.print(xs[5])
 ```
 
 ```text
@@ -1079,7 +1079,7 @@ Uncaught error: array index 5 out of range (length 3) in main
 ```km
 void main()
     let xs = [1, 2, 3]
-    print(xs[0]?)
+    console.print(xs[0]?)
 ```
 
 ```text
@@ -1096,11 +1096,11 @@ main.km:3:16: error: '?' applies to calls, not indexing
 void main()
     let n = 2
     if n == 1 then
-        print("one")
+        console.print("one")
     else if n == 2 then
-        print("two")
+        console.print("two")
     else
-        print("other")
+        console.print("other")
 ```
 
 ```text
@@ -1113,13 +1113,13 @@ A one-line `if` has no `else`.
 ```km
 void main()
     let n = 7
-    if n % 2 == 0 then print("even")
-    if n % 2 != 0 then print("odd")
+    if n % 2 == 0 then console.print("even")
+    if n % 2 != 0 then console.print("odd")
     let i = 0
     while i < 2
         i += 1
     if i == 2
-        print("i is", i)
+        console.print("i is", i)
 ```
 
 ```text
@@ -1134,9 +1134,9 @@ i is 2
 void main()
     let n = 2
     if n == 1 then
-        print("one")
+        console.print("one")
     elif n == 2 then
-        print("two")
+        console.print("two")
 ```
 
 ```text
@@ -1149,7 +1149,7 @@ An `else` after a one-line `if` is an error:
 ```km
 void main()
     let n = 3
-    if n > 1 then print("big") else print("small")
+    if n > 1 then console.print("big") else console.print("small")
 ```
 
 ```text
@@ -1162,11 +1162,11 @@ main.km:3:32: error: unexpected 'else': a one-line `if c then X else Y` is not s
 void main()
     let i = 0
     while i < 3 do
-        print("while", i)
+        console.print("while", i)
         i += 1
     while i > 0
         i -= 1
-    print("done", i)
+    console.print("done", i)
 ```
 
 ```text
@@ -1188,15 +1188,15 @@ done 0
 ```km
 void main()
     for k = 1 to 3
-        print("to", k)
+        console.print("to", k)
     for k = 3 down to 1 do
-        print("down", k)
+        console.print("down", k)
     for k = 0 until 2
-        print("until", k)
+        console.print("until", k)
     for x in [5, 6] then
-        print("each", x)
+        console.print("each", x)
     for i = 5 to 3
-        print("never")
+        console.print("never")
 ```
 
 ```text
@@ -1219,7 +1219,7 @@ supported:
 ```km
 void main()
     for i = 1 to 3 step 2
-        print(i)
+        console.print(i)
 ```
 
 ```text
@@ -1240,7 +1240,7 @@ void main()
             continue
         if x > 20 then
             break
-        print("kept", x)
+        console.print("kept", x)
 ```
 
 ```text
@@ -1270,21 +1270,21 @@ void main()
     let word = "beta"
     match word
         case "alpha"
-            print("first")
+            console.print("first")
         case "beta"
-            print("second")
+            console.print("second")
         else
-            print("other")
+            console.print("other")
     let ch = 'x'
     match ch
         case 'x'
-            print("ex")
+            console.print("ex")
     let b = true
     match b
         case true
-            print("bool case")
+            console.print("bool case")
         case false
-            print("no")
+            console.print("no")
 ```
 
 ```text
@@ -1302,9 +1302,9 @@ void main()
     let n = 4
     match n
         case 1, 2
-            print("low")
+            console.print("low")
         else
-            print("else")
+            console.print("else")
 ```
 
 ```text
@@ -1317,9 +1317,9 @@ void main()
     let n = 4
     match n
         case 3 to 5
-            print("range")
+            console.print("range")
         else
-            print("else")
+            console.print("else")
 ```
 
 ```text
@@ -1332,9 +1332,9 @@ void main()
     let n = 4
     match n
         case 4 if n > 3
-            print("guard")
+            console.print("guard")
         else
-            print("else")
+            console.print("else")
 ```
 
 ```text
@@ -1350,7 +1350,7 @@ function declared with a return type must return a value on every path.
 void helper(x: int)
     if x > 0 then
         return
-    print("neg")
+    console.print("neg")
 
 void main()
     helper(1)
@@ -1368,7 +1368,7 @@ fn f(): int
         return 1
 
 void main()
-    print(f())
+    console.print(f())
 ```
 
 ```text
@@ -1394,7 +1394,7 @@ fn f(): int
     return
 
 void main()
-    print(f())
+    console.print(f())
 ```
 
 ```text
@@ -1407,7 +1407,7 @@ fn f(): int
     return "x"
 
 void main()
-    print(f())
+    console.print(f())
 ```
 
 ```text
@@ -1443,12 +1443,12 @@ mut counter(): int
     return 1
 
 void show(label: string, v: int)
-    print(label, v)
+    console.print(label, v)
 
 void main()
     show("square", square(4))
     show("add", add(2, 3))
-    print(counter())
+    console.print(counter())
 ```
 
 ```text
@@ -1469,7 +1469,7 @@ fn poke(b: Box): int
     return b.v
 
 void main()
-    print(poke(new Box()))
+    console.print(poke(new Box()))
 ```
 
 ```text
@@ -1481,14 +1481,14 @@ A `fn` may not call a `void` procedure:
 <!-- doc-error -->
 ```km
 void g()
-    print(1)
+    console.print(1)
 
 fn f(): int
     g()
     return 1
 
 void main()
-    print(f())
+    console.print(f())
 ```
 
 ```text
@@ -1506,7 +1506,7 @@ fn inc(x: int): int
     return x
 
 void main()
-    print(inc(1))
+    console.print(inc(1))
 ```
 
 ```text
@@ -1518,7 +1518,7 @@ Calling a function with the wrong number of arguments is an error:
 <!-- doc-error -->
 ```km
 void main()
-    print(add(1))
+    console.print(add(1))
 
 fn add(a: int, b: int): int
     return a + b
@@ -1542,9 +1542,9 @@ fn scale(v: int, k: int = 2, offset: int = -1): int
     return v * k + offset
 
 void main()
-    print(greet("ann"))
-    print(greet("bob", "hi"))
-    print(scale(5), scale(5, 3))
+    console.print(greet("ann"))
+    console.print(greet("bob", "hi"))
+    console.print(scale(5), scale(5, 3))
 ```
 
 ```text
@@ -1578,7 +1578,7 @@ fn add(a: int, b: int = 1 + 2): int
     return a + b
 
 void main()
-    print(add(1))
+    console.print(add(1))
 ```
 
 ```text
@@ -1591,7 +1591,7 @@ fn add(a: int = 1, b: int): int
     return a + b
 
 void main()
-    print(add(1, 2))
+    console.print(add(1, 2))
 ```
 
 ```text
@@ -1604,7 +1604,7 @@ fn add(a: int, b: int = "two"): int
     return a + b
 
 void main()
-    print(add(1))
+    console.print(add(1))
 ```
 
 ```text
@@ -1679,7 +1679,7 @@ fn add(a, b)
     return a + b
 
 void main()
-    print(add(1, "x"))
+    console.print(add(1, "x"))
 ```
 
 ```text
@@ -1694,7 +1694,7 @@ fn id(x)
     return x
 
 void main()
-    print(id<int>(1))
+    console.print(id<int>(1))
 ```
 
 ```text
@@ -1766,7 +1766,7 @@ fn f(b: int): int
     return b
 
 void main()
-    print(f(1))
+    console.print(f(1))
 ```
 
 ```text
@@ -1782,7 +1782,7 @@ fn f(a: string): string
     return a
 
 void main()
-    print(f(1.5))
+    console.print(f(1.5))
 ```
 
 ```text
@@ -1798,7 +1798,7 @@ fn f(a: string): string
     return a
 
 void main()
-    print(f(1, 2))
+    console.print(f(1, 2))
 ```
 
 ```text
@@ -1814,7 +1814,7 @@ fn greet(n: int): string
     return "num"
 
 void main()
-    print(greet("x"))
+    console.print(greet("x"))
 ```
 
 ```text
@@ -1832,7 +1832,7 @@ fn twice(x)
     return x + x
 
 void main()
-    print(twice(3))
+    console.print(twice(3))
 ```
 
 ```text
@@ -1889,7 +1889,7 @@ void main()
     let p = new Pt(1, 2)
     let q = new Pt(1)
     let z = new Pt()
-    print(p.y, q.y, q.x, z.x, z.y)
+    console.print(p.y, q.y, q.x, z.x, z.y)
 ```
 
 ```text
@@ -1904,7 +1904,7 @@ struct Pt
 
 void main()
     let e = new Pt(1, 2, 3)
-    print(e.x)
+    console.print(e.x)
 ```
 
 ```text
@@ -1923,7 +1923,7 @@ struct C
 
 void main()
     let v = new C()
-    print(v.x, "[" + v.s + "]", v.b, v.f, v.c == 'a')
+    console.print(v.x, "[" + v.s + "]", v.b, v.f, v.c == 'a')
 ```
 
 ```text
@@ -1938,7 +1938,7 @@ struct Box
         return v
 
 void main()
-    print(1)
+    console.print(1)
 ```
 
 ```text
@@ -1952,7 +1952,7 @@ struct Pt
 
 void main()
     let p = new Pt(1)
-    print(p.ex)
+    console.print(p.ex)
 ```
 
 ```text
@@ -1989,7 +1989,7 @@ abstract struct Shape
 
 void main()
     let s = new Shape()
-    print(s.name)
+    console.print(s.name)
 ```
 
 ```text
@@ -2009,7 +2009,7 @@ struct Circle : Shape
 
 void main()
     let s: Shape = new Circle(0, 2)
-    print(s.r)
+    console.print(s.r)
 ```
 
 ```text
@@ -2071,7 +2071,7 @@ class Box
 void main()
     let b = new Box()
     b.put(9)
-    print(b.get(), b.m_v)
+    console.print(b.get(), b.m_v)
 ```
 
 ```text
@@ -2092,7 +2092,7 @@ class Counter
 
 void main()
     let c = new Counter(5)
-    print(c.value())
+    console.print(c.value())
 ```
 
 ```text
@@ -2108,7 +2108,7 @@ class Counter
 
 void main()
     let c = new Counter(1, 2)
-    print(c.m_n)
+    console.print(c.m_n)
 ```
 
 ```text
@@ -2124,7 +2124,7 @@ class Acc
 
 void main()
     let a = new Acc()
-    print(a.m_v)
+    console.print(a.m_v)
 ```
 
 ```text
@@ -2140,7 +2140,7 @@ class Acc
 
 void main()
     let a = new Acc()
-    print(a.peek(1))
+    console.print(a.peek(1))
 ```
 
 ```text
@@ -2217,7 +2217,7 @@ private
 
 void main()
     let c = new Counter(5)
-    print(c.helper())
+    console.print(c.helper())
 ```
 
 ```text
@@ -2242,7 +2242,7 @@ public
         return m_n
 
 void main()
-    print(new Sub(1).steal())
+    console.print(new Sub(1).steal())
 ```
 
 ```text
@@ -2323,7 +2323,7 @@ class Kid : Base
         super(n * 2)
 
 void main()
-    print(new Kid(3).m_n)
+    console.print(new Kid(3).m_n)
 ```
 
 ```text
@@ -2338,7 +2338,7 @@ abstract class Shape
 
 void main()
     let s = new Shape()
-    print(s.area())
+    console.print(s.area())
 ```
 
 ```text
@@ -2359,7 +2359,7 @@ class Acc
         return m_v * 2
 
 void main()
-    print(new Acc().get())
+    console.print(new Acc().get())
 ```
 
 ```text
@@ -2384,7 +2384,7 @@ class Acc
 
 void main()
     let a = new Acc()
-    print(a.check(), a.peek())
+    console.print(a.check(), a.peek())
 ```
 
 ```text
@@ -2406,7 +2406,7 @@ void main()
     a.inc()
     let dup = copy(a)
     dup.inc()
-    print(a.m_v, dup.m_v)
+    console.print(a.m_v, dup.m_v)
 ```
 
 ```text
@@ -2459,7 +2459,7 @@ enum Dir
 
 void main()
     let n: int = Dir::South
-    print(n)
+    console.print(n)
 ```
 
 ```text
@@ -2473,7 +2473,7 @@ enum Dir
     South
 
 void main()
-    print(Dir::Up)
+    console.print(Dir::Up)
 ```
 
 ```text
@@ -2495,7 +2495,7 @@ struct Car
 
 void main()
     let c = new Car()
-    print(c.d, c.d == Dir::North)
+    console.print(c.d, c.d == Dir::North)
 ```
 
 ```text
@@ -2555,9 +2555,9 @@ void main()
     let q = new Q(new P(1))
     match q
         case Q(p: P(x: 1))
-            print(1)
+            console.print(1)
         else
-            print(2)
+            console.print(2)
 ```
 
 ```text
@@ -2575,7 +2575,7 @@ void main()
     let p = new P(1)
     match p
         case Nope(x)
-            print(1)
+            console.print(1)
 ```
 
 ```text
@@ -2592,7 +2592,7 @@ void main()
     let p = new P(1, 2)
     match p
         case P(x: 1, x: 2)
-            print(1)
+            console.print(1)
 ```
 
 ```text
@@ -2608,9 +2608,9 @@ void main()
     let p = new P(1)
     match p
         case P(x: "a")
-            print(1)
+            console.print(1)
         else
-            print(2)
+            console.print(2)
 ```
 
 ```text
@@ -2625,9 +2625,9 @@ struct P
 void main()
     match 3
         case P(x: 1)
-            print(1)
+            console.print(1)
         else
-            print(2)
+            console.print(2)
 ```
 
 ```text
@@ -2643,7 +2643,7 @@ void main()
     let p = new P(1.0)
     match p
         case P(x: 1.0)
-            print(1)
+            console.print(1)
 ```
 
 ```text
@@ -2662,7 +2662,7 @@ void main()
     let p = new P(1)
     match p
         case Z(y: 1)
-            print(1)
+            console.print(1)
 ```
 
 ```text
@@ -2677,7 +2677,7 @@ void main()
     let p = 1
     match p
         case H(x)
-            print(1)
+            console.print(1)
 ```
 
 ```text
@@ -2741,7 +2741,7 @@ A missing module is an error:
 import nosuchmod
 
 void main()
-    print(1)
+    console.print(1)
 ```
 
 ```text
@@ -2769,7 +2769,7 @@ void main()
         let p = new Point(i, i)
         acc = acc + (p.x - p.y)
         i = i + 1
-    print("acc =", acc)
+    console.print("acc =", acc)
 ```
 
 ```text
@@ -2863,8 +2863,8 @@ unique struct Handle
 void main()
     let a = new Handle(1)
     let b = a
-    print(b.id)
-    print(a.id)
+    console.print(b.id)
+    console.print(a.id)
 ```
 
 ```text
@@ -2883,7 +2883,7 @@ fn make(): H
 
 void main()
     let x = make()
-    print(x.id)
+    console.print(x.id)
 ```
 
 ```text
@@ -2905,7 +2905,7 @@ void main()
     let a = new H(1)
     let hold = new Holder(a)
     let x = hold.h
-    print(x.id)
+    console.print(x.id)
 ```
 
 ```text
@@ -2920,7 +2920,7 @@ unique struct H
 void main()
     let arr = [new H(1)]
     let a = arr[0]
-    print(a.id)
+    console.print(a.id)
 ```
 
 ```text
@@ -2936,7 +2936,7 @@ let g = new H(1)
 
 void main()
     let x = g
-    print(1)
+    console.print(1)
 ```
 
 ```text
@@ -2953,8 +2953,8 @@ void main()
     let a = new H(3)
     let b = a
     a = new H(4)
-    print(a.id, b.id)
-    print(copy(b).id, b.id)
+    console.print(a.id, b.id)
+    console.print(copy(b).id, b.id)
 ```
 
 ```text
@@ -3002,7 +3002,7 @@ bad port, using 8080
 ```km
 void main()
     let xs = [1, 2]
-    print(xs?)
+    console.print(xs?)
 ```
 
 ```text
@@ -3025,9 +3025,9 @@ class Acc
 void main()
     let a = new Acc(-1)?
     if a == null then
-        print("ctor failed")
+        console.print("ctor failed")
     let b = new Acc(1)
-    print(b.add(2)?)
+    console.print(b.add(2)?)
 ```
 
 ```text
@@ -3041,7 +3041,7 @@ ctor failed
 void main()
     let n = 0
     let v = n or throw "n must not be zero"
-    print("unreachable", v)
+    console.print("unreachable", v)
 ```
 
 ```text
@@ -3060,9 +3060,9 @@ fn check(n: int): int
     return n
 
 void main()
-    print(check(4))
+    console.print(check(4))
     let ok = check(-1)
-    print("never")
+    console.print("never")
 ```
 
 ```text
@@ -3081,8 +3081,8 @@ fn half(n: int): int
     return n / 2
 
 void main()
-    print(half(10))
-    print(half(7))
+    console.print(half(10))
+    console.print(half(7))
 ```
 
 ```text
@@ -3125,7 +3125,7 @@ not a stable text block. Example:
 ```km
 void main()
     let z = 0
-    print(10 / z)
+    console.print(10 / z)
 ```
 
 The compiler prints `warning: division by zero` for a literal zero divisor and
@@ -3139,7 +3139,7 @@ These names need no `import`.
 
 | Name | Meaning |
 |---|---|
-| `print(...)` | writes its arguments separated by spaces, then a newline |
+| `console.print(...)` | writes its arguments separated by spaces, then a newline |
 | `string(x)` | converts any value to text |
 | `int(x)` | converts a number to `int`, truncating |
 | `join(parts, sep)` | joins a `[string]` with `sep` between the parts |
@@ -3147,12 +3147,12 @@ These names need no `import`.
 | `copy(x)` | deep copy of a struct, class or array |
 | `data(arr)` | element pointer of an array, for C (section 19) |
 
-`print()` with no arguments writes an empty line.
+`console.print()` with no arguments writes an empty line.
 
 ```km
 void main()
-    print()
-    print("after blank")
+    console.print()
+    console.print("after blank")
 ```
 
 ```text
@@ -3162,9 +3162,9 @@ after blank
 
 ```km
 void main()
-    print(string([1, 2]), string(true))
-    print(join(["a", "b", "c"], ", "))
-    print(join(["ab"], ""))
+    console.print(string([1, 2]), string(true))
+    console.print(join(["a", "b", "c"], ", "))
+    console.print(join(["ab"], ""))
 ```
 
 ```text
@@ -3176,7 +3176,7 @@ ab
 <!-- doc-error -->
 ```km
 void main()
-    print(copy(1, 2))
+    console.print(copy(1, 2))
 ```
 
 ```text
@@ -3192,7 +3192,7 @@ extern fn memset(p: int, c: int, n: int): int
 void main()
     let xs = [1, 2, 3]
     memset(data(xs), 0, 8)
-    print(xs[0], xs[1])
+    console.print(xs[0], xs[1])
 ```
 
 ```text
@@ -3268,9 +3268,9 @@ extern "m"
     fn hypot(a: float, b: float): float
 
 void main()
-    print(strlen("hello, world"))
-    print(cbrt(27.0))
-    print(hypot(3.0, 4.0))
+    console.print(strlen("hello, world"))
+    console.print(cbrt(27.0))
+    console.print(hypot(3.0, 4.0))
 ```
 
 ```text
@@ -3287,7 +3287,7 @@ extern fn rand(): int
 
 void main()
     srand(1)
-    print(rand() >= 0)
+    console.print(rand() >= 0)
 ```
 
 ```text
@@ -3334,7 +3334,7 @@ extern "m"
     fn sqrt_c(x: float): float = "sqrt"
 
 void main()
-    print(cbrt_c(8.0), sqrt_c(16.0))
+    console.print(cbrt_c(8.0), sqrt_c(16.0))
 ```
 
 ```text
@@ -3346,7 +3346,7 @@ void main()
 extern fn f(x: int): int = "bad-name"
 
 void main()
-    print(f(1))
+    console.print(f(1))
 ```
 
 ```text
@@ -3358,7 +3358,7 @@ error: extern 'f': character '-' is not allowed in the C symbol "bad-name"
 extern fn f(x: int): int = ""
 
 void main()
-    print(1)
+    console.print(1)
 ```
 
 ```text
@@ -3370,7 +3370,7 @@ main.km:1:30: error: extern 'f': the C symbol name after `=` is empty
 extern fn f(x: int): int = 42
 
 void main()
-    print(1)
+    console.print(1)
 ```
 
 ```text
@@ -3382,7 +3382,7 @@ main.km:1:28: error: expected a string literal after `=` (the C symbol name) in 
 extern fn f(x: int): int = "1abc"
 
 void main()
-    print(f(1))
+    console.print(f(1))
 ```
 
 ```text
@@ -3407,7 +3407,7 @@ extern type H
 
 void main()
     let h = new H()
-    print(1)
+    console.print(1)
 ```
 
 ```text
@@ -3425,7 +3425,7 @@ extern fn fclose(f: FileH): int
 void main()
     let f = fopen("/nonexistent/komodo-ref", "r")
     if f == 0 then
-        print("open failed")
+        console.print("open failed")
 ```
 
 ```text
@@ -3438,7 +3438,7 @@ extern type H
 
 void main()
     let h: H = 0
-    print(h)
+    console.print(h)
 ```
 
 ```text
@@ -3452,7 +3452,7 @@ extern fn mk(): H
 
 void main()
     let h = mk()
-    print(h + 1)
+    console.print(h + 1)
 ```
 
 ```text
@@ -3466,7 +3466,7 @@ extern fn mk(): H
 
 void main()
     let h = copy(mk())
-    print(1)
+    console.print(1)
 ```
 
 ```text
@@ -3483,7 +3483,7 @@ extern let timezone: int
 
 void main()
     let z = timezone
-    print(z >= -86400)
+    console.print(z >= -86400)
 ```
 
 ```text
@@ -3495,7 +3495,7 @@ void main()
 extern let counter
 
 void main()
-    print(1)
+    console.print(1)
 ```
 
 ```text
@@ -3507,7 +3507,7 @@ main.km:1:19: error: extern variable 'counter' needs a type: `extern let counter
 extern let xs: [int]
 
 void main()
-    print(1)
+    console.print(1)
 ```
 
 ```text
@@ -3559,7 +3559,7 @@ fn cb(xs: [int]): int
 extern fn run_cb(cb: int): int
 
 void main()
-    print(run_cb(cb))
+    console.print(run_cb(cb))
 ```
 
 ```text
@@ -3589,10 +3589,10 @@ export fn greet(name: string): string
     return "hello, " + name
 
 export void tick()
-    print("tick")
+    console.print("tick")
 
 void main()
-    print(add(2, 3), greet("x"))
+    console.print(add(2, 3), greet("x"))
     tick()
 ```
 
@@ -3619,7 +3619,7 @@ export fn total(xs: [int]): int
     return 0
 
 void main()
-    print(1)
+    console.print(1)
 ```
 
 ```text
@@ -3632,7 +3632,7 @@ export fn f(a: int = 3): int
     return a
 
 void main()
-    print(1)
+    console.print(1)
 ```
 
 ```text
@@ -3645,7 +3645,7 @@ export fn twice(x): int
     return 2
 
 void main()
-    print(1)
+    console.print(1)
 ```
 
 ```text
@@ -3661,7 +3661,7 @@ export fn add(a: int): int
     return a
 
 void main()
-    print(1)
+    console.print(1)
 ```
 
 ```text
@@ -3673,7 +3673,7 @@ main.km:1:8: error: export fn 'add' cannot be overloaded — a C symbol names ex
 export fn f(a: int): int
 
 void main()
-    print(1)
+    console.print(1)
 ```
 
 ```text
@@ -3705,7 +3705,7 @@ error:
 link "x.c"
 
 void main()
-    print(1)
+    console.print(1)
 ```
 
 ```text
@@ -3734,7 +3734,7 @@ message.
 void main()
     let y = 3
     if y == y then
-        print("same")
+        console.print("same")
 ```
 
 ```text
@@ -3745,7 +3745,7 @@ same
 ```km
 void main()
     if true then
-        print(3)
+        console.print(3)
 ```
 
 ```text
@@ -3755,9 +3755,9 @@ main.km:2:5: warning: `if` condition is always true
 
 ```km
 void main()
-    print(1)
+    console.print(1)
     return
-    print(2)
+    console.print(2)
 ```
 
 ```text
@@ -3785,7 +3785,7 @@ checker does not pass flags.
 ```km
 void main()
     let unused = 5
-    print("hi")
+    console.print("hi")
 ```
 
 ---
@@ -3801,8 +3801,8 @@ compiler has none. A message class with a single reason is listed once.
 <!-- doc-error -->
 ```km
 void main()
-    print(1)
-  print(2)
+    console.print(1)
+  console.print(2)
 ```
 
 ```text
@@ -3811,9 +3811,9 @@ main.km:3:3: error: Unexpected top-level token: print
 
 <!-- doc-error -->
 ```km
-shared print(1)
+shared console.print(1)
 void main()
-    print(2)
+    console.print(2)
 ```
 
 ```text
@@ -3825,7 +3825,7 @@ main.km:1:8: error: expected `struct` or `class` after type modifier
 void main()
     let f = fn(x: int): int
         return x
-    print(f(1))
+    console.print(f(1))
 ```
 
 ```text
@@ -3836,7 +3836,7 @@ main.km:2:13: error: unexpected 'fn'
 ```km
 void main()
     let g = (x) => x
-    print(g(1))
+    console.print(g(1))
 ```
 
 ```text
@@ -3848,7 +3848,7 @@ main.km:2:17: error: unexpected '='
 link "x.c"
 
 void main()
-    print(1)
+    console.print(1)
 ```
 
 ```text
@@ -3863,7 +3863,7 @@ let a = 1
 let a = 2
 
 void main()
-    print(a)
+    console.print(a)
 ```
 
 ```text
@@ -3879,7 +3879,7 @@ struct Shape
     m: int
 
 void main()
-    print(1)
+    console.print(1)
 ```
 
 ```text
@@ -3892,7 +3892,7 @@ struct A : Nope
     x: int
 
 void main()
-    print(1)
+    console.print(1)
 ```
 
 ```text
@@ -3908,7 +3908,7 @@ fn f(b: int): int
     return b
 
 void main()
-    print(f(1))
+    console.print(f(1))
 ```
 
 ```text
@@ -3921,7 +3921,7 @@ struct Flags : u32
     bits: int
 
 void main()
-    print(1)
+    console.print(1)
 ```
 
 ```text
@@ -3931,7 +3931,7 @@ error: cyclic or unresolved inheritance near 'Flags'
 <!-- doc-error -->
 ```km
 mut f(a: int = 1)
-    print(a)
+    console.print(a)
 
 class Q
     m_v: int = 0
@@ -3952,7 +3952,7 @@ fn f(a: int = x): int
     return a
 
 void main()
-    print(1)
+    console.print(1)
 ```
 
 ```text
@@ -3964,7 +3964,7 @@ main.km:1:1: error: default value of parameter 'a' must be a literal
 extern let xs: [int]
 
 void main()
-    print(1)
+    console.print(1)
 ```
 
 ```text
@@ -3976,7 +3976,7 @@ error: extern variable 'xs': type '[int]' is not supported (use int / sized ints
 extern fn f(x: int): int = "bad-name"
 
 void main()
-    print(f(1))
+    console.print(f(1))
 ```
 
 ```text
@@ -3989,7 +3989,7 @@ export fn f(xs: [int]): int
     return 0
 
 void main()
-    print(1)
+    console.print(1)
 ```
 
 ```text
@@ -4005,7 +4005,7 @@ fn twice(x)
     return x + x
 
 void main()
-    print(twice(3))
+    console.print(twice(3))
 ```
 
 ```text
@@ -4020,7 +4020,7 @@ struct P
         return x
 
 void main()
-    print(1)
+    console.print(1)
 ```
 
 ```text
@@ -4033,7 +4033,7 @@ main.km:3:5: error: struct bodies hold fields only; use a class for methods
 ```km
 void main()
     let x: Nope = 1
-    print(x)
+    console.print(x)
 ```
 
 ```text
@@ -4046,7 +4046,7 @@ fn pick(n: int): int
     return n
 
 void main()
-    print(pick("x"))
+    console.print(pick("x"))
 ```
 
 ```text
@@ -4060,7 +4060,7 @@ struct Pt
 
 void main()
     let p = new Pt("a")
-    print(p.x)
+    console.print(p.x)
 ```
 
 ```text
@@ -4073,7 +4073,7 @@ fn f(a: int): int
     return a
 
 void main()
-    print(f(1, 2))
+    console.print(f(1, 2))
 ```
 
 ```text
@@ -4089,7 +4089,7 @@ fn f(a: int): int
     return a
 
 void main()
-    print(f(1, 2, 3))
+    console.print(f(1, 2, 3))
 ```
 
 ```text
@@ -4100,7 +4100,7 @@ error: no overload of 'f' takes 3 argument(s)
 ```km
 void main()
     let n = 3
-    print(n.x)
+    console.print(n.x)
 ```
 
 ```text
@@ -4125,7 +4125,7 @@ main.km:6:5: error: type 'Pt' has no method 'nope'
 ```km
 void main()
     let xs: [int]? = null
-    print(xs[0])
+    console.print(xs[0])
 ```
 
 ```text
@@ -4141,7 +4141,7 @@ struct Pt
 
 void main()
     let p: Pt? = null
-    print(p.m())
+    console.print(p.m())
 ```
 
 ```text
@@ -4155,7 +4155,7 @@ struct Pt
 
 void main()
     let p: Pt? = null
-    print(p.m())
+    console.print(p.m())
 ```
 
 ```text
@@ -4166,7 +4166,7 @@ main.km:6:11: error: 'p' is possibly null — narrow it before calling 'm'
 ```km
 void main()
     let n: int? = null
-    print(1 + n)
+    console.print(1 + n)
 ```
 
 ```text
@@ -4177,7 +4177,7 @@ main.km:3:11: error: right operand of '+' is possibly null
 ```km
 void main()
     let n: int = 1
-    print(n is int)
+    console.print(n is int)
 ```
 
 ```text
@@ -4187,7 +4187,7 @@ main.km:3:11: error: `is` expects a known type name on the right
 <!-- doc-error -->
 ```km
 void main()
-    print(int("3"))
+    console.print(int("3"))
 ```
 
 ```text
@@ -4198,7 +4198,7 @@ main.km:2:11: error: 'int' expects a number, got 'string'
 ```km
 void main()
     let xs = [1, 2]
-    print(xs[0] + "x")
+    console.print(xs[0] + "x")
 ```
 
 ```text
@@ -4209,7 +4209,7 @@ main.km:3:11: error: cannot add 'int' and 'string' (use string(x) or an interpol
 ```km
 void main()
     let s = new Nope()
-    print(s)
+    console.print(s)
 ```
 
 ```text
@@ -4219,7 +4219,7 @@ main.km:2:13: error: `new` of unknown type 'Nope'
 <!-- doc-error -->
 ```km
 void main()
-    print(5 in "abc")
+    console.print(5 in "abc")
 ```
 
 ```text
@@ -4229,7 +4229,7 @@ main.km:2:11: error: `in` on a string wants a string / char on the left, got 'in
 <!-- doc-error -->
 ```km
 void main()
-    print(1 in 2)
+    console.print(1 in 2)
 ```
 
 ```text
@@ -4252,14 +4252,14 @@ main.km:5:5: error: 'f' takes 0 argument(s), got 1
 <!-- doc-error -->
 ```km
 void g()
-    print(1)
+    console.print(1)
 
 fn f(): int
     g()
     return 1
 
 void main()
-    print(f())
+    console.print(f())
 ```
 
 ```text
@@ -4271,7 +4271,7 @@ main.km:5:5: error: a pure `fn` cannot call the void procedure 'g'
 extern fn strlen(s: string): int
 
 void main()
-    print(strlen(1.5))
+    console.print(strlen(1.5))
 ```
 
 ```text
@@ -4286,7 +4286,7 @@ fn cb(xs: [int]): int
 extern fn run_cb(cb: int): int
 
 void main()
-    print(run_cb(cb))
+    console.print(run_cb(cb))
 ```
 
 ```text
@@ -4312,7 +4312,7 @@ main.km:6:5: error: type 'P' has no field 'z' (did you mean 'x'?)
 void main()
     let n = 1
     n = "text"
-    print(n)
+    console.print(n)
 ```
 
 ```text
@@ -4325,7 +4325,7 @@ fn f(): int
     return "x"
 
 void main()
-    print(f())
+    console.print(f())
 ```
 
 ```text
@@ -4338,7 +4338,7 @@ enum Dir
     North
 
 void main()
-    print(Dir::North.x)
+    console.print(Dir::North.x)
 ```
 
 ```text
@@ -4351,7 +4351,7 @@ fn f(a: int = "s"): int
     return 1
 
 void main()
-    print(f())
+    console.print(f())
 ```
 
 ```text
@@ -4364,7 +4364,7 @@ main.km:1:1: error: default value of parameter 'a': type 'string' is not assigna
 ```km
 void main()
     let count = 10
-    print(cont)
+    console.print(cont)
 ```
 
 ```text
@@ -4374,7 +4374,7 @@ main.km:3:11: error: undefined name 'cont' (did you mean 'count'?)
 <!-- doc-error -->
 ```km
 void main()
-    print(mystery + 1)
+    console.print(mystery + 1)
 ```
 
 ```text
@@ -4385,7 +4385,7 @@ error: undefined name 'mystery'
 ```km
 void main()
     let x = 1
-    print(x)
+    console.print(x)
     unknown_call(2)
 ```
 
@@ -4408,7 +4408,7 @@ main.km:2:5: error: `break` outside a loop
 void main()
     for i = 1 to 2
         i = 5
-    print(1)
+    console.print(1)
 ```
 
 ```text
@@ -4453,7 +4453,7 @@ private
 
 void main()
     let c = new Counter(1)
-    print(c.m_n)
+    console.print(c.m_n)
 ```
 
 ```text
@@ -4463,7 +4463,7 @@ main.km:10:11: error: 'm_n' is private to class 'Counter'
 <!-- doc-error -->
 ```km
 void main()
-    print(nosuch::f())
+    console.print(nosuch::f())
 ```
 
 ```text
@@ -4480,8 +4480,8 @@ unique struct Handle
 void main()
     let a = new Handle(1)
     let b = a
-    print(b.id)
-    print(a.id)
+    console.print(b.id)
+    console.print(a.id)
 ```
 
 ```text
@@ -4499,7 +4499,7 @@ void main()
     let p = new P(1)
     match p
         case P(z: 1)
-            print(1)
+            console.print(1)
 ```
 
 ```text
@@ -4515,7 +4515,7 @@ void main()
     let p = new P(1.0)
     match p
         case P(x: 1.0)
-            print(1)
+            console.print(1)
 ```
 
 ```text
@@ -4531,7 +4531,7 @@ void main()
     let p = new P(1)
     match p
         case Q(x)
-            print(1)
+            console.print(1)
 ```
 
 ```text
@@ -4546,7 +4546,7 @@ fn f(a: int, b: int = 1, c: int): int
     return a
 
 void main()
-    print(f(1, 2))
+    console.print(f(1, 2))
 ```
 
 ```text
@@ -4562,7 +4562,7 @@ fn f(a: string): string
     return a
 
 void main()
-    print(f(1.5))
+    console.print(f(1.5))
 ```
 
 ```text
@@ -4575,7 +4575,7 @@ error: no overload of 'f' matches the argument types
 ```km
 let g
 void main()
-    print(1)
+    console.print(1)
 ```
 
 ```text
@@ -4586,7 +4586,7 @@ error: top-level 'g' needs a type annotation or an initialiser
 ```km
 void main()
     let x be
-    print(x)
+    console.print(x)
 ```
 
 ```text
@@ -4602,7 +4602,7 @@ fn pick(n: int): int
         return 1
 
 void main()
-    print(pick(3))
+    console.print(pick(3))
 ```
 
 ```text
@@ -4628,7 +4628,7 @@ fn f(): int
     return
 
 void main()
-    print(f())
+    console.print(f())
 ```
 
 ```text
@@ -4641,7 +4641,7 @@ fn f(): int
     return "x"
 
 void main()
-    print(f())
+    console.print(f())
 ```
 
 ```text
@@ -4654,7 +4654,7 @@ void main()
     let n = 4
     match n
         case 4 if n > 3
-            print("guard")
+            console.print("guard")
 ```
 
 ```text
@@ -4669,7 +4669,7 @@ fn add(a: int, b: int): int
     return a + b
 
 void main()
-    print(add(1))
+    console.print(add(1))
 ```
 
 ```text
@@ -4686,7 +4686,7 @@ fn poke(b: Box): int
     return b.v
 
 void main()
-    print(poke(new Box()))
+    console.print(poke(new Box()))
 ```
 
 ```text
@@ -4697,7 +4697,7 @@ main.km:4:1: error: pure `fn poke` mutates state — declare it `mut`
 ```km
 void main()
     let xs = [1, 2, 3]
-    print(xs[0]?)
+    console.print(xs[0]?)
 ```
 
 ```text
@@ -4707,7 +4707,7 @@ main.km:3:16: error: '?' applies to calls, not indexing
 <!-- doc-error -->
 ```km
 void main()
-    print(assert())
+    console.print(assert())
 ```
 
 ```text
@@ -4781,11 +4781,11 @@ run them. Each other item is a checked block that records the current output.
 When a fix lands, the block fails and needs updating.
 
 **1. A comparison inside a call's argument list splits into several arguments.**
-`print(1 == 1 == 1)` prints two values. Outside an argument list, `let b = 1 == 1 == 1` gives `1`.
+`console.print(1 == 1 == 1)` prints two values. Outside an argument list, `let b = 1 == 1 == 1` gives `1`.
 
 ```km
 void main()
-    print(1 == 1 == 1)
+    console.print(1 == 1 == 1)
 ```
 
 ```text
@@ -4793,22 +4793,22 @@ void main()
 ```
 
 **2. `!` on a boolean gives an unreliable value.** `let t = !true` followed by
-`print(t)` prints a stale value (for example `10`). The value changes between
+`console.print(t)` prints a stale value (for example `10`). The value changes between
 runs.
 
 <!-- doc-skip -->
 ```km
 void main()
     let t = !true
-    print(t)
+    console.print(t)
 ```
 
 **3. Exponent literals are misread.** `let x = 1e3` is `undefined name 'e3'`,
-but `print(1e3)` prints `1` and no error.
+but `console.print(1e3)` prints `1` and no error.
 
 ```km
 void main()
-    print(1e3)
+    console.print(1e3)
 ```
 
 ```text
@@ -4819,7 +4819,7 @@ void main()
 
 ```km
 void main()
-    print(2 ** 3)
+    console.print(2 ** 3)
 ```
 
 ```text
@@ -4831,8 +4831,8 @@ string is lost.
 
 ```km
 void main()
-    print("a\0b")
-    print("end")
+    console.print("a\0b")
+    console.print("end")
 ```
 
 ```text
@@ -4844,7 +4844,7 @@ end
 
 ```km
 void main()
-    print("a\qb")
+    console.print("a\qb")
 ```
 
 ```text
@@ -4858,7 +4858,7 @@ such as `140720869082744`.
 ```km
 void main()
     let u: int
-    print(u)
+    console.print(u)
 ```
 
 **8. (Resolved.)** Integer literals are now range-checked; see [Integers and `f32`](integers.md).
@@ -4872,7 +4872,7 @@ enum Level
     High = 10
 
 void main()
-    print(Level::High, Level::Low)
+    console.print(Level::High, Level::Low)
 ```
 
 ```text
@@ -4887,7 +4887,7 @@ enum Dir
     North
 
 void main()
-    print(1)
+    console.print(1)
 ```
 
 ```text
@@ -4901,11 +4901,11 @@ void main()
     let n = 1
     match n
         case 1
-            print("one")
+            console.print("one")
         case 1
-            print("dup one")
+            console.print("dup one")
         else
-            print("else")
+            console.print("else")
 ```
 
 ```text
@@ -4920,7 +4920,7 @@ struct Flags : u32
     bits: int
 
 void main()
-    print(1)
+    console.print(1)
 ```
 
 ```text
@@ -4933,7 +4933,7 @@ error: cyclic or unresolved inheritance near 'Flags'
 ```km
 void main()
     for c in "ab"
-        print(c)
+        console.print(c)
 ```
 
 **14. `join` on an `[int]` crashes.** The compiler accepts it.
@@ -4942,7 +4942,7 @@ void main()
 ```km
 void main()
     let xs = [1, 2]
-    print(join(xs, ","))
+    console.print(join(xs, ","))
 ```
 
 **15. An `int` passed to a `string` extern parameter is accepted.** The call
@@ -4953,7 +4953,7 @@ crashes at run time.
 extern fn strlen(s: string): int
 
 void main()
-    print(strlen(5))
+    console.print(strlen(5))
 ```
 
 **16. A call to an undeclared plain function is reported by the linker.** The
@@ -4963,7 +4963,7 @@ without a module prefix.
 <!-- doc-error -->
 ```km
 void main()
-    print(1)
+    console.print(1)
     unknown_call(2)
 ```
 
@@ -4992,13 +4992,13 @@ import shapes
 
 void main()
     let q = new shapes.Sq(3)
-    print(q.s)
+    console.print(q.s)
 ```
 
 <!-- doc-skip -->
 ```km
 void main()
-    print(add(1, 2)
+    console.print(add(1, 2)
 ```
 
 **19. A subclass constructor does not run the parent constructor, and
@@ -5009,7 +5009,7 @@ constructor:
 ```km
 class Base
     constructor(n: int)
-        print("base ctor", n)
+        console.print("base ctor", n)
         m_n = n
     m_n: int
 
@@ -5018,7 +5018,7 @@ class Kid : Base
         m_n = n + 1
 
 void main()
-    print(new Kid(1).m_n)
+    console.print(new Kid(1).m_n)
 ```
 
 ```text
@@ -5027,12 +5027,12 @@ void main()
 
 **20. `step` and a keyword as a name give poor messages.** `for i = 1 to 3 step 2`
 reports `unexpected ''` (the token text is empty, section 8.3). `let while = 1`
-followed by `print(while)` compiles and prints an empty line:
+followed by `console.print(while)` compiles and prints an empty line:
 
 ```km
 void main()
     let while = 1
-    print(while)
+    console.print(while)
 ```
 
 ```text
@@ -5044,7 +5044,7 @@ reports `assignment to undeclared variable 'lives'`.
 ```km
 void main()
     let 9lives = 1
-    print(9lives)
+    console.print(9lives)
 ```
 
 ```text
@@ -5059,7 +5059,7 @@ a different expression. Write the parentheses until this is settled.
 ```km
 void main()
     let a = 2 in [2] == 0
-    print(a)
+    console.print(a)
 ```
 
 ```text
@@ -5074,7 +5074,7 @@ class A
     m_v = 1
 
 void main()
-    print(1)
+    console.print(1)
 ```
 
 ```text
@@ -5089,7 +5089,7 @@ abstract class Shape
     fn area(): int
 
 void main()
-    print(1)
+    console.print(1)
 ```
 
 ```text
@@ -5101,7 +5101,7 @@ visible from its declaration to the end of its block.
 
 ```km
 void main()
-    print(LATER)
+    console.print(LATER)
 
 let LATER be 5
 ```
@@ -5116,7 +5116,7 @@ message names `Nope` as the target, but the cause is the unknown type.
 ```km
 void main()
     let x: Nope = 1
-    print(x)
+    console.print(x)
 ```
 
 ```text

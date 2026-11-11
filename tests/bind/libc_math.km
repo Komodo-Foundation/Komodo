@@ -2,8 +2,8 @@
 import c_math
 
 void main()
-    print(c_math::sqrt(2.0))
-    print(c_math::pow(2.0, 10.0))
-    print(c_math::floor(-2.5))
-    print(c_math::sqrtf(16.0))
-    print(c_math::M_PI)
+    console.print(c_math::sqrt(2.0))
+    console.print(c_math::pow(2.0, 10.0))
+    console.print(c_math::floor(-2.5))
+    console.print(c_math::sqrtf(16.0))
+    console.print(c_math::M_PI)

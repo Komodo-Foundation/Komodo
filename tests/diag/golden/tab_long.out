@@ -1,10 +1,10 @@
 error[K0001]: undefined name 'sx'
- --> tab_long.km:3:8
+ --> tab_long.km:3:16
   |
 1 | void main()
 2 |     let s = "a very long string literal that goes o...
-3 |     print(sx)
-  |           ^^ undefined name 'sx'
+3 |     console.print(sx)
+  |                   ^^ undefined name 'sx'
   = help: did you mean 's'?
   = help: Check the spelling, or declare 'sx' with `let sx =
           ...` before this line.

@@ -27,11 +27,11 @@ help: Check the spelling, or declare '{1}' with `let {1} = ...` before this line
 bad:
   void main()
       let count = 10
-      print(cont)
+      console.print(cont)
 fix:
   void main()
       let count = 10
-      print(count)
+      console.print(count)
 
 @ K0002 undefined module function
 match: undefined function '*::*'
@@ -46,12 +46,12 @@ bad:
   import secret
 
   void main()
-      print(secret::opn())
+      console.print(secret::opn())
 fix:
   import secret
 
   void main()
-      print(secret::open())
+      console.print(secret::open())
 
 @ K0003 assignment to undeclared variable
 match: assignment to undeclared variable '*'
@@ -60,11 +60,11 @@ help: Declare it first with `let {1} = ...`.
 bad:
   void main()
       total = 5
-      print(total)
+      console.print(total)
 fix:
   void main()
       let total = 5
-      print(total)
+      console.print(total)
 
 @ K0004 unknown type in `new`
 match: `new` of unknown type '*'
@@ -76,14 +76,14 @@ bad:
 
   void main()
       let p = new Pont(1)
-      print(p.x)
+      console.print(p.x)
 fix:
   struct Point
       x: int
 
   void main()
       let p = new Point(1)
-      print(p.x)
+      console.print(p.x)
 
 @ K0005 no such field
 match: type '*' has no field '*'
@@ -96,7 +96,7 @@ bad:
 
   void main()
       let p = new Point(1, 2)
-      print(p.z)
+      console.print(p.z)
 fix:
   struct Point
       x: int
@@ -104,7 +104,7 @@ fix:
 
   void main()
       let p = new Point(1, 2)
-      print(p.y)
+      console.print(p.y)
 
 @ K0006 no such method
 match: type '*' has no method '*'
@@ -141,9 +141,9 @@ bad:
       let p = new P(1)
       match p
           case Q(x: 1)
-              print("one")
+              console.print("one")
           else
-              print("other")
+              console.print("other")
 fix:
   struct P
       x: int
@@ -152,9 +152,9 @@ fix:
       let p = new P(1)
       match p
           case P(x: 1)
-              print("one")
+              console.print("one")
           else
-              print("other")
+              console.print("other")
 
 @ K0008 unknown base type
 match: type '*' inherits unknown type '*'
@@ -172,14 +172,14 @@ bad:
 
   void main()
       let c = new Circle(1)
-      print(c is 5)
+      console.print(c is 5)
 fix:
   struct Circle
       r: int
 
   void main()
       let c = new Circle(1)
-      print(c is Circle)
+      console.print(c is Circle)
 
 @ K0010 private to class
 match: '*' is private to class '*'
@@ -197,7 +197,7 @@ bad:
 
   void main()
       let c = new Counter(3)
-      print(c.m_n)
+      console.print(c.m_n)
 fix:
   class Counter
   public
@@ -210,7 +210,7 @@ fix:
 
   void main()
       let c = new Counter(3)
-      print(c.peek())
+      console.print(c.peek())
 
 @ K0011 private to module
 match: '*' is private to module '*'
@@ -228,12 +228,12 @@ bad:
   import secret
 
   void main()
-      print(secret::key())
+      console.print(secret::key())
 fix:
   import secret
 
   void main()
-      print(secret::open())
+      console.print(secret::open())
 
 @ K0012 module not found
 match: cannot find module '*'
@@ -243,7 +243,7 @@ bad:
   import nosuch
 
   void main()
-      print(1)
+      console.print(1)
 fix:
   import console
 
@@ -267,13 +267,13 @@ bad:
       return a + b
 
   void main()
-      print(add("x", 2))
+      console.print(add("x", 2))
 fix:
   fn add(a: int, b: int): int
       return a + b
 
   void main()
-      print(add(1, 2))
+      console.print(add(1, 2))
 
 @ K0021 wrong handle type
 match: argument * to extern '*': type '*' is not assignable to handle type '*'
@@ -306,12 +306,12 @@ bad:
   extern fn takes_int(n: int): int
 
   void main()
-      print(takes_int(1.5))
+      console.print(takes_int(1.5))
 fix:
   extern fn takes_int(n: int): int
 
   void main()
-      print(takes_int(7))
+      console.print(takes_int(7))
 
 @ K0023 wrong field type
 match: field '*' of '*': type '*' is not assignable to '*'
@@ -324,7 +324,7 @@ bad:
 
   void main()
       let p = new Point(1, "two")
-      print(p.x)
+      console.print(p.x)
 fix:
   struct Point
       x: int
@@ -332,7 +332,7 @@ fix:
 
   void main()
       let p = new Point(1, 2)
-      print(p.x)
+      console.print(p.x)
 
 @ K0024 type mismatch
 match: *: type '*' is not assignable to '*'
@@ -346,7 +346,7 @@ bad:
       return "ada"
 
   void main()
-      print(half(4), name())
+      console.print(half(4), name())
 fix:
   fn half(n: int): int
       return n / 2
@@ -355,7 +355,7 @@ fix:
       return "ada"
 
   void main()
-      print(half(4), name())
+      console.print(half(4), name())
 
 @ K0025 cannot add these types
 match: cannot add '*' and '*' (use string(x) or an interpolated string)*
@@ -364,11 +364,11 @@ help: Convert the number first with `string(x)`, or use an interpolated string s
 bad:
   void main()
       let n = 3
-      print("n is " + n)
+      console.print("n is " + n)
 fix:
   void main()
       let n = 3
-      print("n is " + string(n))
+      console.print("n is " + string(n))
 
 @ K0026 operator on a handle
 match: operator '*' is not defined for the opaque handle type '*'
@@ -380,14 +380,14 @@ bad:
 
   void main()
       let w = make_window()
-      print(w + 1)
+      console.print(w + 1)
 fix:
   extern type Window
   extern fn make_window(): Window
 
   void main()
       let w = make_window()
-      print(w)
+      console.print(w)
 
 @ K0027 `in` with a string
 match: `in` on a string wants a string / char on the left, got '*'
@@ -395,10 +395,10 @@ why: `x in "text"` asks whether x occurs inside the string, so x must itself be 
 help: Convert the left side with `string(x)`.
 bad:
   void main()
-      print(5 in "a5b")
+      console.print(5 in "a5b")
 fix:
   void main()
-      print(string(5) in "a5b")
+      console.print(string(5) in "a5b")
 
 @ K0028 `in` with an array
 match: `in`: '*' can't be an element of '*'
@@ -407,11 +407,11 @@ help: Look for a value of the array's element type.
 bad:
   void main()
       let names = ["ada", "bo"]
-      print(3 in names)
+      console.print(3 in names)
 fix:
   void main()
       let names = ["ada", "bo"]
-      print("bo" in names)
+      console.print("bo" in names)
 
 @ K0029 `in` right-hand side
 match: `in` wants a string or an array on the right, got '*'
@@ -420,11 +420,11 @@ help: Put an array or a string after `in`.
 bad:
   void main()
       let n = 5
-      print(n in 42)
+      console.print(n in 42)
 fix:
   void main()
       let n = 5
-      print(n in [4, 5, 6])
+      console.print(n in [4, 5, 6])
 
 @ K0030 field access on a non-object
 match: field access on a non-object (type '*')
@@ -433,14 +433,14 @@ help: Check that the value in front of the `.` is a struct or class instance.
 bad:
   void main()
       let n = 5
-      print(n.value)
+      console.print(n.value)
 fix:
   struct Box
       value: int
 
   void main()
       let n = new Box(5)
-      print(n.value)
+      console.print(n.value)
 
 @ K0031 field assignment on a non-object
 match: field assignment on a non-object (type '*')
@@ -464,10 +464,10 @@ why: `int(x)` converts a float to an integer, truncating toward zero. It does no
 help: Pass a float or an int.
 bad:
   void main()
-      print(int("42"))
+      console.print(int("42"))
 fix:
   void main()
-      print(int(42.9))
+      console.print(int(42.9))
 
 # ── calls ────────────────────────────────────────────────────────────
 
@@ -495,13 +495,13 @@ bad:
       return a + b
 
   void main()
-      print(add(1))
+      console.print(add(1))
 fix:
   fn add(a: int, b: int): int
       return a + b
 
   void main()
-      print(add(1, 2))
+      console.print(add(1, 2))
 
 @ K0042 wrong number of method arguments
 match: method '*.*' takes * argument(s), got *
@@ -562,7 +562,7 @@ bad:
 
   void main()
       let p = new Point(1, 2, 3)
-      print(p.x)
+      console.print(p.x)
 fix:
   struct Point
       x: int
@@ -570,7 +570,7 @@ fix:
 
   void main()
       let p = new Point(1, 2)
-      print(p.x)
+      console.print(p.x)
 
 @ K0045 assert arguments
 match: 'assert' takes a condition and an optional message, got * argument(s)
@@ -589,10 +589,10 @@ why: `int(x)` and `copy(x)` convert or copy exactly one value.
 help: Pass a single argument.
 bad:
   void main()
-      print(int(1.5, 2.5))
+      console.print(int(1.5, 2.5))
 fix:
   void main()
-      print(int(1.5))
+      console.print(int(1.5))
 
 @ K0047 copy of a handle
 match: cannot `copy` the opaque handle type '*'
@@ -627,7 +627,7 @@ bad:
 
   void main()
       let x = maybe(0)
-      print(x + 1)
+      console.print(x + 1)
 fix:
   fn maybe(n: int): int?
       if n > 0 then
@@ -637,7 +637,7 @@ fix:
   void main()
       let x = maybe(0)
       if x != null then
-          print(x + 1)
+          console.print(x + 1)
 
 @ K0051 possibly null receiver
 match: *possibly null — narrow it before calling '*'
@@ -656,7 +656,7 @@ bad:
 
   void main()
       let b = find(0)
-      print(b.get())
+      console.print(b.get())
 fix:
   class Box
       n: int = 0
@@ -671,7 +671,7 @@ fix:
   void main()
       let b = find(0)
       if b != null then
-          print(b.get())
+          console.print(b.get())
 
 @ K0052 possibly null field access
 match: in '*': value of type '*' is possibly null — narrow it before reading '.*'
@@ -688,7 +688,7 @@ bad:
 
   void main()
       let b = find(0)
-      print(b.n)
+      console.print(b.n)
 fix:
   struct Box
       n: int
@@ -701,7 +701,7 @@ fix:
   void main()
       let b = find(0)
       if b != null then
-          print(b.n)
+          console.print(b.n)
 
 @ K0053 possibly null index target
 match: value of type '*' is possibly null — narrow it before indexing
@@ -715,7 +715,7 @@ bad:
 
   void main()
       let xs = find(0)
-      print(xs[0])
+      console.print(xs[0])
 fix:
   fn find(k: int): [int]?
       if k > 0 then
@@ -725,7 +725,7 @@ fix:
   void main()
       let xs = find(0)
       if xs != null then
-          print(xs[0])
+          console.print(xs[0])
 
 # ── control flow and functions ───────────────────────────────────────
 
@@ -752,7 +752,7 @@ fix:
   void main()
       for i = 1 to 3
           if i == 2 then continue
-          print(i)
+          console.print(i)
 
 @ K0062 return value from a void function
 match: a void function cannot return a value
@@ -769,7 +769,7 @@ fix:
       return 5
 
   void main()
-      print(show())
+      console.print(show())
 
 @ K0063 missing return value
 match: a value function must return a value
@@ -780,13 +780,13 @@ bad:
       return
 
   void main()
-      print(five())
+      console.print(five())
 fix:
   fn five(): int
       return 5
 
   void main()
-      print(five())
+      console.print(five())
 
 @ K0064 missing return on some path
 match: function '*' must return a value on every path
@@ -799,7 +799,7 @@ bad:
           return 1
 
   void main()
-      print(pick(3))
+      console.print(pick(3))
 fix:
   fn pick(n: int): int
       if n > 0 then
@@ -807,7 +807,7 @@ fix:
       return 0
 
   void main()
-      print(pick(3))
+      console.print(pick(3))
 
 # ── mutability ───────────────────────────────────────────────────────
 
@@ -823,7 +823,7 @@ fix:
   void main()
       let limit = 10
       limit = 11
-      print(limit)
+      console.print(limit)
 
 @ K0071 assignment to a fixed name
 match: cannot reassign immutable binding '*' (declared with `be`)
@@ -837,7 +837,7 @@ fix:
   void main()
       for i = 1 to 3
           let j = i + 1
-          print(j)
+          console.print(j)
 
 @ K0072 pure function mutates state
 match: pure `fn *` mutates state — declare it `mut`
@@ -853,7 +853,7 @@ bad:
       return b.v
 
   void main()
-      print(poke(new Box()))
+      console.print(poke(new Box()))
 fix:
   struct Box
       v: int = 0
@@ -863,7 +863,7 @@ fix:
       return b.v
 
   void main()
-      print(poke(new Box()))
+      console.print(poke(new Box()))
 
 @ K0073 pure function calls a procedure
 match: a pure `fn` cannot call the void procedure '*'
@@ -871,21 +871,21 @@ why: A `fn` must not change anything visible, but a `void` procedure exists to c
 help: Make the caller `void` or `mut`, or make '{1}' a `fn`.
 bad:
   void log(msg: string)
-      print(msg)
+      console.print(msg)
 
   fn twice(n: int): int
       log("twice")
       return n * 2
 
   void main()
-      print(twice(2))
+      console.print(twice(2))
 fix:
   void log(msg: string)
-      print(msg)
+      console.print(msg)
 
   void twice(n: int)
       log("twice")
-      print(n * 2)
+      console.print(n * 2)
 
   void main()
       twice(2)
@@ -897,11 +897,11 @@ help: Write `let {1} be <expression>`.
 bad:
   void main()
       let size be
-      print(size)
+      console.print(size)
 fix:
   void main()
       let size be 4
-      print(size)
+      console.print(size)
 
 # ── declarations ─────────────────────────────────────────────────────
 
@@ -923,7 +923,7 @@ bad:
       y: int
 
   void main()
-      print(1)
+      console.print(1)
 fix:
   struct Point
       x: int
@@ -932,7 +932,7 @@ fix:
       y: int
 
   void main()
-      print(1)
+      console.print(1)
 
 @ K0082 duplicate macro
 match: duplicate macro '*'
@@ -943,12 +943,12 @@ bad:
   let N be 2
 
   void main()
-      print(N)
+      console.print(N)
 fix:
   let N be 1
 
   void main()
-      print(N)
+      console.print(N)
 
 @ K0083 duplicate global
 match: duplicate top-level name '*'
@@ -959,12 +959,12 @@ bad:
   let total = 1
 
   void main()
-      print(total)
+      console.print(total)
 fix:
   let total = 0
 
   void main()
-      print(total)
+      console.print(total)
 
 @ K0084 template shares a name
 match: template '*' cannot share its name with another '*' declaration (a template does not overload)
@@ -978,13 +978,13 @@ bad:
       return x + x
 
   void main()
-      print(twice(3))
+      console.print(twice(3))
 fix:
   fn twice(x)
       return x + x
 
   void main()
-      print(twice(3))
+      console.print(twice(3))
 
 @ K0085 global needs a type or value
 match: top-level '*' needs a type annotation or an initialiser
@@ -994,12 +994,12 @@ bad:
   let total
 
   void main()
-      print(1)
+      console.print(1)
 fix:
   let total = 0
 
   void main()
-      print(total)
+      console.print(total)
 
 @ K0086 unknown or cyclic base type
 match: cyclic or unresolved inheritance near '*'
@@ -1010,7 +1010,7 @@ bad:
       r: int
 
   void main()
-      print(1)
+      console.print(1)
 fix:
   struct Shape
       tag: int = 0
@@ -1019,7 +1019,7 @@ fix:
       r: int = 0
 
   void main()
-      print(1)
+      console.print(1)
 
 @ K0087 abstract instantiation
 match: cannot instantiate abstract type '*'
@@ -1040,7 +1040,7 @@ fix:
 
   void main()
       let s = new Circle(0, 1)
-      print(s.r)
+      console.print(s.r)
 
 @ K0088 constructing a handle
 match: cannot construct `extern type *` — it is an opaque C handle; obtain one from a C function
@@ -1095,7 +1095,7 @@ bad:
       return a
 
   void main()
-      print(f(1))
+      console.print(f(1))
 fix:
   fn f(a: int, b: int): int
       return a + b
@@ -1104,7 +1104,7 @@ fix:
       return a
 
   void main()
-      print(f(1, 1))
+      console.print(f(1, 1))
 
 @ K0092 default out of order
 match: parameter '*' needs a default value, because it follows a parameter that has one
@@ -1115,13 +1115,13 @@ bad:
       return a + b
 
   void main()
-      print(f(1, 2))
+      console.print(f(1, 2))
 fix:
   fn f(b: int, a: int = 1): int
       return a + b
 
   void main()
-      print(f(2))
+      console.print(f(2))
 
 @ K0093 default must be a literal
 match: default value of parameter '*' must be a literal
@@ -1132,13 +1132,13 @@ bad:
       return a + b
 
   void main()
-      print(f(1))
+      console.print(f(1))
 fix:
   fn f(a: int, b: int = 2): int
       return a + b
 
   void main()
-      print(f(1))
+      console.print(f(1))
 
 # ── export and extern ────────────────────────────────────────────────
 
@@ -1222,12 +1222,12 @@ bad:
   extern fn f(x: int): int = "bad-name"
 
   void main()
-      print(f(1))
+      console.print(f(1))
 fix:
   extern fn f(x: int): int = "bad_name"
 
   void main()
-      print(1)
+      console.print(1)
 
 @ K0107 C symbol starts with a digit
 match: extern '*': the C symbol "*" cannot start with a digit
@@ -1237,12 +1237,12 @@ bad:
   extern fn f(x: int): int = "1abc"
 
   void main()
-      print(1)
+      console.print(1)
 fix:
   extern fn f(x: int): int = "abc1"
 
   void main()
-      print(1)
+      console.print(1)
 
 @ K0108 unsupported extern variable type
 match: extern variable '*': type '*' is not supported*
@@ -1252,12 +1252,12 @@ bad:
   extern let xs: [int]
 
   void main()
-      print(1)
+      console.print(1)
 fix:
   extern let xs: int
 
   void main()
-      print(1)
+      console.print(1)
 
 @ K0109 callback parameter type
 match: '*' cannot be a C callback: parameter type '*' is not a plain machine word
@@ -1319,12 +1319,12 @@ bad:
   extern let counter
 
   void main()
-      print(1)
+      console.print(1)
 fix:
   extern let counter: int
 
   void main()
-      print(1)
+      console.print(1)
 
 @ K0113 extern symbol must be a string
 match: expected a string literal after `=` (the C symbol name) in extern*
@@ -1334,12 +1334,12 @@ bad:
   extern fn f(x: int): int = 42
 
   void main()
-      print(1)
+      console.print(1)
 fix:
   extern fn f(x: int): int = "f_impl"
 
   void main()
-      print(1)
+      console.print(1)
 
 @ K0114 export fn on this target
 match: export fn is not supported on target '*' yet*
@@ -1362,7 +1362,7 @@ bad:
       return a
 
   void main()
-      print(f(1, 2))
+      console.print(f(1, 2))
 fix:
   fn f(a: int): int
       return a
@@ -1371,7 +1371,7 @@ fix:
       return a
 
   void main()
-      print(f(1))
+      console.print(f(1))
 
 @ K0121 ambiguous overload
 match: ambiguous overloaded call to '*'
@@ -1392,7 +1392,7 @@ bad:
       return a
 
   void main()
-      print(f(1.5))
+      console.print(f(1.5))
 fix:
   fn f(a: int): int
       return a
@@ -1401,7 +1401,7 @@ fix:
       return a
 
   void main()
-      print(f(1))
+      console.print(f(1))
 
 @ K0123 identical overloads
 match: duplicate function '*' — two overloads have identical parameter types
@@ -1416,7 +1416,7 @@ bad:
       return b
 
   void main()
-      print(f(1))
+      console.print(f(1))
 fix:
   fn f(a: int): int
       return a
@@ -1425,7 +1425,7 @@ fix:
       return 1
 
   void main()
-      print(f(1))
+      console.print(f(1))
 
 # ── ownership ────────────────────────────────────────────────────────
 
@@ -1440,8 +1440,8 @@ bad:
   void main()
       let a = new Handle(1)
       let b = a
-      print(b.id)
-      print(a.id)
+      console.print(b.id)
+      console.print(a.id)
 fix:
   unique struct Handle
       id: int
@@ -1449,7 +1449,7 @@ fix:
   void main()
       let a = new Handle(1)
       let b = a
-      print(b.id)
+      console.print(b.id)
 
 @ K0131 moving a borrowed unique value
 match: cannot move `unique` value out of '*' — it is not a locally owned binding
@@ -1483,17 +1483,17 @@ bad:
       let n = 5
       match n
           case P(x: 1)
-              print(1)
+              console.print(1)
           else
-              print(2)
+              console.print(2)
 fix:
   void main()
       let n = 5
       match n
           case 5
-              print(1)
+              console.print(1)
           else
-              print(2)
+              console.print(2)
 
 @ K0141 unrelated pattern type
 match: struct pattern type '*' is unrelated to subject type '*'
@@ -1510,9 +1510,9 @@ bad:
       let p = new P(1)
       match p
           case Z(y: 1)
-              print(1)
+              console.print(1)
           else
-              print(2)
+              console.print(2)
 fix:
   struct P
       x: int
@@ -1521,9 +1521,9 @@ fix:
       let p = new P(1)
       match p
           case P(x: 1)
-              print(1)
+              console.print(1)
           else
-              print(2)
+              console.print(2)
 
 @ K0142 field named twice
 match: field '*' named twice in pattern '*'
@@ -1537,9 +1537,9 @@ bad:
       let p = new P(1)
       match p
           case P(x: 1, x: 2)
-              print(1)
+              console.print(1)
           else
-              print(2)
+              console.print(2)
 fix:
   struct P
       x: int
@@ -1548,9 +1548,9 @@ fix:
       let p = new P(1)
       match p
           case P(x: 1)
-              print(1)
+              console.print(1)
           else
-              print(2)
+              console.print(2)
 
 @ K0143 float in a pattern
 match: struct pattern cannot match on `float` field '*' yet
@@ -1564,7 +1564,7 @@ bad:
       let p = new P(1.0)
       match p
           case P(x: 1.0)
-              print(1)
+              console.print(1)
 fix:
   struct P
       x: float
@@ -1572,7 +1572,7 @@ fix:
   void main()
       let p = new P(1.0)
       if p.x == 1.0 then
-          print("one")
+          console.print("one")
 
 @ K0144 pattern literal type
 match: pattern for field '*': literal of type '*' is not comparable to field type '*'
@@ -1586,9 +1586,9 @@ bad:
       let p = new P(1)
       match p
           case P(x: "one")
-              print(1)
+              console.print(1)
           else
-              print(2)
+              console.print(2)
 fix:
   struct P
       x: int
@@ -1597,9 +1597,9 @@ fix:
       let p = new P(1)
       match p
           case P(x: 1)
-              print(1)
+              console.print(1)
           else
-              print(2)
+              console.print(2)
 
 @ K0145 pattern on a handle
 match: cannot destructure the opaque handle type '*' in a pattern
@@ -1623,9 +1623,9 @@ bad:
       let c = Color::Red
       match c
           case Color::Red
-              print("red")
+              console.print("red")
           case Color::Green
-              print("green")
+              console.print("green")
 fix:
   enum Color
       Red
@@ -1636,11 +1636,11 @@ fix:
       let c = Color::Red
       match c
           case Color::Red
-              print("red")
+              console.print("red")
           case Color::Green
-              print("green")
+              console.print("green")
           else
-              print("blue")
+              console.print("blue")
 
 # ── lints (warnings; errors under --strict) ──────────────────────────
 
@@ -1652,17 +1652,17 @@ help: Delete it, or move it before the jump.
 bad:
   fn f(): int
       return 1
-      print("never")
+      console.print("never")
 
   void main()
-      print(f())
+      console.print(f())
 fix:
   fn f(): int
-      print("before")
+      console.print("before")
       return 1
 
   void main()
-      print(f())
+      console.print(f())
 
 @ K0161 self-assignment
 match: self-assignment of '*' has no effect
@@ -1673,13 +1673,13 @@ bad:
   void main()
       let a = 1
       a = a
-      print(a)
+      console.print(a)
 fix:
   void main()
       let a = 1
       let b = 2
       a = b
-      print(a)
+      console.print(a)
 
 @ K0162 constant condition
 match: `if` condition is always *
@@ -1689,12 +1689,12 @@ help: Remove the `if`, or use a real condition.
 bad:
   void main()
       if true then
-          print("always")
+          console.print("always")
 fix:
   void main()
       let n = 3
       if n > 2 then
-          print("big")
+          console.print("big")
 
 @ K0163 division by zero
 match: division by zero
@@ -1704,11 +1704,11 @@ help: Divide by a non-zero value.
 bad:
   void main()
       let n = 5
-      print(n / 0)
+      console.print(n / 0)
 fix:
   void main()
       let n = 5
-      print(n / 1)
+      console.print(n / 1)
 
 @ K0164 self comparison
 match: '*' compares a value with itself
@@ -1719,13 +1719,13 @@ bad:
   void main()
       let y = 3
       if y == y then
-          print("same")
+          console.print("same")
 fix:
   void main()
       let y = 3
       let z = 4
       if y == z then
-          print("same")
+          console.print("same")
 
 @ K0165 unused variable
 match: '*' is declared but never used
@@ -1735,10 +1735,10 @@ help: Use '{1}', or delete it.
 bad:
   void main()
       let unused = 5
-      print("hi")
+      console.print("hi")
 fix:
   void main()
-      print("hi")
+      console.print("hi")
 
 @ K0166 untyped parameter
 match: parameter '*' has no type annotation (implicit any)
@@ -1751,14 +1751,14 @@ bad:
           return 1
 
   void main()
-      print(1)
+      console.print(1)
 fix:
   class C
       fn f(a: int): int
           return a
 
   void main()
-      print(1)
+      console.print(1)
 
 @ K0167 mut without mutation
 match: `mut *` has no mutating code — could be `fn` or `void`
@@ -1770,13 +1770,13 @@ bad:
       return 1
 
   void main()
-      print(one())
+      console.print(one())
 fix:
   fn one(): int
       return 1
 
   void main()
-      print(one())
+      console.print(one())
 
 @ K0168 variable without a type
 match: '*' has no type annotation and no initialiser
@@ -1787,11 +1787,11 @@ bad:
   void main()
       let x
       x = 1
-      print(x)
+      console.print(x)
 fix:
   void main()
       let x = 1
-      print(x)
+      console.print(x)
 
 @ K0169 reused local name
 match: '*' is already declared in this function; this `let` reuses it
@@ -1803,15 +1803,15 @@ bad:
       let x = 1
       if x > 0 then
           let x = 5
-          print(x)
-      print(x)
+          console.print(x)
+      console.print(x)
 fix:
   void main()
       let x = 1
       if x > 0 then
           let y = 5
-          print(y)
-      print(x)
+          console.print(y)
+      console.print(x)
 
 @ K0170 comparison with a bool literal
 match: comparison with a bool literal; use the value or `not` directly
@@ -1822,12 +1822,12 @@ bad:
   void main()
       let ok = true
       if ok == true then
-          print("yes")
+          console.print("yes")
 fix:
   void main()
       let ok = true
       if ok then
-          print("yes")
+          console.print("yes")
 
 # ── syntax ───────────────────────────────────────────────────────────
 
@@ -1838,14 +1838,14 @@ help: Write the branches on separate indented lines.
 bad:
   void main()
       let n = 7
-      if n % 2 == 0 then print("even") else print("odd")
+      if n % 2 == 0 then console.print("even") else console.print("odd")
 fix:
   void main()
       let n = 7
       if n % 2 == 0 then
-          print("even")
+          console.print("even")
       else
-          print("odd")
+          console.print("odd")
 
 @ K0181 range as a value
 match: a range `a to b` is only valid in a `for` loop or a slice, not as a value
@@ -1854,11 +1854,11 @@ help: Use `for i = a to b`, or make an array with `[a, b]`.
 bad:
   void main()
       let r = 1 to 4
-      print(r)
+      console.print(r)
 fix:
   void main()
       for r = 1 to 4
-          print(r)
+          console.print(r)
 
 @ K0182 `?` on an index
 match: '?' applies to calls, not indexing
@@ -1867,12 +1867,12 @@ help: Check `#a` first, or wrap the indexing in a function and call that with `?
 bad:
   void main()
       let a = [1]
-      print(a[5]?)
+      console.print(a[5]?)
 fix:
   void main()
       let a = [1]
       if #a > 5 then
-          print(a[5])
+          console.print(a[5])
 
 @ K0183 `?` on something else
 match: '?' applies to calls and `new` expressions only
@@ -1891,7 +1891,7 @@ bad:
           n += 1
 
   void main()
-      print(1)
+      console.print(1)
 fix:
   class Counter
       n: int = 0
@@ -1899,7 +1899,7 @@ fix:
           n += 1
 
   void main()
-      print(1)
+      console.print(1)
 
 @ K0185 link outside a module
 match: `link` may only be used inside a module*
@@ -1909,10 +1909,10 @@ bad:
   link m
 
   void main()
-      print(1)
+      console.print(1)
 fix:
   void main()
-      print(1)
+      console.print(1)
 
 @ K0186 expected case or else
 match: expected `case` or `else` in match, got *
@@ -1922,15 +1922,15 @@ bad:
   void main()
       let n = 1
       match n
-          print("x")
+          console.print("x")
 fix:
   void main()
       let n = 1
       match n
           case 1
-              print("one")
+              console.print("one")
           else
-              print("other")
+              console.print("other")
 
 @ K0187 unexpected token
 match: unexpected '*'*
@@ -1938,12 +1938,12 @@ why: The parser found a token that cannot start or continue an expression or sta
 help: Check the line for a missing operator, a stray character or a wrong indent.
 bad:
   void main()
-    print(1)
-      print(2)
+    console.print(1)
+      console.print(2)
 fix:
   void main()
-      print(1)
-      print(2)
+      console.print(1)
+      console.print(2)
 
 @ K0188 unexpected top-level token
 match: Unexpected top-level token*
@@ -1951,10 +1951,10 @@ why: Only declarations (`fn`, `void`, `mut`, `struct`, `class`, `enum`, `let`, `
 help: Check for a stray character, or an indent that closed the function too early.
 bad:
   void main(
-      print(1)
+      console.print(1)
 fix:
   void main()
-      print(1)
+      console.print(1)
 
 @ K0189 modifier without a type
 match: expected `struct` or `class` after type modifier
@@ -1965,13 +1965,13 @@ bad:
       tag: int
 
   void main()
-      print(1)
+      console.print(1)
 fix:
   abstract struct Shape
       tag: int
 
   void main()
-      print(1)
+      console.print(1)
 
 @ K0190 method for unknown class
 match: method defined for unknown class '*'

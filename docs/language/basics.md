@@ -37,7 +37,7 @@ point. `print` is a built-in and needs no `import`.
 
 ```km
 void main()
-    print("Hello, Komodo!")
+    console.print("Hello, Komodo!")
 ```
 
 ```text
@@ -59,8 +59,8 @@ argument. `#args` is the count.
 <!-- doc-skip -->
 ```km
 void main(args)
-    print("program: " + args[0])
-    print("first user argument: " + args[1])
+    console.print("program: " + args[0])
+    console.print("first user argument: " + args[1])
 ```
 
 ```bash
@@ -81,7 +81,7 @@ first user argument: hello
 
 /** A doc comment. */
 void main()
-    print("comments are ignored") // trailing comment
+    console.print("comments are ignored") // trailing comment
 ```
 
 ```text
@@ -102,11 +102,11 @@ an `else`.
 void main()
     let n = 7
     if n > 5 then
-        print("big")
+        console.print("big")
     else
-        print("small")
-    if n % 2 == 0 then print("even")
-    if n % 2 != 0 then print("odd")
+        console.print("small")
+    if n % 2 == 0 then console.print("even")
+    if n % 2 != 0 then console.print("odd")
 ```
 
 ```text
@@ -119,11 +119,11 @@ An `else` on the same line as a one-line `if` is a parse error:
 ```km
 void main()
     let n = 7
-    if n % 2 == 0 then print("even") else print("odd")
+    if n % 2 == 0 then console.print("even") else console.print("odd")
 ```
 
 ```text
-example.km:3:38: error: unexpected 'else': a one-line `if c then X else Y` is not supported; write the branches on separate indented lines
+main.km:3:46: error: unexpected 'else': a one-line `if c then X else Y` is not supported; write the branches on separate indented lines
 ```
 
 ## Variables
@@ -137,7 +137,7 @@ void main()
     count = count + 1
     let name: string = "Ada"   // explicit type
     let limit be 10            // immutable: `be` declares a macro (see Macros)
-    print(count, name, limit)
+    console.print(count, name, limit)
 ```
 
 ```text
@@ -182,8 +182,8 @@ void main()
     let b: bool = true
     let c: char = 'K'
     let s: string = "Komodo"
-    print(i, u, f, g, b, c, s)
-    print(string(i) + "!", 2.0, 2.0f)
+    console.print(i, u, f, g, b, c, s)
+    console.print(string(i) + "!", 2.0, 2.0f)
 ```
 
 ```text
@@ -208,11 +208,11 @@ A `float` prints in `%g` form and keeps a trailing `.0` when it is whole, so
 
 ```km
 void main()
-    print(0xFF, 0b1010, 1_000_000, 0xFF_FF)
-    print(0xff + 1, 0b1111_0000)
-    print("tab:\tend", "quote:\" backslash:\\ newline-next")
-    print("line1\nline2")
-    print('\n' == '\n', 'a')
+    console.print(0xFF, 0b1010, 1_000_000, 0xFF_FF)
+    console.print(0xff + 1, 0b1111_0000)
+    console.print("tab:\tend", "quote:\" backslash:\\ newline-next")
+    console.print("line1\nline2")
+    console.print('\n' == '\n', 'a')
 ```
 
 ```text
@@ -243,18 +243,18 @@ Booleans print as `1` and `0`. Integer `/` truncates toward zero.
 
 ```km
 void main()
-    print(7 / 2, 7 % 3, -7 / 2, 2 * 3 + 4)
-    print(1.0 / 4.0, 5 < 6, 5 == 6, 5 != 6)
-    print(6 & 3, 6 | 3, 6 ^ 3, 6 xor 3, 1 << 4, 256 >> 2)
-    print(not true, true and false, false or true, not false)
-    print(3 in [1, 2, 3], "ell" in "hello", 'h' in "hello")
+    console.print(7 / 2, 7 % 3, -7 / 2, 2 * 3 + 4)
+    console.print(1.0 / 4.0, 5 < 6, 5 == 6, 5 != 6)
+    console.print(6 & 3, 6 | 3, 6 ^ 3, 6 xor 3, 1 << 4, 256 >> 2)
+    console.print(not true, true and false, false or true, not false)
+    console.print(3 in [1, 2, 3], "ell" in "hello", 'h' in "hello")
     let n = 0
     n += 5
     n *= 3
     n -= 1
     n /= 2
     n %= 5
-    print(n)
+    console.print(n)
 ```
 
 ```text
@@ -295,7 +295,7 @@ fn describe(s: Shape): string
 
 void main()
     let c = new Circle(0, 5)
-    print(c is Circle, c is Square, describe(c))
+    console.print(c is Circle, c is Square, describe(c))
 ```
 
 ```text
@@ -311,9 +311,9 @@ expression is converted with `string(...)`.
 void main()
     let n = 3
     let who = "world"
-    print(`hello {who}, next is {n + 1}`)
-    print(`big? {n > 2 and "yes" or "no"}`)
-    print(`literal \{braces\} and a \`tick\``)
+    console.print(`hello {who}, next is {n + 1}`)
+    console.print(`big? {n > 2 and "yes" or "no"}`)
+    console.print(`literal \{braces\} and a \`tick\``)
 ```
 
 ```text
@@ -334,12 +334,12 @@ strings and arrays.
 ```km
 void main()
     let s = "hello, world"
-    print(s[0 to 5])
-    print(s[7 to #s])
-    print(s[7:])
-    print(s[:5])
+    console.print(s[0 to 5])
+    console.print(s[7 to #s])
+    console.print(s[7:])
+    console.print(s[:5])
     let xs = [10, 20, 30, 40, 50]
-    print(xs[1 to 4], xs[2:])
+    console.print(xs[1 to 4], xs[2:])
 ```
 
 ```text
@@ -358,14 +358,14 @@ An array literal is written `[a, b, c]`. `#a` is the length. Append with
 ```km
 void main()
     let xs = [4, 15, 8]
-    print(#xs, xs[0], xs[#xs - 1])
+    console.print(#xs, xs[0], xs[#xs - 1])
     let empty: [int] = []
     empty += [1]
     empty += [2, 3]
-    print(#empty, empty)
+    console.print(#empty, empty)
     let names = ["ada", "bo"]
     names += ["cy"]
-    print(names, "bo" in names)
+    console.print(names, "bo" in names)
 ```
 
 ```text
@@ -385,20 +385,20 @@ call (see [Built-ins](#built-ins)).
 void main()
     let i = 0
     while i < 3 do
-        print("while", i)
+        console.print("while", i)
         i += 1
     for k = 1 to 3
-        print("to", k)
+        console.print("to", k)
     for k = 3 down to 1
-        print("down", k)
+        console.print("down", k)
     for k = 0 until 3
-        print("until", k)
+        console.print("until", k)
     for x in [5, 6]
-        print("each", x)
+        console.print("each", x)
     for x in [5, 6, 7, 8] do
         if x == 6 then continue
         if x == 8 then break
-        print("kept", x)
+        console.print("kept", x)
 ```
 
 ```text
@@ -439,11 +439,11 @@ void main()
     let word = "beta"
     match word
         case "alpha"
-            print("first")
+            console.print("first")
         case "beta"
-            print("second")
+            console.print("second")
         else
-            print("other")
+            console.print("other")
 ```
 
 ```text
@@ -466,12 +466,12 @@ mut counter(): int
     return 1
 
 void show(label: string, v: int)
-    print(label, v)
+    console.print(label, v)
 
 void main()
     show("square", square(4))
     show("add", add(2, 3))
-    print(counter())
+    console.print(counter())
 ```
 
 ```text
@@ -503,9 +503,9 @@ fn scale(v: int, k: int = 2, offset: int = -1): int
     return v * k + offset
 
 void main()
-    print(greet("ann"))
-    print(greet("bob", "hi"))
-    print(scale(5), scale(5, 3))
+    console.print(greet("ann"))
+    console.print(greet("bob", "hi"))
+    console.print(scale(5), scale(5, 3))
 ```
 
 ```text
@@ -587,12 +587,12 @@ let HEIGHT be 3
 let AREA be WIDTH * HEIGHT
 
 void main()
-    print("area:", AREA)
+    console.print("area:", AREA)
     let N be 10
     if WIDTH > 0
         let N be 99
-        print("inner:", N)
-    print("outer:", N)
+        console.print("inner:", N)
+    console.print("outer:", N)
 ```
 
 ```text
@@ -661,7 +661,7 @@ These names need no `import`:
 
 | Name | What it does |
 |------|--------------|
-| `print(...)` | writes its arguments separated by spaces, then a newline |
+| `console.print(...)` | writes its arguments separated by spaces, then a newline |
 | `string(x)` | converts any value to text |
 | `int(x)` | converts a float to an integer, truncating toward zero |
 | `join(parts, sep)` | joins a `[string]` with `sep` between the parts |
@@ -673,14 +673,14 @@ These names need no `import`:
 import console
 
 void main()
-    print(int(3.99), int(-2.5), int(7))
-    print(string(2.0), string(true), string(42))
-    print(string(1.5) + "x", "pi~" + string(3))
+    console.print(int(3.99), int(-2.5), int(7))
+    console.print(string(2.0), string(true), string(42))
+    console.print(string(1.5) + "x", "pi~" + string(3))
     let s = join(["a", "b", "c"], ", ")
-    print(s)
+    console.print(s)
     assert(1 + 1 == 2)
     assert(true, "never shown")
-    print("done")
+    console.print("done")
 ```
 
 ```text
@@ -699,8 +699,8 @@ fn half(n: int): int
     return n / 2
 
 void main()
-    print(half(10))
-    print(half(7))
+    console.print(half(10))
+    console.print(half(7))
 ```
 
 ```text
@@ -720,11 +720,11 @@ void main()
     let a = new Pixel(1, 2)
     let b = copy(a)
     b.x = 99
-    print(a.x, b.x)
+    console.print(a.x, b.x)
     let xs = [1, 2]
     let ys = copy(xs)
     ys[0] = 50
-    print(xs[0], ys[0])
+    console.print(xs[0], ys[0])
 ```
 
 ```text
@@ -746,10 +746,10 @@ fn check_port(n: int): int
 void main()
     let port = check_port(70000)?
     if port == null then
-        print("bad port, using 8080")
+        console.print("bad port, using 8080")
     else
-        print("port", port)
-    print(check_port(80)?)
+        console.print("port", port)
+    console.print(check_port(80)?)
 ```
 
 ```text
@@ -764,7 +764,7 @@ void main()
     let n = 0
     if n == 0 then
         throw "n must not be zero"
-    print("unreachable")
+    console.print("unreachable")
 ```
 
 ```text
@@ -897,11 +897,11 @@ fn maybe(n: int): int?
 
 void main()
     let x = maybe(0)
-    print(x + 1)
+    console.print(x + 1)
 ```
 
 ```text
-example.km:8:11: error: left operand of '+' is possibly null
+main.km:8:19: error: left operand of '+' is possibly null
 ```
 
 ```km
@@ -925,7 +925,7 @@ fn poke(b: Box): int
     return b.v
 
 void main()
-    print(poke(new Box()))
+    console.print(poke(new Box()))
 ```
 
 ```text
@@ -938,7 +938,7 @@ fn pick(n: int): int
         return 1
 
 void main()
-    print(pick(3))
+    console.print(pick(3))
 ```
 
 ```text
@@ -952,7 +952,7 @@ printed and the program still builds and runs:
 void main()
     let y = 3
     if y == y then
-        print("same")
+        console.print("same")
 ```
 
 ```text
@@ -980,7 +980,7 @@ example.km:3:8: error: '==' compares a value with itself
 ```km
 void main()
     let unused = 5
-    print("hi")
+    console.print("hi")
 ```
 
 ```bash
@@ -1004,9 +1004,9 @@ void main()
     let c = Color::Red
     match c
         case Color::Red
-            print("red")
+            console.print("red")
         case Color::Green
-            print("green")
+            console.print("green")
 ```
 
 ```bash

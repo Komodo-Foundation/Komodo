@@ -3,4 +3,4 @@ fn f(a: int): int
 fn f(b: int): int
     return b
 void main()
-    print(f(1))
+    console.print(f(1))

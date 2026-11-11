@@ -53,7 +53,7 @@ Save this as `hello.km`:
 
 ```km
 void main()
-    print("Hello, world!")
+    console.print("Hello, world!")
 ```
 
 Run it:
@@ -131,9 +131,9 @@ Each snippet below runs as written. The output shown is what it prints.
 void main()
     let name = "Komodo"
     let answer = 6 * 7
-    print(`{name}: the answer is {answer}`)
+    console.print(`{name}: the answer is {answer}`)
     let ratio = 1 / 4
-    print("ratio:", ratio, "half:", 0.5 * 3.0)
+    console.print("ratio:", ratio, "half:", 0.5 * 3.0)
 ```
 
 ```text
@@ -155,7 +155,7 @@ void main()
     let total = 0
     for i = 1 to 5
         total += square(i)
-    print("sum of squares:", total)
+    console.print("sum of squares:", total)
 ```
 
 ```text
@@ -174,8 +174,8 @@ void main()
     for x in xs
         if x > 10 then
             big += 1
-    print("values above 10:", big)
-    print("first:", xs[0], "last:", xs[#xs - 1])
+    console.print("values above 10:", big)
+    console.print("first:", xs[0], "last:", xs[#xs - 1])
 ```
 
 ```text
@@ -199,10 +199,10 @@ fn check_port(n: int) : int
 
 void main()
     let p = new Point(3, 4)
-    print("distance squared:", p.x * p.x + p.y * p.y)
+    console.print("distance squared:", p.x * p.x + p.y * p.y)
     let port = check_port(70000)?
     if port == null then
-        print("bad port, falling back to 8080")
+        console.print("bad port, falling back to 8080")
 ```
 
 ```text

@@ -64,7 +64,7 @@ fn compileMapped(source: string, target: string, strict: bool, opt: string, file
     let lexer = new Lexer(source)
     let tokens = lexer.tokenize()
     for w in lexer.warnings() do
-        print(diagOne(locate(w, files, starts)))
+        console.print(diagOne(locate(w, files, starts)))
 
     let parser = new Parser(tokens)
     let parsed = parser.parseProgram()?
@@ -161,4 +161,4 @@ fn selectBackend(target: string): Backend
 
 void save(asm: string, path: string)
     file::write_all(path, asm)
-    print("wrote " + path)
+    console.print("wrote " + path)

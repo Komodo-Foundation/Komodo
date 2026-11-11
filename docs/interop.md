@@ -17,8 +17,8 @@ name:
 import zlib
 
 void main()
-    print(zlib::crc32(0, "hello", 5))
-    print(zlib::adler32(1, "hello", 5))
+    console.print(zlib::crc32(0, "hello", 5))
+    console.print(zlib::adler32(1, "hello", 5))
 ```
 
 ```text
@@ -101,18 +101,18 @@ fn visit(v: int, label: string): int
 
 void main()
     let c = shapes::canvas_new(3, 4)
-    print(shapes::canvas_area(c))
-    print(shapes::canvas_name(c))
+    console.print(shapes::canvas_area(c))
+    console.print(shapes::canvas_name(c))
     shapes::canvas_free(c)
 
     let p = shapes::point_scale(copy(new shapes::Point(1.5, -2.0)), 2.0)
-    print(`{p.x} {p.y}`)
+    console.print(`{p.x} {p.y}`)
 
     let xs = [0, 0, 0, 0]
     shapes::fill_squares(data(xs), #xs)
-    print(xs)
-    print(shapes::each(visit, 3))
-    print(shapes::SH_FLAG_ALL)
+    console.print(xs)
+    console.print(shapes::each(visit, 3))
+    console.print(shapes::SH_FLAG_ALL)
 ```
 
 ```text
@@ -270,7 +270,7 @@ lib.add.argtypes = [ctypes.c_int64, ctypes.c_int64]
 lib.add.restype = ctypes.c_int64
 lib.greet.argtypes = [ctypes.c_char_p]
 lib.greet.restype = ctypes.c_char_p
-print(lib.add(2, 3), lib.greet(b"Python").decode())
+console.print(lib.add(2, 3), lib.greet(b"Python").decode())
 ```
 
 ```text

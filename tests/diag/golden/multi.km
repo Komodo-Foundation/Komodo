@@ -6,4 +6,4 @@ fn b(): int
 
 void main()
     break
-    print(a() + b())
+    console.print(a() + b())
