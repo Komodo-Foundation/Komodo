@@ -1,0 +1,24 @@
+# Komodo
+
+> Komodo is a small, statically typed, self-hosting language. It compiles to x86-64 native code, portable C, WebAssembly or a stack VM, and it binds C libraries directly from their headers (`import zlib`). The compiler is written in Komodo and builds itself from a checked-in seed.
+
+Rules for code examples: the language reference is authoritative. Check syntax there, or compile a snippet with `komodo -q main.km`, before stating that a feature exists or is missing. Komodo is pre-1.0, so syntax may change between minor versions.
+
+## Language
+- [Language reference](docs/language/reference.md): every syntax form and rule, with compile-error catalogue.
+- [Language basics](docs/language/basics.md): variables, control flow, functions, modules, standard library.
+- [Types and objects](docs/language/types.md): structs, classes, enums, match, generics, errors, ownership.
+- [Integers and f32](docs/language/integers.md): widths, wrap-around, conversions.
+
+## Tools and interop
+- [Getting started](docs/getting-started.md): install, first program, tour.
+- [The komodo command](docs/cli.md): build, run, test, targets, lib.
+- [C and C++ interop](docs/interop.md): binding system libraries, native/ code, exporting to C.
+- [FFI reference](docs/ffi.md): extern fn, callbacks, structs by value, shared libraries.
+- [Diagnostics](docs/diagnostics.md) and [debugging](docs/debugging.md).
+- [Editor support](editors/README.md): VS Code, Vim, Emacs, language server.
+
+## Project
+- [Compiler internals](docs/internals.md): pipeline, backends, bootstrap, adding a feature.
+- [Roadmap](docs/ROADMAP.md) and [handoff](docs/HANDOFF.md): status and open work.
+- [Contributing](CONTRIBUTING.md) and [agent rules](CLAUDE.md).
