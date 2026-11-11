@@ -38,7 +38,7 @@ A script, `tools/check-docs.sh`, extracts each ```` ```km ```` block and
 the ```` ```text ```` block right after it from `docs/**/*.md`, compiles
 and runs it, and diffs the output. An HTML comment such as
 `<!-- doc-test: skip -->` or `<!-- doc-test: strict -->` above a block
-controls it. Run it in CI next to `run-tests.sh`.
+controls it. Run it in CI next to `scripts/run-tests.sh`.
 
 - Pros: the docs already follow this shape, so most blocks work as is.
   It turns the "verify language claims against the docs" rule into a
@@ -88,7 +88,7 @@ to the exit status it checks today.
 differ, naming the backend that disagrees.
 
 - Pros: four backends are Komodo's distinctive promise, and today only the
-  repo's own `run-tests.sh` checks it. Users writing libraries get the same
+  repo's own `scripts/run-tests.sh` checks it. Users writing libraries get the same
   guarantee. Small: it is a loop in the driver.
 - Cons: test time scales with backends. Opt-in, so cost is chosen.
 - Default: add the flag; use it in the repo CI.

@@ -407,8 +407,8 @@ only the call site is loose. Move `argFit`/`sigFit`/`sigSpecificity`/
 ## 4. Migration plan (13 steps)
 
 Gate **G** after every step: `./build-self.sh` (must print `fixpoint OK`),
-`./run-tests.sh` (49 examples x x86/stackvm/c, wasm when emcc+node present;
-plus tests/interop), `./run-sema-tests.sh`, `tests/bind/run.sh`. "Rollback"
+`./scripts/run-tests.sh` (49 examples x x86/stackvm/c, wasm when emcc+node present;
+plus tests/interop), `./scripts/run-sema-tests.sh`, `tests/bind/run.sh`. "Rollback"
 is `git revert` of the single step; steps are additive until step 10 unless
 noted. Line deltas are estimates from the sizes cited above.
 

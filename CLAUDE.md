@@ -16,7 +16,7 @@ Komodo is a self-hosting language/compiler (x86-64 NASM, portable C, WebAssembly
 
 ## Build and test
 - `./build-self.sh` builds `./kmc` (~2 s) from the checked-in seed `bootstrap/main.km.asm.gz`; must print `fixpoint OK`. After compiler changes run `./build-self.sh --force --update-seed` and commit the seed. New syntax must not be used in the compiler's own sources until a seed supports it.
-- Suites: `./run-tests.sh` (examples on x86/stackvm/c/wasm + interop), `./run-sema-tests.sh`, `bash tests/{bind,debug,widths,diag,fmt,doc}/run.sh`, `python3 tests/lsp/run.py`, `python3 tools/check-docs.py`, `tools/perf-budget.sh`. `komodo self test` runs the main ones.
+- Suites: `./scripts/run-tests.sh` (examples on x86/stackvm/c/wasm + interop), `./scripts/run-sema-tests.sh`, `bash tests/{bind,debug,widths,diag,fmt,doc}/run.sh`, `python3 tests/lsp/run.py`, `python3 tools/check-docs.py`, `tools/perf-budget.sh`. `komodo self test` runs the main ones.
 - Restore generated build records before committing: `git checkout -- '*.deps'`.
 - NASM 3 rejects `$name` in `extern`/`global`; CI uses the latest Ubuntu nasm and emsdk 3.1.6.
 

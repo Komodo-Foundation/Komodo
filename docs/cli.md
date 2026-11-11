@@ -140,7 +140,7 @@ the loader path. Examples: [interop.md](interop.md#part-2-using-komodo-from-c-c-
 
 ```bash
 komodo self build     # ./build-self.sh: build ./kmc (no-op when up to date)
-komodo self test      # ./run-tests.sh, then ./run-sema-tests.sh
+komodo self test      # ./scripts/run-tests.sh, then ./scripts/run-sema-tests.sh
 komodo self seed      # ./build-self.sh --force --update-seed
 ```
 
@@ -416,24 +416,24 @@ rechecks a second stage if the first differs.
 
 ## Test scripts
 
-- **`./run-tests.sh [name ...]`** compiles and runs each `examples/*.km` and `tests/examples/*.km`, diffing
+- **`./scripts/run-tests.sh [name ...]`** compiles and runs each `examples/*.km` and `tests/examples/*.km`, diffing
   its output against the `.expected` file beside it. It also builds each
   example with `-t stackvm`, `-t c` and, when `emcc` and `node` are installed,
   `-t wasm`. A file can opt out of a target with a comment line containing
   `stackvm: skip`, `c: skip` or `wasm: skip`.
 
   ```bash
-  ./run-tests.sh                 # every example
-  ./run-tests.sh is_demo oop_demo
+  ./scripts/run-tests.sh                 # every example
+  ./scripts/run-tests.sh is_demo oop_demo
   ```
 
-- **`./run-sema-tests.sh`** checks the analyser's diagnostics. Each file in
+- **`./scripts/run-sema-tests.sh`** checks the analyser's diagnostics. Each file in
   `tests/sema/` must produce the error text in its `.experr` file. Files in
   `tests/sema/strict/` are checked in strict mode, and must compile cleanly in
   default mode.
 
   ```bash
-  ./run-sema-tests.sh
+  ./scripts/run-sema-tests.sh
   ```
 
 Both scripts need `./kmc`. Run `./build-self.sh` first.
@@ -456,6 +456,6 @@ The scripts complete the commands, the options (with the values of `-t` and
 | `KMC` | `komodo`, `build-self.sh` | The `kmc` binary to use. |
 | `KOMODO_CACHE` | `komodo` | The cache directory. Default `${XDG_CACHE_HOME:-~/.cache}/komodo`. |
 | `KM_CC_INPUTS` | `komodo` | Extra linker inputs, word-split, as with `--`. |
-| `KOMODO` | `kmrepl`, `run-tests.sh` | The `komodo` driver to use. |
+| `KOMODO` | `kmrepl`, `scripts/run-tests.sh` | The `komodo` driver to use. |
 | `KOMODO_MAIN` | `build-self.sh` | Path to the interpreter's `main.py`. Used only when no seed or `kmc` is available. |
 | `KM_PY` | `build-self.sh` | The Python used for the interpreter path. |

@@ -180,10 +180,10 @@ same ABI, slightly less "dispatches to the overloads".
 1. `rm -rf ~/.km/cache`
 2. `./build-self.sh` — bootstrap from `./kmc`, then the **fixpoint**
    check (fresh `kmc` reproduces `main.km.asm` byte-for-byte).
-3. `./run-tests.sh` — every `tests/examples/*.km` (x86 run + stackvm compile);
+3. `./scripts/run-tests.sh` — every `tests/examples/*.km` (x86 run + stackvm compile);
    `stdlib_demo`, `median`, `mod_demo` cover `math` / `algorithm` /
    `console`.
-4. `./run-sema-tests.sh` — analyser diagnostics unchanged.
+4. `./scripts/run-sema-tests.sh` — analyser diagnostics unchanged.
 5. Spot-check `demos/sdl_window.km` still links via its own `link SDL2`.
 6. Inspect `main.km.asm`: `call $math_abs` / `call km_put`, and **no**
    `callFrameBegin`-style tagged frame for `math.*` / `algorithm.*`.
