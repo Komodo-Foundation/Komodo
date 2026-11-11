@@ -1,6 +1,6 @@
 # Operator overloading — design (proposal)
 
-Status: **proposal, awaiting maintainer decision.** Nothing is implemented yet.
+Status: **syntax confirmed by the maintainer; implementation in progress.**
 
 ## Today
 
@@ -12,26 +12,25 @@ Status: **proposal, awaiting maintainer decision.** Nothing is implemented yet.
 
 ## Proposed: operators are methods declared inside the struct
 
-```km
+```text
 struct Vec
     x: int
     y: int
 
-    fn(operator ex: +)(other)
+    fn(operator +)(other)
         return new Vec(self.x + other.x, self.y + other.y)
 
-    fn(operator ex: -)()         // no argument = unary minus
+    fn(operator -)()         // no argument = unary minus
         return new Vec(0 - self.x, 0 - self.y)
 
-    fn(operator ex: ==)(other)
+    fn(operator ==)(other)
         return self.x == other.x and self.y == other.y
 ```
 
 Rules:
 
 1. Overloadable: `+ - * / %`, unary `-`, `< <= > >=`, `==`. The left operand
-   is `self`, so the form is `fn(operator ex: <op>)(other)`, with no argument for unary `-`.
-   (`ex:` is kept as written by the maintainer; its meaning is an open question.)
+   is `self`, so the form is `fn(operator <op>)(other)`, with no argument for unary `-`.
 2. Not overloadable: `and or not in is`, `&&`/`||`, `,`, `=`, user-defined literals.
 3. `!=` is derived as `not (a == b)`.
 4. Ordering is not derived: each of `< <= > >=` is declared when needed.
@@ -59,6 +58,6 @@ per-type grouping, and both operands are written out, but there is no `self`.
 
 ## Decisions needed from Lukas
 
-1. Confirm the syntax `fn(operator ex: +)(other)` inside the struct, and what `ex:` means.
+1. Confirm the syntax `fn(operator +)(other)` inside the struct, and what `ex:` means.
 2. Ordering: declare each of `< <= > >=`, or derive all four from `<`?
 3. Include `+=`-style compound forms now (desugared to `a = a + b`) or later?
