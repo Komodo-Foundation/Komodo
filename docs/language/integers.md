@@ -24,17 +24,17 @@ unsigned types and the signed types behave like their C `stdint` namesakes.
 ```km
 void main()
     let a: u8 = 250
-    print(a + 10)
+    console.print(a + 10)
     let b: i8 = 127
     b += 1
-    print(b)
+    console.print(b)
     let c: u32 = 0
-    print(c - 1)
+    console.print(c - 1)
     let d: u64 = 0
-    print(d - 1)
-    print(d - 1 > 5)
+    console.print(d - 1)
+    console.print(d - 1 > 5)
     let e: i32 = 2147483647
-    print(e + 1)
+    console.print(e + 1)
 ```
 
 ```text
@@ -57,13 +57,13 @@ first.
 ```km
 void main()
     let big: int = 300
-    print(u8(big))
-    print(i8(200))
-    print(u32(-1))
-    print(u8(3.9))
+    console.print(u8(big))
+    console.print(i8(200))
+    console.print(u32(-1))
+    console.print(u8(3.9))
     let w: u8 = 200
     let wide: u32 = w
-    print(wide + 4000000000)
+    console.print(wide + 4000000000)
 ```
 
 ```text
@@ -84,7 +84,7 @@ types where neither fits the other, is an error that asks for a conversion.
 void main()
     let a: u32 = 5
     let b: i32 = 7
-    print(a + b)
+    console.print(a + b)
 ```
 
 ```text
@@ -99,7 +99,7 @@ A literal must fit the type it is given:
 ```km
 void main()
     let a: u8 = 300
-    print(a)
+    console.print(a)
 ```
 
 ```text
@@ -113,7 +113,7 @@ Assigning a wider integer needs a conversion:
 void main()
     let n: int = 70000
     let s: u16 = n
-    print(s)
+    console.print(s)
 ```
 
 ```text
@@ -128,10 +128,10 @@ other integer as a plain decimal number.
 ```km
 void main()
     let m: u64 = 18446744073709551615
-    print(m)
-    print(string(m / 3))
+    console.print(m)
+    console.print(string(m / 3))
     let h: u16 = 65535
-    print(h + 1)
+    console.print(h + 1)
 ```
 
 ```text
@@ -154,10 +154,10 @@ void main()
     while i < 1000 do
         s += 0.1
         i += 1
-    print(s)
+    console.print(s)
     let x: f32 = 16777216.0
-    print(x + 1.0)
-    print(f32(1) / f32(3))
+    console.print(x + 1.0)
+    console.print(f32(1) / f32(3))
 ```
 
 ```text

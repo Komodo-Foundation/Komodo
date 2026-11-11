@@ -9,18 +9,18 @@ import vecffi
 
 void main()
     let v = vecffi::vf_scale2(copy(new vecffi::Vec2(1.5, -2.0)), 2)
-    print(`scale2: {v.x}, {v.y}`)
+    console.print(`scale2: {v.x}, {v.y}`)
 
     let a = new vecffi::Vec3(1.0, 2.0, 3.0)
     let b = new vecffi::Vec3(4.0, 5.0, 6.0)
-    print(`dot3: {vecffi::vf_dot3(copy(a), copy(b))}`)
+    console.print(`dot3: {vecffi::vf_dot3(copy(a), copy(b))}`)
     let c = vecffi::vf_cross3(copy(a), copy(b))
-    print(`cross3: {c.x}, {c.y}, {c.z}`)
+    console.print(`cross3: {c.x}, {c.y}, {c.z}`)
 
     let red = new vecffi::Rgba(200, 10, 30, 255)
-    print(`pack: {vecffi::vf_pack(copy(red))}`)
+    console.print(`pack: {vecffi::vf_pack(copy(red))}`)
     let inv = vecffi::vf_invert(copy(red))
-    print(`invert: {inv.r} {inv.g} {inv.b} {inv.a}`)
+    console.print(`invert: {inv.r} {inv.g} {inv.b} {inv.a}`)
 
-    print(`mix: {vecffi::vf_mix(copy(new vecffi::Mix(-3, 2.5)))}`)
-    print(`big: {vecffi::vf_big(100, copy(new vecffi::Big(0.5, 0.25, 0.125, 7)), 1000)}`)
+    console.print(`mix: {vecffi::vf_mix(copy(new vecffi::Mix(-3, 2.5)))}`)
+    console.print(`big: {vecffi::vf_big(100, copy(new vecffi::Big(0.5, 0.25, 0.125, 7)), 1000)}`)

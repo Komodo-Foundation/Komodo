@@ -24,7 +24,7 @@ class Sq : Shape
 
 void main()
     let q = new Sq(1.5)
-    print(`{q.describe()} {q.area()}`)
+    console.print(`{q.describe()} {q.area()}`)
     q.grow(1)
     let s: Shape = q
-    print(`{s.describe()} {s.area()}`)
+    console.print(`{s.describe()} {s.area()}`)

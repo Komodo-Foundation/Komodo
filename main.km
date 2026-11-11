@@ -62,7 +62,7 @@ void main(args)
     // enough whether `stdlib/` is a subdirectory or holds kmc itself.
     km_compiler::diagSetMode(rich, color, width)
     if renderText != "" then
-        print(km_compiler::diagReport([renderText]))
+        console.print(km_compiler::diagReport([renderText]))
         return
     let stdlibProbe = dirOf(selfPath) + "/probe.km"
 

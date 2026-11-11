@@ -3,4 +3,4 @@ fn pick(n: int): int
         return 1
 
 void main()
-    print(pick(3))
+    console.print(pick(3))

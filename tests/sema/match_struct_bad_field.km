@@ -5,4 +5,4 @@ void main()
     let p = new P(1, 2)
     match p
         case P(z: 1)
-            print(1)
+            console.print(1)

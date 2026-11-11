@@ -52,11 +52,11 @@ extern fn strlen(s: string): int
 extern fn getenv(name: string): string?
 
 void main()
-    print(strlen("hello, world"))
+    console.print(strlen("hello, world"))
     if getenv("KM_DOC_NO_SUCH_VAR") == null then
-        print("KM_DOC_NO_SUCH_VAR is unset")
+        console.print("KM_DOC_NO_SUCH_VAR is unset")
     if getenv("PATH") != null then
-        print("PATH is set")
+        console.print("PATH is set")
 ```
 
 ```text
@@ -120,8 +120,8 @@ extern "m"
     fn hypot(a: float, b: float): float
 
 void main()
-    print(cbrt(27.0))
-    print(hypot(3.0, 4.0))
+    console.print(cbrt(27.0))
+    console.print(hypot(3.0, 4.0))
 ```
 
 ```text
@@ -185,8 +185,8 @@ import counter
 void main()
     let squares = [0, 0, 0, 0]
     counter::counter_squares(data(squares), #squares)
-    print(squares)
-    print(`sum of squares: {counter::counter_sum(data(squares), #squares)}`)
+    console.print(squares)
+    console.print(`sum of squares: {counter::counter_sum(data(squares), #squares)}`)
 ```
 
 ```text
@@ -256,7 +256,7 @@ import geom
 
 void main()
     let v = geom::vec2_scale(copy(new geom::Vec2(1.5, -2.0)), 2.0)
-    print(`scaled: {v.x}, {v.y}`)
+    console.print(`scaled: {v.x}, {v.y}`)
 ```
 
 ```text
@@ -271,7 +271,7 @@ import geom
 
 void main()
     let v = geom::vec2_scale(new geom::Vec2(1.5, -2.0), 2.0)
-    print(`scaled: {v.x}, {v.y}`)
+    console.print(`scaled: {v.x}, {v.y}`)
 ```
 
 ```text
@@ -296,7 +296,7 @@ fn double_it(x: int): int
     return x * 2
 
 void main()
-    print(counter::counter_apply_twice(double_it, 5))
+    console.print(counter::counter_apply_twice(double_it, 5))
 ```
 
 ```text
@@ -423,11 +423,11 @@ import counter
 void main()
     let c = counter::counter_new(3)
     if c == 0 then
-        print("allocation failed")
+        console.print("allocation failed")
         return
     counter::counter_tick(c)
     counter::counter_tick(c)
-    print(counter::counter_value(c))
+    console.print(counter::counter_value(c))
     counter::counter_free(c)
 ```
 
@@ -446,8 +446,8 @@ extern fn atoi(s: string): int
 extern fn sqrt(x: float): float
 
 void main()
-    print(atoi("42"))
-    print(sqrt(16.0))
+    console.print(atoi("42"))
+    console.print(sqrt(16.0))
 ```
 
 ```text
@@ -490,8 +490,8 @@ extern fn c_low_byte(x: int): int
 import pitfalls
 
 void main()
-    print(pitfalls::c_neg32(5))
-    print(pitfalls::c_neg32(-5))
+    console.print(pitfalls::c_neg32(5))
+    console.print(pitfalls::c_neg32(-5))
 ```
 
 ```text
@@ -512,8 +512,8 @@ extern fn sqrtf(x: float): float
 extern fn sqrtf32(x: f32): f32
 
 void main()
-    print(sqrtf(16.0))
-    print(sqrtf32(16.0))
+    console.print(sqrtf(16.0))
+    console.print(sqrtf32(16.0))
 ```
 
 ```text
@@ -555,7 +555,7 @@ import i32buf
 
 void main()
     let xs = [1, 2, 3]
-    print(i32buf::sum_i32(data(xs), #xs))
+    console.print(i32buf::sum_i32(data(xs), #xs))
 ```
 
 ```text
@@ -661,8 +661,8 @@ fn rt_greet(name: string): string
 import rtdemo
 
 void main()
-    print(rtdemo::rt_sum([1, 2, 3, 4]))
-    print(rtdemo::rt_greet("komodo"))
+    console.print(rtdemo::rt_sum([1, 2, 3, 4]))
+    console.print(rtdemo::rt_greet("komodo"))
 ```
 
 ```text

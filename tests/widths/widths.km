@@ -4,41 +4,41 @@ void t_u8()
     let vs: [u8] = [0, 1, 2, 127, 128, 200, 254, 255]
     for a in vs do
         for b in vs do
-            print(a + b)
-            print(a - b)
-            print(a * b)
-            print(a & b)
-            print(a | b)
-            print(a ^ b)
-            print(-a)
-            print(a << 3)
-            print(a >> 2)
-            print(a << (b & 3))
-            print(a >> (b & 3))
-            print(a < b)
-            print(a <= b)
-            print(a > b)
-            print(a >= b)
-            print(a == b)
-            print(a != b)
+            console.print(a + b)
+            console.print(a - b)
+            console.print(a * b)
+            console.print(a & b)
+            console.print(a | b)
+            console.print(a ^ b)
+            console.print(-a)
+            console.print(a << 3)
+            console.print(a >> 2)
+            console.print(a << (b & 3))
+            console.print(a >> (b & 3))
+            console.print(a < b)
+            console.print(a <= b)
+            console.print(a > b)
+            console.print(a >= b)
+            console.print(a == b)
+            console.print(a != b)
             let w = a
             w += b
-            print(w)
+            console.print(w)
             w *= b
-            print(w)
+            console.print(w)
             w -= a
-            print(w)
+            console.print(w)
             w = w + 1
-            print(w)
+            console.print(w)
             if b != 0 then
-                print(a / b)
-                print(a % b)
+                console.print(a / b)
+                console.print(a % b)
 
 void l_u8()
     let c: u8 = 255
     let n = 0
     while n < 6 do
-        print(string(c))
+        console.print(string(c))
         c += 1
         n += 1
 
@@ -46,41 +46,41 @@ void t_u16()
     let vs: [u16] = [0, 1, 255, 256, 32767, 32768, 65534, 65535]
     for a in vs do
         for b in vs do
-            print(a + b)
-            print(a - b)
-            print(a * b)
-            print(a & b)
-            print(a | b)
-            print(a ^ b)
-            print(-a)
-            print(a << 3)
-            print(a >> 2)
-            print(a << (b & 3))
-            print(a >> (b & 3))
-            print(a < b)
-            print(a <= b)
-            print(a > b)
-            print(a >= b)
-            print(a == b)
-            print(a != b)
+            console.print(a + b)
+            console.print(a - b)
+            console.print(a * b)
+            console.print(a & b)
+            console.print(a | b)
+            console.print(a ^ b)
+            console.print(-a)
+            console.print(a << 3)
+            console.print(a >> 2)
+            console.print(a << (b & 3))
+            console.print(a >> (b & 3))
+            console.print(a < b)
+            console.print(a <= b)
+            console.print(a > b)
+            console.print(a >= b)
+            console.print(a == b)
+            console.print(a != b)
             let w = a
             w += b
-            print(w)
+            console.print(w)
             w *= b
-            print(w)
+            console.print(w)
             w -= a
-            print(w)
+            console.print(w)
             w = w + 1
-            print(w)
+            console.print(w)
             if b != 0 then
-                print(a / b)
-                print(a % b)
+                console.print(a / b)
+                console.print(a % b)
 
 void l_u16()
     let c: u16 = 65535
     let n = 0
     while n < 6 do
-        print(string(c))
+        console.print(string(c))
         c += 1
         n += 1
 
@@ -88,41 +88,41 @@ void t_u32()
     let vs: [u32] = [0, 1, 65535, 2147483647, 2147483648, 4294967294, 4294967295]
     for a in vs do
         for b in vs do
-            print(a + b)
-            print(a - b)
-            print(a * b)
-            print(a & b)
-            print(a | b)
-            print(a ^ b)
-            print(-a)
-            print(a << 3)
-            print(a >> 2)
-            print(a << (b & 3))
-            print(a >> (b & 3))
-            print(a < b)
-            print(a <= b)
-            print(a > b)
-            print(a >= b)
-            print(a == b)
-            print(a != b)
+            console.print(a + b)
+            console.print(a - b)
+            console.print(a * b)
+            console.print(a & b)
+            console.print(a | b)
+            console.print(a ^ b)
+            console.print(-a)
+            console.print(a << 3)
+            console.print(a >> 2)
+            console.print(a << (b & 3))
+            console.print(a >> (b & 3))
+            console.print(a < b)
+            console.print(a <= b)
+            console.print(a > b)
+            console.print(a >= b)
+            console.print(a == b)
+            console.print(a != b)
             let w = a
             w += b
-            print(w)
+            console.print(w)
             w *= b
-            print(w)
+            console.print(w)
             w -= a
-            print(w)
+            console.print(w)
             w = w + 1
-            print(w)
+            console.print(w)
             if b != 0 then
-                print(a / b)
-                print(a % b)
+                console.print(a / b)
+                console.print(a % b)
 
 void l_u32()
     let c: u32 = 4294967295
     let n = 0
     while n < 6 do
-        print(string(c))
+        console.print(string(c))
         c += 1
         n += 1
 
@@ -130,41 +130,41 @@ void t_u64()
     let vs: [u64] = [0, 1, 4294967296, 9223372036854775807, 9223372036854775808, 18446744073709551614, 18446744073709551615]
     for a in vs do
         for b in vs do
-            print(a + b)
-            print(a - b)
-            print(a * b)
-            print(a & b)
-            print(a | b)
-            print(a ^ b)
-            print(-a)
-            print(a << 3)
-            print(a >> 2)
-            print(a << (b & 3))
-            print(a >> (b & 3))
-            print(a < b)
-            print(a <= b)
-            print(a > b)
-            print(a >= b)
-            print(a == b)
-            print(a != b)
+            console.print(a + b)
+            console.print(a - b)
+            console.print(a * b)
+            console.print(a & b)
+            console.print(a | b)
+            console.print(a ^ b)
+            console.print(-a)
+            console.print(a << 3)
+            console.print(a >> 2)
+            console.print(a << (b & 3))
+            console.print(a >> (b & 3))
+            console.print(a < b)
+            console.print(a <= b)
+            console.print(a > b)
+            console.print(a >= b)
+            console.print(a == b)
+            console.print(a != b)
             let w = a
             w += b
-            print(w)
+            console.print(w)
             w *= b
-            print(w)
+            console.print(w)
             w -= a
-            print(w)
+            console.print(w)
             w = w + 1
-            print(w)
+            console.print(w)
             if b != 0 then
-                print(a / b)
-                print(a % b)
+                console.print(a / b)
+                console.print(a % b)
 
 void l_u64()
     let c: u64 = 18446744073709551615
     let n = 0
     while n < 6 do
-        print(string(c))
+        console.print(string(c))
         c += 1
         n += 1
 
@@ -172,41 +172,41 @@ void t_i8()
     let vs: [i8] = [-128, -127, -2, -1, 0, 1, 126, 127]
     for a in vs do
         for b in vs do
-            print(a + b)
-            print(a - b)
-            print(a * b)
-            print(a & b)
-            print(a | b)
-            print(a ^ b)
-            print(-a)
-            print(a << 3)
-            print(a >> 2)
-            print(a << (b & 3))
-            print(a >> (b & 3))
-            print(a < b)
-            print(a <= b)
-            print(a > b)
-            print(a >= b)
-            print(a == b)
-            print(a != b)
+            console.print(a + b)
+            console.print(a - b)
+            console.print(a * b)
+            console.print(a & b)
+            console.print(a | b)
+            console.print(a ^ b)
+            console.print(-a)
+            console.print(a << 3)
+            console.print(a >> 2)
+            console.print(a << (b & 3))
+            console.print(a >> (b & 3))
+            console.print(a < b)
+            console.print(a <= b)
+            console.print(a > b)
+            console.print(a >= b)
+            console.print(a == b)
+            console.print(a != b)
             let w = a
             w += b
-            print(w)
+            console.print(w)
             w *= b
-            print(w)
+            console.print(w)
             w -= a
-            print(w)
+            console.print(w)
             w = w + 1
-            print(w)
+            console.print(w)
             if b != 0 and not (b == -1) then
-                print(a / b)
-                print(a % b)
+                console.print(a / b)
+                console.print(a % b)
 
 void l_i8()
     let c: i8 = 127
     let n = 0
     while n < 6 do
-        print(string(c))
+        console.print(string(c))
         c += 1
         n += 1
 
@@ -214,41 +214,41 @@ void t_i16()
     let vs: [i16] = [-32768, -32767, -1, 0, 1, 255, 32766, 32767]
     for a in vs do
         for b in vs do
-            print(a + b)
-            print(a - b)
-            print(a * b)
-            print(a & b)
-            print(a | b)
-            print(a ^ b)
-            print(-a)
-            print(a << 3)
-            print(a >> 2)
-            print(a << (b & 3))
-            print(a >> (b & 3))
-            print(a < b)
-            print(a <= b)
-            print(a > b)
-            print(a >= b)
-            print(a == b)
-            print(a != b)
+            console.print(a + b)
+            console.print(a - b)
+            console.print(a * b)
+            console.print(a & b)
+            console.print(a | b)
+            console.print(a ^ b)
+            console.print(-a)
+            console.print(a << 3)
+            console.print(a >> 2)
+            console.print(a << (b & 3))
+            console.print(a >> (b & 3))
+            console.print(a < b)
+            console.print(a <= b)
+            console.print(a > b)
+            console.print(a >= b)
+            console.print(a == b)
+            console.print(a != b)
             let w = a
             w += b
-            print(w)
+            console.print(w)
             w *= b
-            print(w)
+            console.print(w)
             w -= a
-            print(w)
+            console.print(w)
             w = w + 1
-            print(w)
+            console.print(w)
             if b != 0 and not (b == -1) then
-                print(a / b)
-                print(a % b)
+                console.print(a / b)
+                console.print(a % b)
 
 void l_i16()
     let c: i16 = 32767
     let n = 0
     while n < 6 do
-        print(string(c))
+        console.print(string(c))
         c += 1
         n += 1
 
@@ -256,154 +256,154 @@ void t_i32()
     let vs: [i32] = [-2147483648, -2147483647, -1, 0, 1, 65536, 2147483646, 2147483647]
     for a in vs do
         for b in vs do
-            print(a + b)
-            print(a - b)
-            print(a * b)
-            print(a & b)
-            print(a | b)
-            print(a ^ b)
-            print(-a)
-            print(a << 3)
-            print(a >> 2)
-            print(a << (b & 3))
-            print(a >> (b & 3))
-            print(a < b)
-            print(a <= b)
-            print(a > b)
-            print(a >= b)
-            print(a == b)
-            print(a != b)
+            console.print(a + b)
+            console.print(a - b)
+            console.print(a * b)
+            console.print(a & b)
+            console.print(a | b)
+            console.print(a ^ b)
+            console.print(-a)
+            console.print(a << 3)
+            console.print(a >> 2)
+            console.print(a << (b & 3))
+            console.print(a >> (b & 3))
+            console.print(a < b)
+            console.print(a <= b)
+            console.print(a > b)
+            console.print(a >= b)
+            console.print(a == b)
+            console.print(a != b)
             let w = a
             w += b
-            print(w)
+            console.print(w)
             w *= b
-            print(w)
+            console.print(w)
             w -= a
-            print(w)
+            console.print(w)
             w = w + 1
-            print(w)
+            console.print(w)
             if b != 0 and not (b == -1) then
-                print(a / b)
-                print(a % b)
+                console.print(a / b)
+                console.print(a % b)
 
 void l_i32()
     let c: i32 = 2147483647
     let n = 0
     while n < 6 do
-        print(string(c))
+        console.print(string(c))
         c += 1
         n += 1
 
 void conv()
     let v_u8: [u8] = [0, 1, 2, 127, 128, 200, 254, 255]
     for x in v_u8 do
-        print(u16(x))
+        console.print(u16(x))
     for x in v_u8 do
-        print(u32(x))
+        console.print(u32(x))
     for x in v_u8 do
-        print(u64(x))
+        console.print(u64(x))
     for x in v_u8 do
-        print(i8(x))
+        console.print(i8(x))
     for x in v_u8 do
-        print(i16(x))
+        console.print(i16(x))
     for x in v_u8 do
-        print(i32(x))
+        console.print(i32(x))
     let v_u16: [u16] = [0, 1, 255, 256, 32767, 32768, 65534, 65535]
     for x in v_u16 do
-        print(u8(x))
+        console.print(u8(x))
     for x in v_u16 do
-        print(u32(x))
+        console.print(u32(x))
     for x in v_u16 do
-        print(u64(x))
+        console.print(u64(x))
     for x in v_u16 do
-        print(i8(x))
+        console.print(i8(x))
     for x in v_u16 do
-        print(i16(x))
+        console.print(i16(x))
     for x in v_u16 do
-        print(i32(x))
+        console.print(i32(x))
     let v_u32: [u32] = [0, 1, 65535, 2147483647, 2147483648, 4294967294, 4294967295]
     for x in v_u32 do
-        print(u8(x))
+        console.print(u8(x))
     for x in v_u32 do
-        print(u16(x))
+        console.print(u16(x))
     for x in v_u32 do
-        print(u64(x))
+        console.print(u64(x))
     for x in v_u32 do
-        print(i8(x))
+        console.print(i8(x))
     for x in v_u32 do
-        print(i16(x))
+        console.print(i16(x))
     for x in v_u32 do
-        print(i32(x))
+        console.print(i32(x))
     let v_u64: [u64] = [0, 1, 4294967296, 9223372036854775807, 9223372036854775808, 18446744073709551614, 18446744073709551615]
     for x in v_u64 do
-        print(u8(x))
+        console.print(u8(x))
     for x in v_u64 do
-        print(u16(x))
+        console.print(u16(x))
     for x in v_u64 do
-        print(u32(x))
+        console.print(u32(x))
     for x in v_u64 do
-        print(i8(x))
+        console.print(i8(x))
     for x in v_u64 do
-        print(i16(x))
+        console.print(i16(x))
     for x in v_u64 do
-        print(i32(x))
+        console.print(i32(x))
     let v_i8: [i8] = [-128, -127, -2, -1, 0, 1, 126, 127]
     for x in v_i8 do
-        print(u8(x))
+        console.print(u8(x))
     for x in v_i8 do
-        print(u16(x))
+        console.print(u16(x))
     for x in v_i8 do
-        print(u32(x))
+        console.print(u32(x))
     for x in v_i8 do
-        print(u64(x))
+        console.print(u64(x))
     for x in v_i8 do
-        print(i16(x))
+        console.print(i16(x))
     for x in v_i8 do
-        print(i32(x))
+        console.print(i32(x))
     let v_i16: [i16] = [-32768, -32767, -1, 0, 1, 255, 32766, 32767]
     for x in v_i16 do
-        print(u8(x))
+        console.print(u8(x))
     for x in v_i16 do
-        print(u16(x))
+        console.print(u16(x))
     for x in v_i16 do
-        print(u32(x))
+        console.print(u32(x))
     for x in v_i16 do
-        print(u64(x))
+        console.print(u64(x))
     for x in v_i16 do
-        print(i8(x))
+        console.print(i8(x))
     for x in v_i16 do
-        print(i32(x))
+        console.print(i32(x))
     let v_i32: [i32] = [-2147483648, -2147483647, -1, 0, 1, 65536, 2147483646, 2147483647]
     for x in v_i32 do
-        print(u8(x))
+        console.print(u8(x))
     for x in v_i32 do
-        print(u16(x))
+        console.print(u16(x))
     for x in v_i32 do
-        print(u32(x))
+        console.print(u32(x))
     for x in v_i32 do
-        print(u64(x))
+        console.print(u64(x))
     for x in v_i32 do
-        print(i8(x))
+        console.print(i8(x))
     for x in v_i32 do
-        print(i16(x))
+        console.print(i16(x))
     let f1: float = 3.9
-    print(u8(f1))
-    print(i16(f1))
-    print(u32(f1 * 1000.0))
-    print(i32(0.0 - f1))
+    console.print(u8(f1))
+    console.print(i16(f1))
+    console.print(u32(f1 * 1000.0))
+    console.print(i32(0.0 - f1))
     let u: u64 = 18446744073709551615
     let fu: float = u
-    print(fu)
+    console.print(fu)
     let i1: i32 = -5
     let fi: float = i1
-    print(fi)
+    console.print(fi)
     let q: u32 = 4000000000
     let p: u8 = 200
-    print(q + p)
-    print(p * 2 + q)
+    console.print(q + p)
+    console.print(p * 2 + q)
     let r: i16 = -3
     let z: i32 = 70000
-    print(z * r)
+    console.print(z * r)
 
 void t_f32()
     let s: f32 = 0.0
@@ -411,24 +411,24 @@ void t_f32()
     while i < 1000 do
         s += 0.1
         i += 1
-    print(s)
+    console.print(s)
     let x: f32 = 16777216.0
-    print(x + 1.0)
+    console.print(x + 1.0)
     let y: f32 = 1.0
     y = y / 3.0
-    print(y)
-    print(y * 3.0)
+    console.print(y)
+    console.print(y * 3.0)
     let z: f32 = 0.1
-    print(z + 0.2)
-    print(z * z)
-    print(f32(1) / f32(3))
+    console.print(z + 0.2)
+    console.print(z * z)
+    console.print(f32(1) / f32(3))
     let big: f32 = 1000000.0
-    print(big * big)
+    console.print(big * big)
     let m: f32 = 0.0
     for k = 1 until 11
         m += 1.0 / 3.0
-    print(m)
-    print(string(z))
+    console.print(m)
+    console.print(string(z))
 
 void main()
     t_u8()

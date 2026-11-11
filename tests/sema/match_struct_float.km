@@ -4,4 +4,4 @@ void main()
     let p = new P(1.0)
     match p
         case P(x: 1.0)
-            print(1)
+            console.print(1)

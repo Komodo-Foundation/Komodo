@@ -13,7 +13,7 @@ module km_compiler
 //      error[K0001]: undefined name 'cont'
 //       --> file.km:5:19
 //        |
-//      5 |     print(cont)
+//      5 |     console.print(cont)
 //        |           ^^^^ undefined name 'cont'
 //        = help: did you mean 'count'?
 //        = why: ...

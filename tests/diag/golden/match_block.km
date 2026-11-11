@@ -7,6 +7,6 @@ void main()
     let c = Color::Red
     match c
         case Color::Red
-            print("red")
+            console.print("red")
         case Color::Green
-            print("green")
+            console.print("green")

@@ -144,7 +144,7 @@ fn poke(b: Box): int
     return b.v
 
 void main()
-    print(poke(new Box()))
+    console.print(poke(new Box()))
 ```
 
 ```text
@@ -162,7 +162,7 @@ mut poke(b: Box): int
     return b.v
 
 void main()
-    print(poke(new Box()))
+    console.print(poke(new Box()))
 ```
 
 ```text

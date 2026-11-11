@@ -21,6 +21,6 @@ fn pick(x: int, unused: int): int
 void main()
     let ok = true
     if ok == true then
-        print(pick(1, 2))
+        console.print(pick(1, 2))
     if false != ok then
-        print(name(Color::Red))
+        console.print(name(Color::Red))
