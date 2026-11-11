@@ -11,6 +11,13 @@ Supported:
   textDocument/didSave      compile, publish diagnostics
   textDocument/didClose     clear diagnostics, forget the buffer
   textDocument/documentSymbol   top-level fn / struct / class / enum / module
+  textDocument/definition       go to a top-level declaration, by name
+  textDocument/hover            the declaration line and its doc comment, by name
+  textDocument/completion       top-level names, keywords and built-ins
+
+Definition, hover and completion are name-based: they read the .km/.kmm
+files under the open file's directory tree (open buffers win over disk) and
+match top-level declarations. They do not resolve types or module members.
 
 Diagnostics come from the compiler. Each one is a line on the compiler's
 output, `file:line:col: error: message` (or `warning:`); a message without a
@@ -44,7 +51,15 @@ TOP_DECL = re.compile(
 SYMBOL_KIND = {'fn': 12, 'mut': 12, 'void': 12, 'struct': 23, 'class': 5,
                'enum': 10, 'module': 2}
 SEVERITY = {'error': 1, 'warning': 2}
+COMPLETION_KIND = {'fn': 3, 'mut': 3, 'void': 3, 'struct': 22, 'class': 7,
+                   'enum': 13, 'module': 9}
+KEYWORDS = ['if', 'else', 'while', 'for', 'to', 'down', 'until', 'in', 'do',
+            'then', 'match', 'case', 'return', 'throw', 'break', 'continue',
+            'let', 'be', 'new', 'import', 'link', 'extern', 'constructor',
+            'public', 'private', 'true', 'false', 'null']
+BUILTINS = ['print', 'assert', 'copy', 'data', 'join', 'string', 'int']
 MAX_STAGED = 2000  # .km/.kmm files copied per compile
+MAX_INDEXED = 500  # .km/.kmm files read for definition, hover and completion
 
 _check_mode = None  # None until probed: 'check' or 'fallback'
 
@@ -200,6 +215,71 @@ def to_lsp_diagnostic(lines, line, col, severity, message):
     }
 
 
+# ----------------------------------------------------------- name lookup
+
+def declarations(lines):
+    """Top-level declarations as (name, keyword, line index, column)."""
+    found = []
+    for i, text in enumerate(lines):
+        m = TOP_DECL.match(text)
+        if m:
+            found.append((m.group(2), m.group(1), i, text.find(m.group(2))))
+    return found
+
+
+def word_around(text, col):
+    """The identifier under column col, and the start of the part before col."""
+    col = min(col, len(text))
+    start = col
+    while start > 0 and IDENT.match(text[start - 1]):
+        start -= 1
+    end = col
+    while end < len(text) and IDENT.match(text[end]):
+        end += 1
+    return text[start:end], start
+
+
+def doc_comment_above(lines, i):
+    """The comment block directly above line i, with its markers removed."""
+    j = i - 1
+    block = []
+    if j >= 0 and lines[j].strip().endswith('*/'):
+        while j >= 0:
+            block.append(lines[j].strip())
+            if lines[j].strip().startswith('/*'):
+                break
+            j -= 1
+        else:
+            block = []  # no opening /*: not a doc comment
+    else:
+        while j >= 0 and lines[j].strip().startswith('//'):
+            block.append(lines[j].strip())
+            j -= 1
+    out = []
+    for t in reversed(block):
+        for marker in ('/**', '/*', '*/', '//', '*'):
+            if t.startswith(marker):
+                t = t[len(marker):]
+                break
+        if t.endswith('*/'):
+            t = t[:-2]
+        out.append(t.strip())
+    return '\n'.join(out).strip()
+
+
+def workspace_files(path):
+    """The .km/.kmm files under path's directory, the file itself first."""
+    found = [path]
+    for dirpath, dirnames, filenames in os.walk(path.parent):
+        dirnames[:] = [d for d in dirnames if not d.startswith('.') and d != 'node_modules']
+        for name in sorted(filenames):
+            if name.endswith(('.km', '.kmm')) and Path(dirpath, name) != path:
+                found.append(Path(dirpath, name))
+                if len(found) >= MAX_INDEXED:
+                    return found
+    return found
+
+
 # ------------------------------------------------------------------- server
 
 class Server:
@@ -269,6 +349,83 @@ class Server:
             })
         return symbols
 
+    def indexed(self, path):
+        """Top-level declarations of every file near path, the open file first.
+
+        Each entry is a dict with name, keyword, path, lines, line and col.
+        Open buffers are read from memory, other files from disk.
+        """
+        open_text = {self.path_of(u): t for u, t in self.docs.items()}
+        entries = []
+        for p in workspace_files(path):
+            if p in open_text:
+                text = open_text[p]
+            else:
+                try:
+                    text = p.read_text(encoding='utf-8')
+                except (OSError, UnicodeDecodeError):
+                    continue
+            lines = text.split('\n')
+            for name, keyword, line, col in declarations(lines):
+                entries.append({'name': name, 'keyword': keyword, 'path': p,
+                                'lines': lines, 'line': line, 'col': col})
+        return entries
+
+    def lines_at(self, uri, path):
+        return self.text_of(uri, path).split('\n')
+
+    def matches_at(self, uri, line, char):
+        """Declarations named like the identifier at the position."""
+        path = self.path_of(uri)
+        if path is None:
+            return None, []
+        lines = self.lines_at(uri, path)
+        if line >= len(lines):
+            return path, []
+        name, _ = word_around(lines[line], char)
+        if not name:
+            return path, []
+        hits = [e for e in self.indexed(path) if e['name'] == name]
+        hits.sort(key=lambda e: e['path'] != path)  # the open file first
+        return path, hits
+
+    def definition(self, uri, line, char):
+        path, hits = self.matches_at(uri, line, char)
+        locations = []
+        for e in hits:
+            target = uri if e['path'] == path else e['path'].as_uri()
+            start = {'line': e['line'], 'character': e['col']}
+            end = {'line': e['line'], 'character': e['col'] + len(e['name'])}
+            locations.append({'uri': target, 'range': {'start': start, 'end': end}})
+        return locations
+
+    def hover(self, uri, line, char):
+        _, hits = self.matches_at(uri, line, char)
+        if not hits:
+            return None
+        e = hits[0]
+        value = '```komodo\n%s\n```' % e['lines'][e['line']].strip()
+        doc = doc_comment_above(e['lines'], e['line'])
+        if doc:
+            value += '\n\n' + doc
+        return {'contents': {'kind': 'markdown', 'value': value}}
+
+    def completion(self, uri, line, char):
+        path = self.path_of(uri)
+        if path is None:
+            return []
+        lines = self.lines_at(uri, path)
+        if line >= len(lines):
+            return []
+        seen = {}
+        for e in self.indexed(path):
+            seen.setdefault(e['name'], COMPLETION_KIND[e['keyword']])
+        items = [{'label': n, 'kind': k, 'detail': 'declared in this workspace'}
+                 for n, k in seen.items()]
+        items += [{'label': k, 'kind': 14} for k in KEYWORDS]
+        items += [{'label': b, 'kind': 3, 'detail': 'built-in'} for b in BUILTINS]
+        return items
+
     def handle(self, msg):
         method = msg.get('method')
         req_id = msg.get('id')
@@ -283,6 +440,9 @@ class Server:
                         'save': {'includeText': False},
                     },
                     'documentSymbolProvider': True,
+                    'definitionProvider': True,
+                    'hoverProvider': True,
+                    'completionProvider': {'resolveProvider': False},
                 },
                 'serverInfo': {'name': 'km-lsp', 'version': '0.1.0'},
             })
@@ -309,6 +469,18 @@ class Server:
         elif method == 'textDocument/documentSymbol':
             uri = params['textDocument']['uri']
             respond(req_id, self.document_symbols(uri))
+        elif method == 'textDocument/definition':
+            pos = params['position']
+            respond(req_id, self.definition(params['textDocument']['uri'],
+                                            pos['line'], pos['character']))
+        elif method == 'textDocument/hover':
+            pos = params['position']
+            respond(req_id, self.hover(params['textDocument']['uri'],
+                                       pos['line'], pos['character']))
+        elif method == 'textDocument/completion':
+            pos = params['position']
+            respond(req_id, self.completion(params['textDocument']['uri'],
+                                            pos['line'], pos['character']))
         elif method == 'shutdown':
             self.shutdown_requested = True
             respond(req_id, None)

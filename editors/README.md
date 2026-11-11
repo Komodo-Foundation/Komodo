@@ -6,7 +6,7 @@ editor can use for diagnostics and document symbols.
 
 | Path | What it gives you |
 |---|---|
-| `vscode/` | VS Code extension: highlighting, indentation, snippets. Grammar only, no npm needed |
+| `vscode/` | VS Code extension: highlighting, diagnostics and outline (via `km-lsp`), formatting, run/build/test tasks, debugging, snippets. See `vscode/README.md` |
 | `vim/` | Vim and Neovim: syntax, filetype detection, four-space indentation |
 | `emacs/komodo-mode.el` | Emacs major mode: font-lock, comments, indentation |
 | `check-grammar.py` | checks every keyword in the lexer is covered by each grammar |
@@ -30,7 +30,12 @@ What it does:
   temporary copy of the source tree. The project directory is never written to.
 - Document symbols list the top-level `fn`, `mut`, `void`, `struct`, `class`,
   `enum` and `module` declarations.
-- Not yet: completion, hover, go-to-definition, formatting.
+- Go to Definition, hover (declaration and doc comment) and completion
+  (declarations, keywords, built-ins). These match top-level names by text in
+  the open file's directory tree, so they do not yet resolve types or module
+  members.
+- Not yet: rename, find references, and type-aware lookups. Formatting is in
+  `komodo fmt`, which the VS Code extension uses.
 
 Point your editor at the script with its absolute path, for example
 `/home/you/Komodo/tools/km-lsp`. It speaks over stdio, so no arguments are
@@ -48,41 +53,20 @@ code --install-extension komodo-foundation.komodo-lang
 From a `.vsix` file, built from a checkout with `vsce` (needs Node):
 
 ```bash
-cd editors/vscode && npx @vscode/vsce package    # writes komodo-lang-0.1.0.vsix
-code --install-extension komodo-lang-0.1.0.vsix
+cd editors/vscode && npm install && npx @vscode/vsce package    # writes komodo-lang-0.3.1.vsix
+code --install-extension komodo-lang-0.3.1.vsix
 ```
 
-Or, while working on the grammar, link the folder so edits show up on reload:
+Or, while working on the extension, run `npm install` there and link the folder so edits show up on reload:
 
 ```bash
-ln -s /path/to/Komodo/editors/vscode ~/.vscode/extensions/komodo-foundation.komodo-lang-0.1.0
+ln -s /path/to/Komodo/editors/vscode ~/.vscode/extensions/komodo-foundation.komodo-lang-0.3.1
 ```
 
 Reload the window (Developer: Reload Window). `.km` and `.kmm` files now
-open as Komodo, with four-space indentation and the snippets `main`, `class`,
-`for`, `forin`, `match`, `fn` and `if`.
-
-VS Code has no built-in LSP client, and this extension does not add one, so it
-does not require npm. To get diagnostics, use an LSP client extension that
-accepts a server command and set it to `/path/to/Komodo/tools/km-lsp` for the
-`komodo` language. If you maintain your own extension, the usual wiring with
-`vscode-languageclient` is:
-
-```js
-const { LanguageClient } = require('vscode-languageclient/node');
-
-function activate(context) {
-  const serverOptions = {
-    command: '/path/to/Komodo/tools/km-lsp',
-    args: [],
-    transport: 0, // stdio
-  };
-  const clientOptions = { documentSelector: [{ scheme: 'file', language: 'komodo' }] };
-  const client = new LanguageClient('km-lsp', 'Komodo', serverOptions, clientOptions);
-  context.subscriptions.push(client.start());
-}
-exports.activate = activate;
-```
+open as Komodo. The extension starts `tools/km-lsp` itself (from the open
+workspace, or next to the `komodo` on `PATH`), so no separate LSP client is
+needed. See `vscode/README.md` for commands, tasks, debugging and settings.
 
 ## Vim and Neovim
 

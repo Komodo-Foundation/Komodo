@@ -6,7 +6,7 @@ analyser's diagnostics. Every example below is a complete program that was
 compiled and run with the `komodo` CLI in this repository; the output shown
 is the real output.
 
-For the full reference, see [`design.md`](../../design.md).
+For the full reference, see [`reference.md`](reference.md).
 
 ## Contents
 
@@ -28,7 +28,7 @@ For the full reference, see [`design.md`](../../design.md).
 - [Built-ins](#built-ins)
 - [Standard library](#standard-library)
 - [Diagnostics](#diagnostics)
-- [Differences from design.md](#differences-from-designmd)
+- [Differences from the reference](#differences-from-the-reference)
 
 ## Program structure
 
@@ -1021,11 +1021,11 @@ example.km:8:5: error: match on enum 'Color' is not exhaustive — missing: Blue
 or failed `assert` ends the program with status 1 (see
 [Built-ins](#built-ins)).
 
-## Differences from design.md
+## Differences from the reference
 
-`design.md` is the language reference. Where the current compiler behaves
+The language reference (`reference.md`) is the source of truth. Where the current compiler behaves
 differently, the compiler is what the examples above follow. The differences
 found while writing this page are:
 
-- `main(args)`: `args[1]` is the first user argument. `design.md` says
+- `main(args)`: `args[1]` is the first user argument. an older draft said
   `args[2]`.

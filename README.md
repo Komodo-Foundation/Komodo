@@ -68,12 +68,14 @@ Everything else is in the docs.
 
 | | |
 |---|---|
+| [Documentation index](docs/README.md) | every guide, grouped by what you want to do |
 | [Getting started](docs/getting-started.md) | install, first program, a five-minute tour |
+| [Language basics](docs/language/basics.md) and [language reference](docs/language/reference.md) | the guide, and every rule |
 | [The `komodo` command](docs/cli.md) | every command, target and option |
-| [Language basics](docs/language/basics.md), [types and objects](docs/language/types.md) | the language guide |
-| [Using C and C++ libraries](docs/interop.md), [FFI reference](docs/ffi.md) | `import zlib`, `native/`, `export fn`, headers, shared libraries |
+| [C and C++ interop](docs/interop.md) | `import zlib`, `native/`, `export fn` |
 | [Compiler internals](docs/internals.md) | pipeline, backends, bootstrapping, adding a feature |
-| [`design.md`](design.md) | the language reference |
+
+For AI agents: [`llms.txt`](llms.txt) is a one-page map of the docs.
 
 ## Status
 
@@ -103,4 +105,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). Bugs and ideas go in [issues](https://gi
 
 ## License
 
-MIT — see [LICENSE](LICENSE). Copyright (c) 2026 Lukas Perkins.
+MIT — see [LICENSE](LICENSE). Copyright (c) 2026 Komodo Foundation.
