@@ -15,7 +15,7 @@ link SDL2
 // file is exactly as special as `stdlib/console.kmm`.
 //
 // Only the primitive-typed subset of the real SDL2 API is covered here
-// (structs aren't passed by value over this ABI — see design.md); it's
+// (structs aren't passed by value over this ABI — see the language reference); it's
 // enough for a window + renderer + basic event loop. Extend it the same
 // way for more of SDL2, or copy the pattern for another library.
 
@@ -31,7 +31,7 @@ extern fn SDL_SetRenderDrawColor(renderer: int, r: int, g: int, b: int, a: int):
 extern fn SDL_RenderClear(renderer: int): int
 extern void SDL_RenderPresent(renderer: int)
 
-// `event` is `data(anIntArray)` — see design.md's `data()` builtin; an
+// `event` is `data(anIntArray)` — see the `data()` built-in in the language reference; an
 // SDL_Event is 56 bytes, so an 8-int array is room to spare. Read the
 // low 32 bits of ev[0] for the event type constant.
 extern fn SDL_PollEvent(event: int): int

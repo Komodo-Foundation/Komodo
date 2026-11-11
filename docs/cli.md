@@ -215,7 +215,7 @@ ENDFUNC
 The wasm target needs `emcc` and `node` on `PATH`. It rejects programs that use
 the C FFI (`extern fn`, callbacks, SDL, raylib) with
 `wasm backend: … not supported yet`. Most examples still build for wasm.
-Details are in [`design.md`](../design.md#webassembly).
+Details are in [the WebAssembly section](language/reference.md#223-webassembly).
 
 ## Optimization
 
