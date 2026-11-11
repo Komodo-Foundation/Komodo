@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.2
+
+- Komodo Dark: restored the 0.3.0 colors, then a new palette with readable contrast and little blue, also for non-Komodo languages (Markdown, JSON, diff).
+
 ## 0.3.1
 
 - Komodo Dark: conventional syntax colors (muted keywords, strings, numbers, types, comments); green kept as the accent.
