@@ -11,7 +11,7 @@ and never changes program meaning. It uses only the Python 3 standard library.
 tools/km-fmt file.km              # print the formatted text to stdout
 tools/km-fmt -w file.km           # rewrite the file in place
 tools/km-fmt --check .            # list files that would change; exit 1 if any
-tools/km-fmt --diff examples/     # print a unified diff; exit 1 if any changed
+tools/km-fmt --diff tests/examples/     # print a unified diff; exit 1 if any changed
 tools/km-fmt -w .                 # rewrite every .km/.kmm under the directory
 ```
 
@@ -79,7 +79,7 @@ Each rewrite is checked. If a check fails, the file is refused with an error:
 
 - Golden tests: `tests/fmt/golden/input.km` formats to `expected.km`, and
   `mixed_indent.km` is refused.
-- Safety: each `examples/*.km`, `stdlib/*.kmm`, `modules/**/*.kmm`, `main.km`
+- Safety: each `tests/examples/*.km`, `stdlib/*.kmm`, `modules/**/*.kmm`, `main.km`
   and `tests/sema/*.km` file is compiled with `kmc <file> x86`, once as written
   and once formatted, in two copies of the tree. The exit status, output and
   generated `.asm` must match. For `tests/sema`, the diagnostics must match

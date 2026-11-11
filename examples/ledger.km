@@ -1,0 +1,47 @@
+// A small ledger: classes that enforce their own rules, `throw` for a
+// failed operation, and a trailing `?` at the call site that turns the
+// error into `null` so the program can carry on.
+
+import console
+
+class Account
+    constructor(owner: string, balance: int)
+        m_owner = owner
+        m_balance = balance
+    fn owner() : string
+        return m_owner
+    fn balance() : int
+        return m_balance
+    mut withdraw(amount: int)
+        if amount <= 0 then
+            throw "amount must be positive"
+        if amount > m_balance then
+            throw "insufficient funds"
+        m_balance = m_balance - amount
+    mut deposit(amount: int)
+        if amount <= 0 then
+            throw "amount must be positive"
+        m_balance = m_balance + amount
+    m_owner: string
+    m_balance: int
+
+// Moves money between two accounts.  A failed withdrawal throws before
+// anything changes, so a rejected transfer leaves both balances alone.
+fn transfer(src: Account, dst: Account, amount: int) : bool
+    src.withdraw(amount)
+    dst.deposit(amount)
+    return true
+
+void main()
+    let alice = new Account("alice", 100)
+    let bob = new Account("bob", 20)
+
+    for amount in [30, 500, -5, 70]
+        let ok = transfer(alice, bob, amount)?
+        if ok == null then
+            console.print("rejected", amount)
+        else
+            console.print("moved", amount)
+
+    console.print(alice.owner(), alice.balance())
+    console.print(bob.owner(), bob.balance())

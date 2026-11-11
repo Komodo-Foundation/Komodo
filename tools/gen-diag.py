@@ -75,7 +75,7 @@ def page(e):
     if e.get('help'):
         t += ['**How to fix it:** ' + re.sub(r'\{\d\}', '…', e['help']), '']
     if 'bad' in e:
-        strict = e.get('mode') == 'strict'
+        strict = e.get('mode') in ('strict', 'lint')
         text = '\n'.join(e['bad'] + e.get('fix', []))
         # examples that cannot link on their own (C symbols, no main) are only compiled by tests/diag
         multi = bool(e['files']) or 'extern ' in text or 'export ' in text or 'void main' not in text
@@ -85,7 +85,7 @@ def page(e):
         if strict or multi:
             t += ['<!-- doc-skip -->']
             if strict:
-                t += ['Compile with `komodo --strict`.', '']
+                t += ['Reported by `komodo lint`.' if e.get('mode') == 'lint' else 'Compile with `komodo --strict`.', '']
         else:
             t += ['<!-- doc-error -->']
         t += ['```km'] + e['bad'] + ['```', '']

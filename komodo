@@ -103,6 +103,7 @@ commands:
   build       build an executable: ./<name>, or -o <path>
   test        run *_test.km files and tests/*.km programs that define main()
   check       analyse only: print diagnostics (file:line:col: error: ...), no build
+  lint        check, plus unused locals, reused names and style warnings
   explain     explain an error code: komodo explain K0001 (see docs/diagnostics.md)
   repl        interactive prompt
   new <name>  create a project
@@ -136,7 +137,7 @@ Older flags still work; see docs/cli.md#legacy-flags.
 EOF
 }
 
-commands="run build test check explain fmt doc repl new bind watch clean doctor lib self upgrade completions"
+commands="run build test check lint explain fmt doc repl new bind watch clean doctor lib self upgrade completions"
 is_command() { local c; for c in $commands; do [[ "$c" == "$1" ]] && return 0; done; return 1; }
 
 # Levenshtein distance, for "did you mean".
@@ -410,7 +411,7 @@ _komodo() {
     COMPREPLY=()
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
-    cmds="run build test check repl new bind watch clean doctor lib self upgrade completions"
+    cmds="run build test check lint repl new bind watch clean doctor lib self upgrade completions"
     opts="--release -t --target -o --output -q --quiet -v --verbose -O --strict --no-cache -S --emit-asm -c --compile -k --kmc --time -h --help -V --version"
     case "$prev" in
         -t|--target) COMPREPLY=( $(compgen -W "x86 c wasm stackvm" -- "$cur") ); return 0 ;;
@@ -444,6 +445,7 @@ _komodo() {
         'build:build an executable'
         'test:run *_test.km files and tests/ programs'
         'check:analyse only, print diagnostics'
+        'lint:check plus lint warnings'
         'repl:interactive prompt'
         'new:create a project'
         'bind:generate bindings from a C header'
@@ -903,10 +905,11 @@ auto_bind_imports
 # ── check: diagnostics only (no .km.asm, no link, no run) ───────────
 # kmc's `check` target stops after the analyser: diagnostics go to stdout,
 # one per line, exactly as the compiler words them; a clean program prints
-# nothing. Exit 1 on any error.
-if [[ "$cmd" == "check" ]]; then
+# nothing. Exit 1 on any error. `lint` is the same with kmc's `lint`
+# target, which adds the --strict checks and style checks as warnings.
+if [[ "$cmd" == "check" || "$cmd" == "lint" ]]; then
     hint_fd=1
-    chk_out="$("$kmc" "$src" check $strict $(diag_flags 1) 2>&1)"; chk_rc=$?
+    chk_out="$("$kmc" "$src" "$cmd" $strict $(diag_flags 1) 2>&1)"; chk_rc=$?
     [[ -n "$chk_out" ]] && printf '%s\n' "$chk_out"
     if [[ $chk_rc -ne 0 ]]; then
         printf '%s\n' "$chk_out" > "$wd/check.err"

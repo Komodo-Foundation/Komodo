@@ -187,6 +187,8 @@ mut Analyzer::inferBinary(e: BinaryOp): Type
     // floats, a NaN-dependent surprise).
     if isCompareOp(e.op) and sameVar(e.left, e.right) then
         lint(e, "'" + e.op + "' compares a value with itself")
+    if (e.op == "==" or e.op == "!=") and (e.left is BoolLiteral or e.right is BoolLiteral) then
+        style(e, "comparison with a bool literal; use the value or `not` directly")
 
     // `==` / `!=` may involve `null` (that is how a value gets narrowed);
     // every other operator needs both operands non-null.

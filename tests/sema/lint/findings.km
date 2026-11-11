@@ -1,0 +1,26 @@
+enum Color
+    Red
+    Green
+    Blue
+
+fn name(c: Color): string
+    match c
+        case Red
+            return "red"
+        case Green
+            return "green"
+    return "?"
+
+fn pick(x: int, unused: int): int
+    let spare = 1
+    if x > 0 then
+        let x = 5
+        return x
+    return 0
+
+void main()
+    let ok = true
+    if ok == true then
+        print(pick(1, 2))
+    if false != ok then
+        print(name(Color::Red))

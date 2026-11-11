@@ -63,6 +63,8 @@ fn compileOpt(source: string, target: string, strict: bool, opt: string): string
 fn compileMapped(source: string, target: string, strict: bool, opt: string, files: [string], starts: [int]): string
     let lexer = new Lexer(source)
     let tokens = lexer.tokenize()
+    for w in lexer.warnings() do
+        print(diagOne(locate(w, files, starts)))
 
     let parser = new Parser(tokens)
     let parsed = parser.parseProgram()?
@@ -71,12 +73,14 @@ fn compileMapped(source: string, target: string, strict: bool, opt: string, file
     let ast: Program = parsed
 
     let analyzer = new Analyzer(strict)
+    if target == "lint" then
+        analyzer.setLintAll()
     analyzer.setSourceMap(files, starts)
     analyzer.analyze(ast)
 
     // `check` stops here: the analyser has run (diagnostics are printed),
     // and no optimiser or code generation is needed
-    if target == "check" then
+    if target == "check" or target == "lint" then
         return ""
 
     // `header` is a pseudo-target: the C prototypes of the `export fn`s.

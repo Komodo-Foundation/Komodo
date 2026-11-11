@@ -171,9 +171,23 @@ public
 
     // A strict-mode-only diagnostic: hard error under `strict`, silent
     // otherwise.
-    void warn(node: ASTNode, msg: string)
+    // Under `lint` mode (`komodo lint`) it is reported as a warning.
+    mut warn(node: ASTNode, msg: string)
+        warnAt(string(node.line) + ":" + string(node.column), msg)
+
+    mut warnAt(at: string, msg: string)
         if m_strict then
-            throw (string(node.line) + ":" + string(node.column) + ": " + msg)
+            throw (at + ": " + msg)
+        if m_lintAll then
+            m_lints += [at + ": warning: " + msg]
+
+    // `lint` mode only: a style finding, never an error.
+    mut style(node: ASTNode, msg: string)
+        if m_lintAll then
+            m_lints += [string(node.line) + ":" + string(node.column) + ": warning: " + msg]
+
+    mut setLintAll()
+        m_lintAll = true
 
     // A non-fatal warning about a legal-but-suspicious construct — "this
     // looks like a mistake" checks (dead code, self-assignment, `x / 0`,
@@ -1095,6 +1109,7 @@ private
     m_srcStarts: [int] = []
     // non-fatal warnings collected during analysis (see `lint`)
     m_lints: [string] = []
+    m_lintAll: bool = false
     m_errors: [string] = []
 
     // type registry (`m_typeIdx` hashes m_typeNames — see StrIndex)

@@ -23,6 +23,12 @@
 !/examples/*.expected
 !/examples/*.c
 !/examples/*.cpp
+/tests/examples/*
+!/tests/examples/*.km
+!/tests/examples/*.kmm
+!/tests/examples/*.expected
+!/tests/examples/*.c
+!/tests/examples/*.cpp
 /demos/*
 !/demos/*.km
 !/demos/*.kmm

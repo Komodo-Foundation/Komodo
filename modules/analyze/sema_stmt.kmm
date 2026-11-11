@@ -52,13 +52,13 @@ mut Analyzer::checkFunction(fd: FunctionDecl, owner: string)
     // the `fn` / `mut` mutation contract
     checkMutationContract(fd, owner)
 
-    // strict: unused bindings
-    if m_strict then
+    // strict / lint: unused bindings
+    if m_strict or m_lintAll then
         let i = 0
         while i < #m_scopeNames do
             let nm = m_scopeNames[i]
-            if not m_scopeUsed[i] and nm != "self" and not nameHasHash(nm) then
-                throw (m_scopeDeclAt[i] + ": '" + nm + "' is declared but never used")
+            if not m_scopeUsed[i] and nm != "self" and nm[0] != "_" and not nameHasHash(nm) then
+                warnAt(m_scopeDeclAt[i], "'" + nm + "' is declared but never used")
             i += 1
 
 mut Analyzer::nameHasHash(s: string): bool
@@ -221,7 +221,8 @@ mut Analyzer::checkMutationContract(fd: FunctionDecl, owner: string)
     let muts = bodyMutates(fd.body, fields)
     // `mut` is permission to mutate, not an obligation — a redundant
     // `mut` is only a strict-mode lint.
-    if fd.isMut and not muts then
+    // (strict only: it does not follow calls, so `lint` skips it)
+    if m_strict and fd.isMut and not muts then
         warn(fd, "`mut " + displayName(fd, owner) + "` has no mutating code — could be `fn` or `void`")
     // A pure `fn` mutating caller-visible state is always an error.
     let pure = not fd.isMut and not fd.isVoid and fd.returnType != null
@@ -372,6 +373,9 @@ mut Analyzer::checkVarDecl(s: VarDecl)
         warn(s, "'" + s.name + "' has no type annotation and no initialiser")
 
     s.resolvedType = typeToLegacy(bound)
+    // locals are function-scoped: a second `let` reuses the first
+    if scopeHas(s.name) then
+        style(s, "'" + s.name + "' is already declared in this function; this `let` reuses it")
     scopeAdd(s.name, bound, false)
 
     // `let y = x` transfers ownership of a `unique` value out of `x`.
@@ -685,8 +689,8 @@ mut Analyzer::checkMatch(s: MatchStmt)
             allCovered = true
         else
             // strict: an enum `match` with no `else` must cover every variant
-            if m_strict and not hasDefault then
-                err(s, "match on enum '" + base.name + "' is not exhaustive — missing: " + missing)
+            if not hasDefault then
+                warn(s, "match on enum '" + base.name + "' is not exhaustive — missing: " + missing)
 
     s.exhaustive = hasDefault or allCovered
 
