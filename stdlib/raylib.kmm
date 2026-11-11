@@ -456,7 +456,8 @@ mut fn rl_should_close(): int
     return WindowShouldClose() & 255
 
 // ── custom GPU shaders via rlgl (all scalar / pointer calls) ─────────
-extern fn   rlLoadShaderProgram(vsCode: string, fsCode: string): int
+extern fn   rlLoadShaderCode(vsCode: string, fsCode: string): int
+extern fn   rlLoadShaderProgram(vShaderId: int, fShaderId: int): int
 extern void rlUnloadShaderProgram(id: int)
 extern fn   rlGetLocationUniform(shaderId: int, uniformName: string): int
 extern fn   rlGetLocationAttrib(shaderId: int, attribName: string): int
@@ -528,7 +529,7 @@ mut fn rl_f32bits(x: float): int
 // Compile a shader and build its raylib location table (32 int32s
 // packed two per word).  Returns [id, ...16 words of locs].
 mut fn rl_shader_load(vs: string, fs: string): [int]
-    let id = rl_u32(rlLoadShaderProgram(vs, fs))
+    let id = rl_u32(rlLoadShaderCode(vs, fs))
     let locs: [int] = []
     let i = 0
     while i < 32 do
