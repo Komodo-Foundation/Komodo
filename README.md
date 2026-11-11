@@ -6,32 +6,42 @@
 **A small, statically-typed, self-hosting language that compiles to native code and talks to C, C++ and the rest of your system with no ceremony.**
 
 ```km
-import zlib                       // a system C library: bound and linked automatically
+import console
 
-class Greeter
-    constructor(name: string)
-        m_name = name
-    fn greet() : string
-        return `Hello, {m_name}!`
-    m_name: string
+abstract struct Shape
+struct Circle : Shape
+    r: int
+struct Rect : Shape
+    w: int
+    h: int
+
+fn area(s: Shape) : int
+    match s
+        case Circle(r)
+            return 3 * r * r
+        case Rect(w, h)
+            return w * h
+    return 0
 
 void main()
-    let g = new Greeter("Komodo")
-    print(g.greet())
-    print(`zlib {zlibVersion()}`)
+    let shapes = [new Circle(2), new Rect(3, 5)]
+    for s in shapes
+        console.print(`area {area(s)}`)
 ```
 
 ```bash
 $ komodo
-Hello, Komodo!
-zlib 1.3
+area 12
+area 15
 ```
+
+A trimmed version of [`examples/shapes.km`](examples/shapes.km); [`examples/`](examples/) has two more showcases.
 
 ## Why Komodo
 
 - **Zero-config.** Type `komodo` in a directory with a `main.km`. No build files, no flags, no makefile.
 - **Native and fast to build.** Compiles to x86-64 assembly; the compiler rebuilds itself in about a second.
-- **Seamless interop.** `import zlib` binds a system library from its header; `native/` C and C++ is compiled and linked automatically; `export fn` makes Komodo callable from C, C++, Python (`ctypes`) and Rust.
+- **Seamless interop.** `import zlib` (a system C library) binds a system library from its header; `native/` C and C++ is compiled and linked automatically; `export fn` makes Komodo callable from C, C++, Python (`ctypes`) and Rust.
 - **Safe by default.** Static types, null-safety with flow-sensitive narrowing, ownership/move checks, bounds-checked arrays, garbage-collected memory.
 - **Several targets.** x86-64 native, portable C, WebAssembly, and a stack VM.
 - **Self-hosting.** The compiler is written in Komodo and compiles itself to byte-identical output.
@@ -55,6 +65,8 @@ Editor support: install the VS Code extension with `code --install-extension kom
 komodo new hello && cd hello    # scaffold a project
 komodo                          # build (incrementally) and run
 komodo build --release          # optimised executable ./hello
+komodo check                    # type-check only, print diagnostics
+komodo lint                     # check plus unused names and style warnings
 komodo test                     # run *_test.km files
 komodo watch                    # rebuild and rerun on every change
 komodo repl                     # interactive prompt
@@ -105,4 +117,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). Bugs and ideas go in [issues](https://gi
 
 ## License
 
-MIT — see [LICENSE](LICENSE). Copyright (c) 2026 Lukas Perkins.
+MIT — see [LICENSE](LICENSE). Copyright (c) 2026 the Komodo Foundation.
