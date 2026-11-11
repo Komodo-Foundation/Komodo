@@ -246,7 +246,7 @@ void main()
     print(7 / 2, 7 % 3, -7 / 2, 2 * 3 + 4)
     print(1.0 / 4.0, 5 < 6, 5 == 6, 5 != 6)
     print(6 & 3, 6 | 3, 6 ^ 3, 6 xor 3, 1 << 4, 256 >> 2)
-    print(not true, true and false, false or true, !false)
+    print(not true, true and false, false or true, not false)
     print(3 in [1, 2, 3], "ell" in "hello", 'h' in "hello")
     let n = 0
     n += 5

@@ -15,7 +15,7 @@ inflated by `!=`, so that count is not reliable.
 
 | # | Keep | Deprecate | Verified | Uses in repo | Notes |
 |---|---|---|---|---|---|
-| 1 | `and`, `or` | `&&`, `\|\|` | yes: `print(1 && 1, 1 && 0, 0 \|\| 1)` prints `1 0 1` | `&&` 50 files, `\|\|` 36 | Not in the reference at all. Silent alias. Strongest candidate. |
+| 1 | `and`, `or` | `&&`, `\|\|` | yes: `print(2 && 1, 2 and 1)` prints `0 1`, so `&&` is bitwise `&` and gives wrong answers on non-bool values | `&&` 50 files, `\|\|` 36 | Not in the reference. Not a true alias: `&&` silently computes bitwise AND. Strongest candidate. |
 | 2 | `not` | `!` | yes: `print(!0)` prints `1`; the reference (6.4, open Q2) says `!` is unreliable | many (grep is noisy) | The doc already calls it broken. |
 | 3 | `then` (or nothing) | `do` on `if` | yes: `if a == 1 do` compiles | 0 files for `if ... do` | `do` is allowed on `while`/`for`. Keep it there only if the maintainer wants it. |
 | 4 | `#x` | `x.length` or `len`, pick one | per docs 4.3 and 6.6, not re-verified | n/a | Both give the same result. Pick one name. |

@@ -63,6 +63,8 @@ fn compileOpt(source: string, target: string, strict: bool, opt: string): string
 fn compileMapped(source: string, target: string, strict: bool, opt: string, files: [string], starts: [int]): string
     let lexer = new Lexer(source)
     let tokens = lexer.tokenize()
+    for w in lexer.warnings() do
+        print(diagOne(locate(w, files, starts)))
 
     let parser = new Parser(tokens)
     let parsed = parser.parseProgram()?
