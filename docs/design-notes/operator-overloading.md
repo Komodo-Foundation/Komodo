@@ -17,20 +17,21 @@ struct Vec
     x: int
     y: int
 
-    fn +(other: Vec): Vec
+    fn(operator ex: +)(other)
         return new Vec(self.x + other.x, self.y + other.y)
 
-    fn -(): Vec                  // no parameter = unary minus
+    fn(operator ex: -)()         // no argument = unary minus
         return new Vec(0 - self.x, 0 - self.y)
 
-    fn ==(other: Vec): bool
+    fn(operator ex: ==)(other)
         return self.x == other.x and self.y == other.y
 ```
 
 Rules:
 
 1. Overloadable: `+ - * / %`, unary `-`, `< <= > >=`, `==`. The left operand
-   is `self`, so the form is always `fn <op>(other)` (or `fn -()` for unary).
+   is `self`, so the form is `fn(operator ex: <op>)(other)`, with no argument for unary `-`.
+   (`ex:` is kept as written by the maintainer; its meaning is an open question.)
 2. Not overloadable: `and or not in is`, `&&`/`||`, `,`, `=`, user-defined literals.
 3. `!=` is derived as `not (a == b)`.
 4. Ordering is not derived: each of `< <= > >=` is declared when needed.
@@ -58,6 +59,6 @@ per-type grouping, and both operands are written out, but there is no `self`.
 
 ## Decisions needed from Lukas
 
-1. Confirm methods inside the struct (as proposed) over free functions.
+1. Confirm the syntax `fn(operator ex: +)(other)` inside the struct, and what `ex:` means.
 2. Ordering: declare each of `< <= > >=`, or derive all four from `<`?
 3. Include `+=`-style compound forms now (desugared to `a = a + b`) or later?
