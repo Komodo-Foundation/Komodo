@@ -10,6 +10,7 @@ programs (`.km`) and modules (`.kmm`).
 | Syntax highlighting | TextMate grammar, also inside ` ```km ` blocks in Markdown |
 | Errors and warnings as you work | the Komodo language server (`tools/km-lsp`) runs the compiler on open and save |
 | Outline, breadcrumbs, Go to Symbol | top-level `fn`, `struct`, `class`, `enum`, `module` from the language server |
+| Go to Definition, hover, completion | top-level names from the language server, matched by name in the workspace |
 | Format Document | `komodo fmt` (whitespace only, never changes code) |
 | Run, build, check, test | commands, the ▷ button in the editor title, `Ctrl+F5`, and `komodo` tasks |
 | Problems panel | the `$komodo` problem matcher reads `file:line:col: error: message` |

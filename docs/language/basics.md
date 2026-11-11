@@ -813,7 +813,7 @@ void main()
     let fs = [2.5, 0.5]
     console.print(algorithm.min(fs), algorithm.contains(xs, 2))
     console.print(string.split("a,b,c", ","), string.to_upper("abc"))
-    console.print(string.pad_start("7", 3, "0"), string.length("four"))
+    console.print(string.pad_start("7", 3, "0"), #"four")
 ```
 
 ```text
