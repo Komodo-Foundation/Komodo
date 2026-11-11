@@ -105,6 +105,8 @@ Run `komodo explain K0001` for the long form. See [diagnostics](../diagnostics.m
 | [K0166](K0166.md) | `parameter '…' has no type annotation (implicit any)` |
 | [K0167](K0167.md) | ``mut …` has no mutating code — could be `fn` or `void`` |
 | [K0168](K0168.md) | `'…' has no type annotation and no initialiser` |
+| [K0169](K0169.md) | `'…' is already declared in this function; this `let` reuses it` |
+| [K0170](K0170.md) | `comparison with a bool literal; use the value or `not` directly` |
 | [K0180](K0180.md) | `unexpected 'else': a one-line `if c then X else Y` is not supported…` |
 | [K0181](K0181.md) | `a range `a to b` is only valid in a `for` loop or a slice, not as a value` |
 | [K0182](K0182.md) | `'?' applies to calls, not indexing` |

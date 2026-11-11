@@ -92,7 +92,7 @@ Komodo is **pre-1.0**: the language and compiler are usable and well tested (exa
 | `modules/backend/` | `Backend` interface and the x86-64, C/WebAssembly and stack-VM backends |
 | `stdlib/` | C runtime and the standard-library interface modules |
 | `tools/` | `km-bind` (C header → Komodo binding), assembly splitter |
-| `examples/`, `demos/` | sample programs (`examples/*.expected` are test fixtures) |
+| `examples/`, `demos/` | showcase programs; `tests/examples/` holds the test fixtures (`.km` + `.expected`) |
 | `tests/` | analyser, interop and binding tests |
 | `bootstrap/` | the checked-in seed that builds the compiler without any other Komodo implementation |
 | `docs/` | documentation |

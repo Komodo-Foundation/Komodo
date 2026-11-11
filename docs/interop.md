@@ -180,7 +180,7 @@ Each of these leaves a `// skipped: name (reason)` line in the output.
 | Buffers | `data(arr)` points at 64-bit slots; a C `int32_t *` or `char *` buffer does not line up. Use `const char *` as `string` for read-only text. |
 | Writable `char *` parameters | Bound as `string`, which is read-only text; C must not write into it. |
 | Callbacks | A bare Komodo function name. Parameters are words (`int`, `bool`, `string`, handles), `float` or `f32`; the result is one of those or `void`. No struct or array callbacks. |
-| C++ | Bind an `extern "C"` wrapper, or name mangled symbols with `= "symbol"`. See `examples/ffi_cxx.km`. |
+| C++ | Bind an `extern "C"` wrapper, or name mangled symbols with `= "symbol"`. See `tests/examples/ffi_cxx.km`. |
 | Targets | FFI works on the x86 target only. `-t c`, `-t wasm` and `-t stackvm` reject or only compile it. |
 
 ## Part 2. Using Komodo from C, C++, Rust and Python

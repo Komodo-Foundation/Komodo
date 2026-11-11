@@ -451,7 +451,7 @@ second
 ```
 
 `case Type(field: value, name)` also matches struct values. See
-`examples/pattern_demo.km`.
+`tests/examples/pattern_demo.km`.
 
 ## Functions
 
@@ -541,7 +541,7 @@ A function with a body cannot read its extra arguments. The `...` form is
 meant for declared prototypes such as the standard library's.
 
 Free functions may also be overloaded on their parameter types. See
-`examples/overload_demo.km`.
+`tests/examples/overload_demo.km`.
 
 ## Top-level globals
 
@@ -667,7 +667,7 @@ These names need no `import`:
 | `join(parts, sep)` | joins a `[string]` with `sep` between the parts |
 | `assert(cond)` / `assert(cond, "message")` | throws if `cond` is false |
 | `copy(x)` | deep copy of a struct, class or array |
-| `data(arr)` | element pointer of an array, for passing a buffer to C; see `examples/ffi_struct.km` |
+| `data(arr)` | element pointer of an array, for passing a buffer to C; see `tests/examples/ffi_struct.km` |
 
 ```km
 import console

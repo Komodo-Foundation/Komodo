@@ -4,7 +4,7 @@
 #
 #   1. golden:      formatting golden/input.km gives golden/expected.km;
 #                   golden/mixed_indent.km is refused (exit 2).
-#   2. safety:      every examples/*.km, stdlib/*.kmm, modules/**/*.kmm,
+#   2. safety:      every examples/*.km, tests/examples/*.km, stdlib/*.kmm, modules/**/*.kmm,
 #                   main.km and tests/sema/*.km is compiled with `kmc <f> x86`
 #                   twice, once as written and once formatted, in two copies
 #                   of the tree. Exit status, output and the generated .asm
@@ -57,7 +57,7 @@ else bad "golden: mixed tab/space indentation was not refused (rc=$rc)"; fi
 # Collect the files named by the spec, relative to the repo root.
 list="$work/files.txt"
 {
-    find examples stdlib modules tests/sema -maxdepth 1 -type f \( -name '*.km' -o -name '*.kmm' \) 2>/dev/null
+    find examples tests/examples stdlib modules tests/sema -maxdepth 1 -type f \( -name '*.km' -o -name '*.kmm' \) 2>/dev/null
     find modules -mindepth 2 -type f -name '*.kmm' 2>/dev/null
     echo main.km
 } | sort -u > "$list"
@@ -69,7 +69,7 @@ stage() {  # <dest>: copy the listed files into <dest>
 stage "$work/orig"
 stage "$work/fmt"
 
-python3 "$fmt" -w "$work/fmt/examples" "$work/fmt/stdlib" "$work/fmt/modules" \
+python3 "$fmt" -w "$work/fmt/examples" "$work/fmt/tests/examples" "$work/fmt/stdlib" "$work/fmt/modules" \
     "$work/fmt/tests/sema" "$work/fmt/main.km" 2>"$work/fmt-w.err" || {
     bad "km-fmt -w failed on the staged tree"; cat "$work/fmt-w.err"; }
 
@@ -111,12 +111,12 @@ done < "$list"
 
 # Idempotence on the whole staged tree.
 cp -r "$work/fmt" "$work/fmt2"
-python3 "$fmt" -w "$work/fmt2/examples" "$work/fmt2/stdlib" "$work/fmt2/modules" \
+python3 "$fmt" -w "$work/fmt2/examples" "$work/fmt2/tests/examples" "$work/fmt2/stdlib" "$work/fmt2/modules" \
     "$work/fmt2/tests/sema" "$work/fmt2/main.km" >/dev/null 2>&1
 if diff -r "$work/fmt" "$work/fmt2" >/dev/null; then ok
 else bad "idempotence: a second pass changed files"; diff -r "$work/fmt" "$work/fmt2" | head; fi
 
-if python3 "$fmt" --check "$work/fmt/examples" "$work/fmt/stdlib" "$work/fmt/modules" \
+if python3 "$fmt" --check "$work/fmt/examples" "$work/fmt/tests/examples" "$work/fmt/stdlib" "$work/fmt/modules" \
         "$work/fmt/tests/sema" "$work/fmt/main.km" >/dev/null; then ok
 else bad "idempotence: --check still reports changes on formatted tree"; fi
 
