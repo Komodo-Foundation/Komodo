@@ -106,6 +106,7 @@ differ, naming the backend that disagrees.
 `fn` is already checked pure. Let a `fact` line follow a function and
 state an example that must hold:
 
+<!-- doc-skip -->
 ```km
 fn square(x: int): int
     return x * x
