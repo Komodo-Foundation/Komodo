@@ -3218,7 +3218,7 @@ Standard library modules are ordinary modules: `import name`. The bodies are in
 | `random` | `seed int float shuffle` (splitmix64) |
 | `path` | `join dirname basename ext abs exists` |
 | `process` | `run output` (through `sh -c`; no-ops on wasm) |
-| `sdl2`, `raylib` | C library bindings (section 19) |
+| `sdl2`, `raylib` | C library bindings (section 19); more in `bindings/` (section 19.12) |
 
 Members of `math`, `string`, `algorithm`, `os`, `time`, `random`, `path` and
 `process` are reached with a dot (`math.abs(x)`). `file` members use `::`
@@ -3719,6 +3719,17 @@ The `link` forms need a module file; see `stdlib/sdl2.kmm` for a library name.
 The checks in this section were run on the default x86-64 target. The other
 targets are described in [docs/ffi.md](../ffi.md#target-support); this reference
 does not re-verify them.
+
+### 19.12 Ready-made bindings
+
+`bindings/` holds binding modules for popular C libraries, one folder each
+(`sqlite3`, `zlib`, `pcre2`). Each folder has the `.kmm` module, a short README
+and a runnable `example.km`. Copy the folder into your project, or import the
+`.kmm` from it directly, then `import sqlite3` as usual. A binding is a
+convenience only: any C library works without one, through
+[`komodo`'s auto-binding](../interop.md). `scripts/build-bindings.sh` builds and
+runs every example and skips the ones whose library is not installed. How to add
+one is in [bindings/README.md](../../bindings/README.md).
 
 ---
 

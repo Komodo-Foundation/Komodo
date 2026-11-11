@@ -1,0 +1,15 @@
+// requires: sqlite3
+import sqlite3
+
+void main()
+    let db = sqlite3::km_sqlite3_open(":memory:")
+    if db == 0
+        print("open failed")
+        return
+    sqlite3::sqlite3_exec(db, "CREATE TABLE t(name TEXT, n INTEGER)", 0, 0, 0)
+    sqlite3::sqlite3_exec(db, "INSERT INTO t VALUES ('a', 1), ('b', 22)", 0, 0, 0)
+    let stmt = sqlite3::km_sqlite3_prepare(db, "SELECT name, n FROM t ORDER BY n")
+    while sqlite3::sqlite3_step(stmt) == 100
+        print(`{sqlite3::sqlite3_column_text(stmt, 0)} {sqlite3::sqlite3_column_int(stmt, 1)}`)
+    sqlite3::sqlite3_finalize(stmt)
+    sqlite3::sqlite3_close(db)
