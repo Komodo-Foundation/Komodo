@@ -11,8 +11,8 @@ Komodo is a self-hosting language/compiler (x86-64 NASM, portable C, WebAssembly
 
 ## Using the graph
 - A code graph lives in `graphify-out/` (gitignored, about 1 MB). Read `graphify-out/GRAPH_REPORT.md` or run `graphify query "<question>"` / `graphify explain "<name>"` before grepping broadly.
-- It covers `docs/`, `stdlib/` (C runtime), `tools/`, `tests/`, `editors/`, and `kmrepl/`. It does not cover the compiler's `.km` sources or the asm seed, so use `rg` for those. Verify details against source.
-- Regenerate after code changes (no LLM, a few seconds): `pip install graphifyy && graphify update .`
+- It covers `docs/`, `stdlib/` (C runtime), `tools/`, `tests/`, `editors/`, `kmrepl/`, and the `.km`/`.kmm` compiler sources (via `tools/km-graph.py`). It does not cover the asm seed, so use `rg` for that. Verify details against source.
+- Regenerate after code changes (no LLM, a few seconds; needs `pip install graphifyy`): `graphify update . && python3 tools/km-graph.py graphify-out/km-graph.json && mv graphify-out/graph.json graphify-out/ast-graph.json && graphify merge-graphs graphify-out/ast-graph.json graphify-out/km-graph.json --out graphify-out/graph.json`
 
 ## Build and test
 - `./build-self.sh` builds `./kmc` (~2 s) from the checked-in seed `bootstrap/main.km.asm.gz`; must print `fixpoint OK`. After compiler changes run `./build-self.sh --force --update-seed` and commit the seed. New syntax must not be used in the compiler's own sources until a seed supports it.
