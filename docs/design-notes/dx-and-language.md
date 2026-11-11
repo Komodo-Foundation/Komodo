@@ -75,7 +75,7 @@ and `// expect-error: undefined name 'x'` for analyser tests.
 `komodo test` checks stdout (or the diagnostic) against them, in addition
 to the exit status it checks today.
 
-- Pros: one format for users and for the repo; `examples/*.expected` and
+- Pros: one format for users and for the repo; `tests/examples/*.expected` and
   `tests/sema/*.experr` can move over gradually (or never). The test and
   its answer sit together.
 - Cons: a second convention while the old files remain.
