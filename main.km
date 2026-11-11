@@ -24,6 +24,7 @@ void main(args)
     // Trailing arguments, in any order:
     //   x86 | stackvm | c | wasm  code-generation target      (default x86)
     //   check                    analyse only: diagnostics, no output file
+    //   lint                     `check` plus strict and style checks, as warnings
     //   strict                   analyser lint-level checks   (default off)
     //   none | low | medium | max   optimisation level        (default none)
     let target = "x86"
@@ -36,7 +37,7 @@ void main(args)
     let ai = 2
     while ai < #args do
         let a = args[ai]
-        if a == "x86" or a == "x86pic" or a == "stackvm" or a == "c" or a == "wasm" or a == "check" then
+        if a == "x86" or a == "x86pic" or a == "stackvm" or a == "c" or a == "wasm" or a == "check" or a == "lint" then
             target = a
         else if a == "header" then
             target = a              // C header for the `export fn`s -> <file>.h
@@ -67,7 +68,7 @@ void main(args)
 
     let gathered = gather(fileName, stdlibProbe)
     // `check` writes nothing: no .deps / .links / output file
-    if target != "check" then
+    if target != "check" and target != "lint" then
         file::write_all(fileName + ".deps", join(gathered.deps, "\n"))
         file::write_all(fileName + ".links", join(gathered.links, "\n"))
     let compiled = km_compiler::compileMapped(gathered.source, target, strict, opt, gathered.deps, gathered.starts)?
@@ -80,7 +81,7 @@ void main(args)
         for one in km_compiler::dgSplit(raw, "\n") do
             shown += [km_compiler::locate(errorLine(one), gathered.deps, gathered.starts)]
         km_fail(km_compiler::diagReport(shown))
-    if target == "check" then
+    if target == "check" or target == "lint" then
         return                        // analysed clean; diagnostics already printed
     let asm = compiled or ""          // km_fail above does not return
 

@@ -1,0 +1,6 @@
+findings.km:7:5: warning: match on enum 'Color' is not exhaustive — missing: Blue
+findings.km:17:9: warning: 'x' is already declared in this function; this `let` reuses it
+findings.km:14:1: warning: 'unused' is declared but never used
+findings.km:15:5: warning: 'spare' is declared but never used
+findings.km:23:8: warning: comparison with a bool literal; use the value or `not` directly
+findings.km:25:8: warning: comparison with a bool literal; use the value or `not` directly
