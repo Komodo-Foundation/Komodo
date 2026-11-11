@@ -1,0 +1,12 @@
+enum Color
+    Red
+    Green
+    Blue
+
+void main()
+    let c = Color::Red
+    match c
+        case Color::Red
+            print("red")
+        case Color::Green
+            print("green")

@@ -271,7 +271,7 @@ from commits `83e672c` and `de7bfb3`:
    block that builds and runs each example and diffs it against
    `.expected`. An example that cannot run on the target opts out with a
    marker comment (`c: skip`, `wasm: skip`). The C commit added `c: skip` to
-   `examples/ffi_callback.km` and `examples/ffi_struct.km` for this reason.
+   `tests/examples/ffi_callback.km` and `tests/examples/ffi_struct.km` for this reason.
 
 A new target that cannot express an operation fails with a message like
 `c backend: ... not supported yet`. Passing a Komodo function to C as a
@@ -401,7 +401,7 @@ Checklist. Not every step applies to every feature.
 7. **Backends** (only if a new operation is unavoidable): add it to every
    backend, `backend.kmm`'s header vocabulary, and the `CBackend` and
    `StackVMBackend` implementations.
-8. **Tests**: an `examples/<name>.km` with `.expected`, and `tests/sema/`
+8. **Tests**: an `tests/examples/<name>.km` with `.expected`, and `tests/sema/`
    negatives with `.experr`. See [section 12](#12-tests).
 9. **Docs**: a section in `design.md`, a bullet in `README.md`'s Status.
 10. **Seed**: if `modules/` will use the feature, refresh the seed first
@@ -428,7 +428,7 @@ touched 26 files. It is a good model because it spans every stage.
   callee's default expressions to a short argument list. It is called from
   `genCall` (lines 522 and 547) and from `exprType` for templates
   ([`codegen_frame.kmm`](../modules/codegen/codegen_frame.kmm), line 126).
-- **Tests**: `examples/default_params.km` with `.expected`, and seven
+- **Tests**: `tests/examples/default_params.km` with `.expected`, and seven
   `tests/sema/default_*.km` files covering arity, method, non-literal, order,
   overload, template arity and type errors.
 
@@ -446,7 +446,7 @@ smaller example, and it is useful because it needed no backend operation.
   `assert(c, m)` into `if not c then throw "<site>assertion failed: m"`,
   builds the nodes, and calls the existing `genStmt`. The message is only
   evaluated on failure.
-- **Tests**: `examples/assert_demo.km` and `tests/sema/assert_arity.km`,
+- **Tests**: `tests/examples/assert_demo.km` and `tests/sema/assert_arity.km`,
   `tests/sema/assert_message_type.km`.
 
 The lesson: a feature that can be written as existing AST nodes needs no
@@ -457,9 +457,9 @@ backend work, and so it works on every target at once.
 Two suites, both driven by the native compiler. Build `./kmc` first with
 `./build-self.sh` (or `komodo self build`; plain `komodo` also builds it on demand).
 
-**Examples: `./run-tests.sh [name ...]`.** Each `examples/<name>.km` is run
+**Examples: `./run-tests.sh [name ...]`.** Each `tests/examples/<name>.km` is run
 through the `komodo` script, so the front end, `nasm`, and `gcc` are all
-exercised. The output must match `examples/<name>.expected` exactly (the
+exercised. The output must match `tests/examples/<name>.expected` exactly (the
 script diffs it). Each example is then also:
 
 - compiled with `-t stackvm -S`, unless the source contains `stackvm: skip`
@@ -514,7 +514,7 @@ will cost you time when you touch the area.
    operation is caught only when a program reaches that code path, or never.
 5. **Global registries are parallel arrays.** `Analyzer` and `Codegen` keep
    functions and types as parallel lists, with `StrIndex` added for lookup.
-   This is fast enough (the README reports about 0.25 s for the compiler to build its own sources),
+   This is fast enough (the compiler builds its own sources in about 0.3 s, measured by `tools/perf-budget.sh`),
    but it is easy to desynchronise a list when adding a field.
 
 ## 14. Stale documentation

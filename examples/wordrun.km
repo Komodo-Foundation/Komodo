@@ -1,0 +1,35 @@
+// Text processing with the `string` module: split, normalise, and count
+// words in first-seen order with two parallel arrays.
+
+import console
+import string
+
+// Lowercase, split on spaces, and keep only the non-empty words.
+fn words_of(text: string) : [string]
+    let words: [string] = []
+    for w in string.split(string.to_lower(text), " ")
+        let clean = string.trim(w)
+        if string.length(clean) > 0 then
+            words += [clean]
+    return words
+
+// Position of `w` in `seen`, or -1 when it has not been seen yet.
+fn index_of(seen: [string], w: string) : int
+    for i = 0 to #seen - 1
+        if seen[i] == w then
+            return i
+    return -1
+
+void main()
+    let seen: [string] = []
+    let counts: [int] = []
+    for w in words_of("The quick fox and the lazy dog and THE cat")
+        let pos = index_of(seen, w)
+        if pos < 0 then
+            seen += [w]
+            counts += [1]
+        else
+            counts[pos] = counts[pos] + 1
+
+    for i = 0 to #seen - 1
+        console.print(seen[i], counts[i])

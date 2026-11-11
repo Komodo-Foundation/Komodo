@@ -24,15 +24,20 @@ void main(args)
     // Trailing arguments, in any order:
     //   x86 | stackvm | c | wasm  code-generation target      (default x86)
     //   check                    analyse only: diagnostics, no output file
+    //   lint                     `check` plus strict and style checks, as warnings
     //   strict                   analyser lint-level checks   (default off)
     //   none | low | medium | max   optimisation level        (default none)
     let target = "x86"
     let strict = false
     let opt = "none"
+    let rich = false
+    let color = false
+    let width = 100
+    let renderText = ""
     let ai = 2
     while ai < #args do
         let a = args[ai]
-        if a == "x86" or a == "x86pic" or a == "stackvm" or a == "c" or a == "wasm" or a == "check" then
+        if a == "x86" or a == "x86pic" or a == "stackvm" or a == "c" or a == "wasm" or a == "check" or a == "lint" then
             target = a
         else if a == "header" then
             target = a              // C header for the `export fn`s -> <file>.h
@@ -40,6 +45,14 @@ void main(args)
             strict = true
         else if a == "none" or a == "low" or a == "medium" or a == "max" then
             opt = a
+        else if a == "rich" or a == "color" then
+            rich = true             // rustc-style diagnostics (see diag.kmm)
+            if a == "color" then
+                color = true
+        else if a.length > 7 and a[0 to 7] == "render=" then
+            renderText = a[7 to a.length]       // test hook: render this one line
+        else if a.length > 6 and a[0 to 6] == "width=" then
+            width = km_compiler::dgNum(a[6 to a.length])
         ai += 1
 
     // The standard library ships as `.kmm` declaration files under the
@@ -47,21 +60,28 @@ void main(args)
     // so `import console` resolves no matter where the user's file is.
     // `file::find` walks recursively, so the executable's directory is
     // enough whether `stdlib/` is a subdirectory or holds kmc itself.
+    km_compiler::diagSetMode(rich, color, width)
+    if renderText != "" then
+        print(km_compiler::diagReport([renderText]))
+        return
     let stdlibProbe = dirOf(selfPath) + "/probe.km"
 
     let gathered = gather(fileName, stdlibProbe)
     // `check` writes nothing: no .deps / .links / output file
-    if target != "check" then
+    if target != "check" and target != "lint" then
         file::write_all(fileName + ".deps", join(gathered.deps, "\n"))
         file::write_all(fileName + ".links", join(gathered.links, "\n"))
     let compiled = km_compiler::compileMapped(gathered.source, target, strict, opt, gathered.deps, gathered.starts)?
     if compiled == null then
         // report as `file:line:col: error: …`, against the file the
         // problem is actually in rather than the merged unit
+        // (several errors arrive newline-separated, one per failed function)
         let raw = km_error_message() or "compilation failed"
-        let located = km_compiler::locate(errorLine(raw), gathered.deps, gathered.starts)
-        km_fail(located + snippet(located) + hint(located))
-    if target == "check" then
+        let shown: [string] = []
+        for one in km_compiler::dgSplit(raw, "\n") do
+            shown += [km_compiler::locate(errorLine(one), gathered.deps, gathered.starts)]
+        km_fail(km_compiler::diagReport(shown))
+    if target == "check" or target == "lint" then
         return                        // analysed clean; diagnostics already printed
     let asm = compiled or ""          // km_fail above does not return
 
@@ -71,108 +91,8 @@ void main(args)
     km_compiler::save(asm, outputPath)
 
 extern void km_fail(msg: string)
-
-// `s` contains `sub`
-fn has(s: string, sub: string) : bool
-    let i = 0
-    while i + sub.length <= s.length do
-        if s[i to i + sub.length] == sub then
-            return true
-        i += 1
-    return false
-
-// A "\n  = help: …" line for the common mistakes, or "".  Matches on the
-// message text, so a message with its own suggestion ("did you mean") is left alone.
-fn hint(msg: string) : string
-    let h = ""
-    if has(msg, "did you mean") then
-        h = ""
-    else if has(msg, "undefined name") then
-        h = "check the spelling, or declare the name with `let` before using it"
-    else if has(msg, "is not assignable to") then
-        h = "convert the value to the expected type, or change the declared type"
-    else if has(msg, "possibly null") then
-        h = "check `x != null` (or return early on `x == null`) before using it"
-    else if has(msg, "cannot reassign immutable") then
-        h = "declare the binding with `let` instead of `be` if it must change"
-    else if has(msg, "`break` outside a loop") then
-        h = "`break` is only valid inside a `while` or `for` loop"
-    else if has(msg, "must return a value") then
-        h = "add a `return` on every path through the function"
-    else if has(msg, "is private to") then
-        h = "it is only visible inside the class or module that declares it"
-    else if has(msg, "use of moved value") then
-        h = "the value was moved earlier; use it before the move or pass a copy"
-    if h == "" then
-        return ""
-    return "\n  = help: " + h
-
-fn spaces(n: int) : string
-    let out = ""
-    let i = 0
-    while i < n do
-        out = out + " "
-        i += 1
-    return out
-
-// A non-negative integer from the digits of s, or -1 when s is not all digits.
-fn digitsToInt(s: string) : int
-    if s.length == 0 then
-        return 0 - 1
-    let digits = "0123456789"
-    let v = 0
-    let i = 0
-    while i < s.length do
-        let d = 0
-        while d < 10 and digits[d] != s[i] do
-            d += 1
-        if d == 10 then
-            return 0 - 1
-        v = v * 10 + d
-        i += 1
-    return v
-
-// "\n  5 | source line\n    |     ^" for a located `path:line:col: error: …`
-// message — "" when the position or the file cannot be read.
-fn snippet(located: string) : string
-    let n = located.length
-    let e = 0 - 1
-    let i = 0
-    while i + 9 <= n and e < 0 do
-        if located[i to i + 9] == ": error: " then
-            e = i
-        i += 1
-    if e < 0 then
-        return ""
-    let c2 = e - 1
-    while c2 >= 0 and located[c2] != ":" do
-        c2 = c2 - 1
-    let c1 = c2 - 1
-    while c1 >= 0 and located[c1] != ":" do
-        c1 = c1 - 1
-    if c1 <= 0 then
-        return ""
-    let path = located[0 to c1]
-    let lineNo = digitsToInt(located[(c1 + 1) to c2])
-    let col = digitsToInt(located[(c2 + 1) to e])
-    if lineNo < 1 or col < 1 or not file::exists(path) then
-        return ""
-    let src = file::read_all(path)
-    let start = 0
-    let ln = 1
-    let m = src.length
-    while ln < lineNo and start < m do
-        if src[start] == "\n" then
-            ln += 1
-        start += 1
-    if ln != lineNo then
-        return ""
-    let end = start
-    while end < m and src[end] != "\n" do
-        end += 1
-    let num = string(lineNo)
-    let gutter = spaces(num.length)
-    return "\n" + gutter + " |\n" + num + " | " + src[start to end] + "\n" + gutter + " | " + spaces(col - 1) + "^"
+extern fn km_str_nl(s: string, start: int): int
+extern fn km_str_kw(s: string, start: int, kw: string): int
 
 // "3:7: msg" → "3:7: error: msg" (the position is mapped to its file
 // afterwards); a message with no leading position becomes "error: msg".
@@ -228,16 +148,15 @@ fn isSource(name: string) : bool
 
 // The name on the first `module <name>` line of `src`, or "".
 fn moduleOf(src: string) : string
-    let i = 0
     let lineStart = 0
     let n = src.length              // a strlen — measure once, not per char
-    while i <= n do
-        if i == n or src[i] == "\n" then
+    while lineStart <= n do
+        let i = km_str_nl(src, lineStart)
+        if km_str_kw(src, lineStart, "module ") == 1 then
             let m = moduleOnLine(src[lineStart to i])
             if m != "" then
                 return m
-            lineStart = i + 1
-        i += 1
+        lineStart = i + 1
     return ""
 
 fn moduleOnLine(line: string) : string
@@ -296,7 +215,7 @@ fn gather(rootPath: string, stdlibProbe: string) : GatherResult
             if resolved == null then
                 resolved = file::find(name, stdlibProbe)
             if resolved == null then
-                km_fail(p + ":" + importPos(src, name) + ": error: cannot find module '" + name + "'")
+                km_fail(km_compiler::diagReport([p + ":" + importPos(src, name) + ": error: cannot find module '" + name + "'"]))
             if resolved != null and not (resolved in seen) then
                 queue += [resolved]
 
@@ -364,7 +283,8 @@ fn newlines(src: string) : int
     let i = 0
     let n = src.length
     while i < n do
-        if src[i] == "\n" then
+        i = km_str_nl(src, i)
+        if i < n then
             c += 1
         i += 1
     return c
@@ -388,16 +308,15 @@ fn sourceTree(dir: string) : [string]
 // how the real keyword is parsed (parser.kmm's `parseLink`).
 fn linkTargets(src: string) : [string]
     let out: [string] = []
-    let i = 0
     let lineStart = 0
     let n = src.length              // a strlen — measure once, not per char
-    while i <= n do
-        if i == n or src[i] == "\n" then
+    while lineStart <= n do
+        let i = km_str_nl(src, lineStart)
+        if km_str_kw(src, lineStart, "link ") == 1 then
             let t = linkOnLine(src[lineStart to i])
             if t != "" then
                 out += [t]
-            lineStart = i + 1
-        i += 1
+        lineStart = i + 1
     return out
 
 fn linkOnLine(line: string) : string
@@ -430,16 +349,15 @@ fn linkOnLine(line: string) : string
 // `externLibIsPath`.
 fn externLinkTargets(src: string) : [string]
     let out: [string] = []
-    let i = 0
     let lineStart = 0
     let n = src.length              // a strlen — measure once, not per char
-    while i <= n do
-        if i == n or src[i] == "\n" then
+    while lineStart <= n do
+        let i = km_str_nl(src, lineStart)
+        if km_str_kw(src, lineStart, "extern ") == 1 then
             let t = externOnLine(src[lineStart to i])
             if t != "" then
                 out += [t]
-            lineStart = i + 1
-        i += 1
+        lineStart = i + 1
     return out
 
 fn externOnLine(line: string) : string
@@ -501,16 +419,15 @@ fn importNameCol(line: string) : int
 // Names on `import <name>` lines, in source order.
 fn importNames(src: string) : [string]
     let names: [string] = []
-    let i = 0
     let lineStart = 0
     let n = src.length              // a strlen — measure once, not per char
-    while i <= n do
-        if i == n or src[i] == "\n" then
+    while lineStart <= n do
+        let i = km_str_nl(src, lineStart)
+        if km_str_kw(src, lineStart, "import ") == 1 then
             let name = importOnLine(src[lineStart to i])
             if name != "" then
                 names += [name]
-            lineStart = i + 1
-        i += 1
+        lineStart = i + 1
     return names
 
 fn importOnLine(line: string) : string

@@ -55,6 +55,7 @@ private
     m_xgSyms: [string] = []
     m_xgTypes: [string] = []
     m_usesExportInit: bool = false  // reserve the once-flag in .bss
+    m_keepIdx: StrIndex = new StrIndex()   // hashes m_keepJumps
     m_keepJumps: [string] = []      // targets of `and`/`or` branches whose rax is read at the join
     m_pic: bool = false             // position-independent output (shared libraries only)
     m_dbgFiles: [string] = []       // KM_DEBUG: source file of each merged part
@@ -588,6 +589,65 @@ void X86Backend::binaryInt(op: string)
     else if op == ">>" then
         ins("sar rax, cl")
 
+mut X86Backend::normInt(k: string)
+    if k == "u8" then
+        ins("movzx eax, al")
+    else if k == "u16" then
+        ins("movzx eax, ax")
+    else if k == "u32" then
+        ins("mov eax, eax")
+    else if k == "i8" then
+        ins("movsx rax, al")
+    else if k == "i16" then
+        ins("movsx rax, ax")
+    else if k == "i32" then
+        ins("movsxd rax, eax")
+
+mut X86Backend::binaryIntU(op: string)
+    ins("mov rcx, rax")
+    ins("pop rax")
+    if op == ">>" then
+        ins("shr rax, cl")
+    else
+        ins("xor edx, edx")
+        ins("div rcx")
+        if op == "%" then
+            ins("mov rax, rdx")
+
+mut X86Backend::compareIntU(op: string)
+    ins("mov rcx, rax")
+    ins("pop rax")
+    ins("cmp rax, rcx")
+    let c = "setae"
+    if op == "<" then
+        c = "setb"
+    else if op == ">" then
+        c = "seta"
+    else if op == "<=" then
+        c = "setbe"
+    ins(c + " al")
+    ins("movzx eax, al")
+
+mut X86Backend::cvtUIntToFloat()
+    let big = newLabel()
+    let done = newLabel()
+    ins("test rax, rax")
+    ins("js " + big)
+    ins("cvtsi2sd xmm0, rax")
+    ins("jmp " + done)
+    label(big)
+    ins("mov rcx, rax")
+    ins("shr rax, 1")
+    ins("and ecx, 1")
+    ins("or rax, rcx")
+    ins("cvtsi2sd xmm0, rax")
+    ins("addsd xmm0, xmm0")
+    label(done)
+
+mut X86Backend::roundF32()
+    ins("cvtsd2ss xmm0, xmm0")
+    ins("cvtss2sd xmm0, xmm0")
+
 void X86Backend::compareInt(op: string)
     ins("mov rcx, rax")
     ins("pop rax")
@@ -982,10 +1042,12 @@ void X86Backend::branchIfNonzero(name: string)
 // the "keep" forms are identical to the plain ones on x86.
 void X86Backend::branchIfZeroKeep(name: string)
     m_keepJumps += [name]
+    m_keepIdx.add(name, 0)
     branchIfZero(name)
 
 void X86Backend::branchIfNonzeroKeep(name: string)
     m_keepJumps += [name]
+    m_keepIdx.add(name, 0)
     branchIfNonzero(name)
 
 // loop-variable in rax spilled by pushAcc(), bound in rax; exit when the
@@ -1571,32 +1633,25 @@ mut X86Backend::tryEnd()
 //  the pass repeats until nothing changes.
 
 extern fn km_str_find(s: string, sub: string): int
-extern fn km_str_starts(s: string, p: string): int
-extern fn km_str_ends(s: string, p: string): int
 
 // `line` contains `sub`
 fn asmHas(line: string, sub: string): bool
     return km_str_find(line, sub) >= 0
 
+extern fn km_str_starts(s: string, p: string): int
+extern fn km_str_ends(s: string, p: string): int
+extern fn km_asm_spanbad(s: string): int
+extern fn km_asm_peepstart(s: string): int
+
 fn asmStarts(line: string, p: string): bool
-    return km_str_starts(line, p) != 0
+    return km_str_starts(line, p) == 1
 
 fn asmEnds(line: string, p: string): bool
-    return km_str_ends(line, p) != 0
+    return km_str_ends(line, p) == 1
 
 // A line that may sit inside a spill span: straight-line code only.
 fn spanSafe(line: string): bool
-    if line.length == 0 or line[0] == "%" then
-        return false
-    if line[line.length - 1] == ':' then
-        return false
-    if asmStarts(line, "    j") then
-        return false
-    if asmHas(line, "rsp") or asmHas(line, "call") then
-        return false
-    if asmHas(line, "push") or asmHas(line, "pop") then
-        return false
-    return true
+    return km_asm_spanbad(line) == 0
 
 // Index of the first line at or after `start` equal to `stop`, provided
 // every line before it is span-safe; -1 otherwise.
@@ -1679,6 +1734,8 @@ mut X86Backend::peepholeAt(src: [string], i: int): [string]
     let n = #src
     let a = src[i]
     m_pSpan = 1
+    if km_asm_peepstart(a) == 0 then
+        return []
 
     // store then reload of the same slot: the reload is a no-op
     if i + 1 < n then
@@ -1716,7 +1773,7 @@ mut X86Backend::peepholeAt(src: [string], i: int): [string]
                 off = 12
             let target = br[off to br.length]
             let cc = jccOf(src[i + 1])
-            if cc != "" and src[i + 2] == "    movzx eax, al" and src[i + 3] == "    test rax, rax" and not (target in m_keepJumps) then
+            if cc != "" and src[i + 2] == "    movzx eax, al" and src[i + 3] == "    test rax, rax" and not m_keepIdx.has(target) then
                 let jump = cc
                 if isJe then
                     jump = jccInverse(cc)

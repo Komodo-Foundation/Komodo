@@ -163,14 +163,14 @@ A `let` with `be` may also carry a type: `let limit: int be 10`.
 | Type     | What it holds | Example |
 |----------|---------------|---------|
 | `int`    | 64-bit signed integer | `-42` |
-| `uint`   | unsigned integer | `7` |
+| `uint`   | unsigned 64-bit integer (same as `u64`); `u8`..`u64` and `i8`..`i64` are the fixed widths, see [Integers](integers.md) | `7` |
 | `float`  | IEEE-754 double | `3.14` |
-| `f32`    | single-precision float; computed as a double, 4 bytes only in C struct layouts | `2.5` |
+| `f32`    | single-precision float; every `f32` result is rounded to single precision | `2.5` |
 | `bool`   | truth value; prints as `1` or `0` | `true` |
 | `char`   | one character | `'K'` |
 | `string` | text | `"Komodo"` |
 
-`f32` and `float` mix freely. Nullable types are written `T?`, for example
+`f32` and `float` mix freely (a plain `float` operand makes the result `float`). Nullable types are written `T?`, for example
 `int?` or `string?`, and the value `null` fills them.
 
 ```km
@@ -451,7 +451,7 @@ second
 ```
 
 `case Type(field: value, name)` also matches struct values. See
-`examples/pattern_demo.km`.
+`tests/examples/pattern_demo.km`.
 
 ## Functions
 
@@ -541,7 +541,7 @@ A function with a body cannot read its extra arguments. The `...` form is
 meant for declared prototypes such as the standard library's.
 
 Free functions may also be overloaded on their parameter types. See
-`examples/overload_demo.km`.
+`tests/examples/overload_demo.km`.
 
 ## Top-level globals
 
@@ -667,7 +667,7 @@ These names need no `import`:
 | `join(parts, sep)` | joins a `[string]` with `sep` between the parts |
 | `assert(cond)` / `assert(cond, "message")` | throws if `cond` is false |
 | `copy(x)` | deep copy of a struct, class or array |
-| `data(arr)` | element pointer of an array, for passing a buffer to C; see `examples/ffi_struct.km` |
+| `data(arr)` | element pointer of an array, for passing a buffer to C; see `tests/examples/ffi_struct.km` |
 
 ```km
 import console
@@ -856,7 +856,9 @@ argument, recursively, and returns `null` when nothing matches. Check for
 ## Diagnostics
 
 The analyser checks a program before it is built. It reports three kinds of
-message.
+message. The examples below show the one-line form, which is what tools read;
+on a terminal the compiler prints a richer layout with a source snippet and an
+explanation, see [Diagnostics](../diagnostics.md).
 
 **Errors** stop compilation with a non-zero exit status. Most carry a
 location in the form `file:line:col: error: message`:
@@ -911,8 +913,8 @@ void main()
 example.km:2:5: error: `break` outside a loop
 ```
 
-Some errors have no location. A `fn` that mutates state and a missing return
-both print without one in the current build:
+A `fn` that mutates state and a missing return are reported at the
+function's declaration:
 
 ```km
 struct Box
@@ -927,7 +929,7 @@ void main()
 ```
 
 ```text
-error: pure `fn poke` mutates state — declare it `mut`
+example.km:4:1: error: pure `fn poke` mutates state — declare it `mut`
 ```
 
 ```km
@@ -940,7 +942,7 @@ void main()
 ```
 
 ```text
-error: function 'pick' must return a value on every path
+example.km:1:1: error: function 'pick' must return a value on every path
 ```
 
 **Warnings** (lint) flag code that is legal but probably wrong. They are

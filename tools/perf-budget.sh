@@ -6,9 +6,13 @@
 #   KM_PERF_SLACK=2.5 tools/perf-budget.sh    scale the TIME budgets (CI is noisy)
 #
 # Budgets are ceilings, set ~30% above the numbers measured when they were
-# introduced (2026-11: kmc 1.07 MB, self-compile 0.57 s, hello cold 0.14 s,
-# hello binary 73 KB, 13.2k compiler lines). Lower them when you make
-# something faster; raise one only with a reason in the commit message.
+# introduced. Baseline 2026-11 (feat/compile-speed, best of 5, 13.2k lines):
+#   kmc 1.07 MB, self-compile 0.28-0.30 s (was 0.50 s), hello build+run with a warm
+#   cache 0.04 s (was 0.09 s), komodo check 0.015 s, hello binary 73 KB.
+# Lower them when you make something faster; raise one only with a reason in the
+# commit message.  Profile with tools/km-prof (SIGPROF sampler; perf is blocked
+# on some machines) before guessing: the wins so far were all linear scans
+# (`in` over arrays, per-char slicing, substring tests) in hot loops.
 set -uo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$here" || exit 1
@@ -41,14 +45,16 @@ check "compiler source lines"  "$(cat main.km modules/*.kmm modules/*/*.kmm | wc
 check "bootstrap seed size"    "$(stat -c %s bootstrap/main.km.asm.gz)"    200000  bytes
 
 t="$(best ./kmc main.km x86)"
-check "kmc compiles itself"    "$t" "$(scaled 0.80)" s
+check "kmc compiles itself"    "$t" "$(scaled 0.39)" s
 
 d="$(mktemp -d)"; trap 'rm -rf "$d"' EXIT
 printf 'void main()\n    print("hi")\n' > "$d/main.km"
 ( cd "$d" && "$here/komodo" -q >/dev/null 2>&1 )            # warm the runtime cache
 rm -rf "$d/.komodo"
 t="$( cd "$d" && { /usr/bin/time -f '%e' "$here/komodo" -q >/dev/null; } 2>&1 )"
-check "hello: build+run (cold)" "$t" "$(scaled 0.25)" s
+check "hello: build+run (cold)" "$t" "$(scaled 0.07)" s
+t="$( cd "$d" && { /usr/bin/time -f '%e' "$here/komodo" -q >/dev/null; } 2>&1 )"
+check "hello: warm re-run"     "$t" "$(scaled 0.06)" s
 ( cd "$d" && "$here/komodo" build -q -o hello >/dev/null 2>&1 )
 check "hello binary size"      "$(stat -c %s "$d/hello")"                  100000  bytes
 exit $fail

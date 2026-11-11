@@ -39,7 +39,7 @@ existing code over new layers, and say why in the commit if you raise a budget.
 
 ## Tests
 
-- `examples/<name>.km` + `<name>.expected`: a program and its exact output. It
+- `tests/examples/<name>.km` + `<name>.expected`: a program and its exact output. It
   runs on the x86, stackvm, c and wasm targets; opt out of a target with a
   `// (c: skip — reason)` comment.
 - `tests/sema/<name>.km` + `<name>.experr`: a program that must be rejected, with

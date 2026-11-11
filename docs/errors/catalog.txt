@@ -1,0 +1,2000 @@
+# Komodo diagnostics catalog — the single source of every error code.
+#
+# tools/gen-diag.py turns this file into
+#   modules/support/diag_catalog.kmm   (what the compiler's renderer reads)
+#   docs/errors/Kxxxx.md               (what `komodo explain Kxxxx` prints)
+#
+# Entry format (first matching entry wins, so put specific patterns first):
+#   @ K0001 short title
+#   match: message pattern; `*` stands for any text, and is captured as {1}, {2}, ...
+#   why:   1-3 plain sentences: which rule was broken and why the rule exists
+#   help:  how to fix it (may use {1} {2} ...); the compiler's own "did you
+#          mean" suggestion is shown separately, in addition
+#   span:  block  -> underline the whole indented block that starts at the position
+#   mode:  strict -> the example needs `komodo --strict`
+#          lint   -> the warning comes only from `komodo lint`
+#   file NAME:     a companion file the example imports (indented 2 spaces)
+#   bad: / fix:    a minimal wrong program and its corrected form (indented 2
+#                  spaces); tests/diag/run.sh compiles every one of them
+#   note:  free text appended to the page (used when no example can be given)
+
+# ── names ────────────────────────────────────────────────────────────
+
+@ K0001 undefined name
+match: undefined name '*'
+why: The compiler looked for a variable, parameter, macro or function called '{1}' and found none in scope. Names must be declared with `let` (or as parameters) before the line that uses them.
+help: Check the spelling, or declare '{1}' with `let {1} = ...` before this line.
+bad:
+  void main()
+      let count = 10
+      print(cont)
+fix:
+  void main()
+      let count = 10
+      print(count)
+
+@ K0002 undefined module function
+match: undefined function '*::*'
+why: The module '{1}' was imported, but it has no member named '{2}'. A `module::name` call can only reach members the module declares.
+help: Check the spelling of '{2}' in the module, or add it to the module's `public` section.
+file secret.kmm:
+  module secret
+  public
+      fn open(): int
+          return 7
+bad:
+  import secret
+
+  void main()
+      print(secret::opn())
+fix:
+  import secret
+
+  void main()
+      print(secret::open())
+
+@ K0003 assignment to undeclared variable
+match: assignment to undeclared variable '*'
+why: An assignment can only change a variable that already exists. '{1}' was never declared, so there is nothing to assign to.
+help: Declare it first with `let {1} = ...`.
+bad:
+  void main()
+      total = 5
+      print(total)
+fix:
+  void main()
+      let total = 5
+      print(total)
+
+@ K0004 unknown type in `new`
+match: `new` of unknown type '*'
+why: `new` builds a value of a struct or class, and the compiler has no struct, class or enum called '{1}'.
+help: Check the spelling, or declare `struct {1}` (or `class {1}`) above `main`.
+bad:
+  struct Point
+      x: int
+
+  void main()
+      let p = new Pont(1)
+      print(p.x)
+fix:
+  struct Point
+      x: int
+
+  void main()
+      let p = new Point(1)
+      print(p.x)
+
+@ K0005 no such field
+match: type '*' has no field '*'
+why: The struct or class '{1}' declares a fixed set of fields, and '{2}' is not one of them. Fields cannot be added to a value after the fact.
+help: Check the spelling, or add a `{2}` field to '{1}'.
+bad:
+  struct Point
+      x: int
+      y: int
+
+  void main()
+      let p = new Point(1, 2)
+      print(p.z)
+fix:
+  struct Point
+      x: int
+      y: int
+
+  void main()
+      let p = new Point(1, 2)
+      print(p.y)
+
+@ K0006 no such method
+match: type '*' has no method '*'
+why: A method call `value.name(...)` needs a method called 'name' on the value's class. '{1}' has no method '{2}'.
+help: Check the spelling, or add `{2}` to the class '{1}'. Structs hold fields only.
+bad:
+  class Counter
+      n: int = 0
+      mut bump()
+          n += 1
+
+  void main()
+      let c = new Counter()
+      c.bumb()
+fix:
+  class Counter
+      n: int = 0
+      mut bump()
+          n += 1
+
+  void main()
+      let c = new Counter()
+      c.bump()
+
+@ K0007 unknown type in a pattern
+match: struct pattern names unknown type '*'
+why: A `case Type(...)` pattern names the struct it matches, and there is no struct called '{1}'.
+help: Check the spelling of the type name.
+bad:
+  struct P
+      x: int
+
+  void main()
+      let p = new P(1)
+      match p
+          case Q(x: 1)
+              print("one")
+          else
+              print("other")
+fix:
+  struct P
+      x: int
+
+  void main()
+      let p = new P(1)
+      match p
+          case P(x: 1)
+              print("one")
+          else
+              print("other")
+
+@ K0008 unknown base type
+match: type '*' inherits unknown type '*'
+why: A type can only extend a struct or class that is declared somewhere in the program. '{2}' is not.
+help: Check the spelling of the base type, or declare it.
+note: The compiler normally reports this situation as [K0086](K0086.md), which is checked first.
+
+@ K0009 `is` needs a type
+match: `is` expects a known type name on the right
+why: `x is Type` tests the runtime type of x, so its right-hand side must be the name of a struct or class, not an expression.
+help: Write a type name after `is`, for example `x is Circle`.
+bad:
+  struct Circle
+      r: int
+
+  void main()
+      let c = new Circle(1)
+      print(c is 5)
+fix:
+  struct Circle
+      r: int
+
+  void main()
+      let c = new Circle(1)
+      print(c is Circle)
+
+@ K0010 private to class
+match: '*' is private to class '*'
+why: Members in a class's `private` section can only be used by that class's own methods. This keeps the class free to change them without breaking callers.
+help: Use a public method of '{2}' instead, or move '{1}' to the `public` section.
+bad:
+  class Counter
+  public
+      constructor(start: int)
+          m_n = start
+      fn peek(): int
+          return m_n
+  private
+      m_n: int = 0
+
+  void main()
+      let c = new Counter(3)
+      print(c.m_n)
+fix:
+  class Counter
+  public
+      constructor(start: int)
+          m_n = start
+      fn peek(): int
+          return m_n
+  private
+      m_n: int = 0
+
+  void main()
+      let c = new Counter(3)
+      print(c.peek())
+
+@ K0011 private to module
+match: '*' is private to module '*'
+why: Members in a module's `private` section can be used only from inside that module. Callers see just the `public` section, so the module can change the rest freely.
+help: Call a `public` member of '{2}' instead, or move '{1}' to its `public` section.
+file secret.kmm:
+  module secret
+  public
+      fn open(): int
+          return key()
+  private
+      fn key(): int
+          return 7
+bad:
+  import secret
+
+  void main()
+      print(secret::key())
+fix:
+  import secret
+
+  void main()
+      print(secret::open())
+
+@ K0012 module not found
+match: cannot find module '*'
+why: `import {1}` loads a file called `{1}.kmm`. The compiler searched the importing file's directory tree and then its own standard library, and found neither.
+help: Check the spelling, or create `{1}.kmm` next to your program. Standard modules include console, math, string, file and os.
+bad:
+  import nosuch
+
+  void main()
+      print(1)
+fix:
+  import console
+
+  void main()
+      console.print(1)
+
+@ K0013 source file not found
+match: file not found: *
+why: The file you asked the compiler to build does not exist at that path.
+help: Check the path and the current directory.
+note: Run `komodo path/to/file.km` with the path of an existing source file.
+
+# ── types ────────────────────────────────────────────────────────────
+
+@ K0020 wrong argument type
+match: argument * to '*': type '*' is not assignable to '*'
+why: Each argument must have the type the function declared for that parameter. A value of type '{3}' cannot stand in for '{4}', because the function body would then treat it as the wrong kind of value.
+help: Pass a value of type '{4}', or convert it first (for example `string(x)` or `int(x)`).
+bad:
+  fn add(a: int, b: int): int
+      return a + b
+
+  void main()
+      print(add("x", 2))
+fix:
+  fn add(a: int, b: int): int
+      return a + b
+
+  void main()
+      print(add(1, 2))
+
+@ K0021 wrong handle type
+match: argument * to extern '*': type '*' is not assignable to handle type '*'
+why: An `extern type` is an opaque C handle. Handles are distinct types: a Window is not a Renderer, and neither is an int, so the compiler refuses to mix them up.
+help: Pass a value of type '{4}', obtained from the C function that creates one.
+bad:
+  extern type Window
+  extern type Renderer
+  extern fn make_window(): Window
+  extern void use_renderer(r: Renderer)
+
+  void main()
+      let w = make_window()
+      use_renderer(w)
+fix:
+  extern type Window
+  extern type Renderer
+  extern fn make_renderer(): Renderer
+  extern void use_renderer(r: Renderer)
+
+  void main()
+      let r = make_renderer()
+      use_renderer(r)
+
+@ K0022 incompatible extern argument
+match: argument * to extern '*': '*' is not compatible with '*'
+why: Arguments to a C function must match the C parameter's type, because the call passes the raw value across the C ABI.
+help: Pass a value of type '{4}'.
+bad:
+  extern fn takes_int(n: int): int
+
+  void main()
+      print(takes_int(1.5))
+fix:
+  extern fn takes_int(n: int): int
+
+  void main()
+      print(takes_int(7))
+
+@ K0023 wrong field type
+match: field '*' of '*': type '*' is not assignable to '*'
+why: `new Type(...)` fills the fields in order, and each value must have the type the field was declared with.
+help: Give '{2}.{1}' a value of type '{4}'.
+bad:
+  struct Point
+      x: int
+      y: int
+
+  void main()
+      let p = new Point(1, "two")
+      print(p.x)
+fix:
+  struct Point
+      x: int
+      y: int
+
+  void main()
+      let p = new Point(1, 2)
+      print(p.x)
+
+@ K0024 type mismatch
+match: *: type '*' is not assignable to '*'
+why: A value was used where a different type is required. Komodo does not convert between types silently, because that hides bugs.
+help: Use a value of type '{3}', or convert it explicitly (`string(x)`, `int(x)`).
+bad:
+  fn half(n: int): int
+      return n / 2
+
+  fn name(): int
+      return "ada"
+
+  void main()
+      print(half(4), name())
+fix:
+  fn half(n: int): int
+      return n / 2
+
+  fn name(): string
+      return "ada"
+
+  void main()
+      print(half(4), name())
+
+@ K0025 cannot add these types
+match: cannot add '*' and '*' (use string(x) or an interpolated string)*
+why: `+` adds two numbers or joins two strings, but never mixes a string with a number. Joining them would need a conversion the compiler will not guess.
+help: Convert the number first with `string(x)`, or use an interpolated string such as `n = {n}`.
+bad:
+  void main()
+      let n = 3
+      print("n is " + n)
+fix:
+  void main()
+      let n = 3
+      print("n is " + string(n))
+
+@ K0026 operator on a handle
+match: operator '*' is not defined for the opaque handle type '*'
+why: An `extern type` handle is just an opaque pointer owned by C code, so arithmetic and ordering on it make no sense.
+help: Pass the handle to the C function that works on it.
+bad:
+  extern type Window
+  extern fn make_window(): Window
+
+  void main()
+      let w = make_window()
+      print(w + 1)
+fix:
+  extern type Window
+  extern fn make_window(): Window
+
+  void main()
+      let w = make_window()
+      print(w)
+
+@ K0027 `in` with a string
+match: `in` on a string wants a string / char on the left, got '*'
+why: `x in "text"` asks whether x occurs inside the string, so x must itself be text or a single character.
+help: Convert the left side with `string(x)`.
+bad:
+  void main()
+      print(5 in "a5b")
+fix:
+  void main()
+      print(string(5) in "a5b")
+
+@ K0028 `in` with an array
+match: `in`: '*' can't be an element of '*'
+why: `x in array` tests membership, so x must have the array's element type. Here the two types differ, so the answer could never be true.
+help: Look for a value of the array's element type.
+bad:
+  void main()
+      let names = ["ada", "bo"]
+      print(3 in names)
+fix:
+  void main()
+      let names = ["ada", "bo"]
+      print("bo" in names)
+
+@ K0029 `in` right-hand side
+match: `in` wants a string or an array on the right, got '*'
+why: `in` searches inside a collection. Its right-hand side must be a string (substring test) or an array (element test).
+help: Put an array or a string after `in`.
+bad:
+  void main()
+      let n = 5
+      print(n in 42)
+fix:
+  void main()
+      let n = 5
+      print(n in [4, 5, 6])
+
+@ K0030 field access on a non-object
+match: field access on a non-object (type '*')
+why: The `.name` syntax reads a field of a struct or class. Values of type '{1}' have no fields.
+help: Check that the value in front of the `.` is a struct or class instance.
+bad:
+  void main()
+      let n = 5
+      print(n.value)
+fix:
+  struct Box
+      value: int
+
+  void main()
+      let n = new Box(5)
+      print(n.value)
+
+@ K0031 field assignment on a non-object
+match: field assignment on a non-object (type '*')
+why: `a.b = x` writes a field of a struct or class, but the value in front of the `.` has type '{1}', which has no fields.
+help: Check that the value in front of the `.` is a struct or class instance.
+bad:
+  void main()
+      let n = 5
+      n.value = 6
+fix:
+  struct Box
+      value: int
+
+  void main()
+      let n = new Box(5)
+      n.value = 6
+
+@ K0032 int() argument
+match: 'int' expects a number, got '*'
+why: `int(x)` converts a float to an integer, truncating toward zero. It does not parse text.
+help: Pass a float or an int.
+bad:
+  void main()
+      print(int("42"))
+fix:
+  void main()
+      print(int(42.9))
+
+# ── calls ────────────────────────────────────────────────────────────
+
+@ K0040 too few arguments to a variadic function
+match: '*' takes at least * argument(s), got *
+why: A variadic function still needs all of its fixed parameters. Only the extra arguments after them are optional.
+help: Pass at least {2} argument(s).
+bad:
+  extern fn printf(fmt: string, ...)
+
+  void main()
+      printf()
+fix:
+  extern fn printf(fmt: string, ...)
+
+  void main()
+      printf("hi\n")
+
+@ K0041 wrong number of arguments
+match: '*' takes * argument(s), got *
+why: A call must supply exactly the parameters the function declares (trailing parameters with a default value may be left out).
+help: Pass {2} argument(s), as '{1}' declares.
+bad:
+  fn add(a: int, b: int): int
+      return a + b
+
+  void main()
+      print(add(1))
+fix:
+  fn add(a: int, b: int): int
+      return a + b
+
+  void main()
+      print(add(1, 2))
+
+@ K0042 wrong number of method arguments
+match: method '*.*' takes * argument(s), got *
+why: A method call must supply exactly the parameters the method declares.
+help: Pass {3} argument(s) to '{1}.{2}'.
+bad:
+  class Counter
+      n: int = 0
+      mut add(by: int)
+          n += by
+
+  void main()
+      let c = new Counter()
+      c.add()
+fix:
+  class Counter
+      n: int = 0
+      mut add(by: int)
+          n += by
+
+  void main()
+      let c = new Counter()
+      c.add(2)
+
+@ K0043 wrong number of constructor arguments
+match: constructor '*' takes * argument(s), got *
+why: `new` calls the class's constructor, which declares how many values it needs.
+help: Pass {2} argument(s) to `new {1}(...)`.
+bad:
+  class Counter
+  public
+      constructor(start: int)
+          m_n = start
+  private
+      m_n: int = 0
+
+  void main()
+      let c = new Counter()
+fix:
+  class Counter
+  public
+      constructor(start: int)
+          m_n = start
+  private
+      m_n: int = 0
+
+  void main()
+      let c = new Counter(1)
+
+@ K0044 too many values for `new`
+match: `new *` given more values than it has fields
+why: `new Type(a, b, ...)` fills the fields in declaration order. There are more values than fields, so some value has nowhere to go.
+help: Remove the extra values, or add fields to '{1}'.
+bad:
+  struct Point
+      x: int
+      y: int
+
+  void main()
+      let p = new Point(1, 2, 3)
+      print(p.x)
+fix:
+  struct Point
+      x: int
+      y: int
+
+  void main()
+      let p = new Point(1, 2)
+      print(p.x)
+
+@ K0045 assert arguments
+match: 'assert' takes a condition and an optional message, got * argument(s)
+why: `assert(cond)` and `assert(cond, "message")` are the only forms.
+help: Write `assert(condition)` or `assert(condition, "what went wrong")`.
+bad:
+  void main()
+      assert()
+fix:
+  void main()
+      assert(1 + 1 == 2, "arithmetic works")
+
+@ K0046 builtin takes one argument
+match: '*' takes exactly one argument
+why: `int(x)` and `copy(x)` convert or copy exactly one value.
+help: Pass a single argument.
+bad:
+  void main()
+      print(int(1.5, 2.5))
+fix:
+  void main()
+      print(int(1.5))
+
+@ K0047 copy of a handle
+match: cannot `copy` the opaque handle type '*'
+why: An `extern type` handle points at memory owned by C code, so a deep copy would not duplicate the real object.
+help: Ask the C library for a new handle instead.
+bad:
+  extern type Window
+  extern fn make_window(): Window
+
+  void main()
+      let w = make_window()
+      let v = copy(w)
+fix:
+  extern type Window
+  extern fn make_window(): Window
+
+  void main()
+      let w = make_window()
+      let v = make_window()
+
+# ── null safety ──────────────────────────────────────────────────────
+
+@ K0050 possibly null operand
+match: * operand of '*' is possibly null
+why: The operand has a nullable type (`T?`), so it may hold `null` at run time, and arithmetic on null is meaningless. The compiler makes you handle the null case before using the value.
+help: Test it first, for example `if x != null then ...`, or give it a default.
+bad:
+  fn maybe(n: int): int?
+      if n > 0 then
+          return n
+      return null
+
+  void main()
+      let x = maybe(0)
+      print(x + 1)
+fix:
+  fn maybe(n: int): int?
+      if n > 0 then
+          return n
+      return null
+
+  void main()
+      let x = maybe(0)
+      if x != null then
+          print(x + 1)
+
+@ K0051 possibly null receiver
+match: *possibly null — narrow it before calling '*'
+why: Calling a method on a nullable value would crash when the value is `null`. The compiler asks you to check first.
+help: Wrap the call in `if value != null then ...`.
+bad:
+  class Box
+      n: int = 0
+      fn get(): int
+          return n
+
+  fn find(k: int): Box?
+      if k > 0 then
+          return new Box(k)
+      return null
+
+  void main()
+      let b = find(0)
+      print(b.get())
+fix:
+  class Box
+      n: int = 0
+      fn get(): int
+          return n
+
+  fn find(k: int): Box?
+      if k > 0 then
+          return new Box(k)
+      return null
+
+  void main()
+      let b = find(0)
+      if b != null then
+          print(b.get())
+
+@ K0052 possibly null field access
+match: in '*': value of type '*' is possibly null — narrow it before reading '.*'
+why: Reading a field of a nullable value would crash when the value is `null`.
+help: Check `value != null` before reading '.{3}'.
+bad:
+  struct Box
+      n: int
+
+  fn find(k: int): Box?
+      if k > 0 then
+          return new Box(k)
+      return null
+
+  void main()
+      let b = find(0)
+      print(b.n)
+fix:
+  struct Box
+      n: int
+
+  fn find(k: int): Box?
+      if k > 0 then
+          return new Box(k)
+      return null
+
+  void main()
+      let b = find(0)
+      if b != null then
+          print(b.n)
+
+@ K0053 possibly null index target
+match: value of type '*' is possibly null — narrow it before indexing
+why: Indexing a nullable array or string would crash when the value is `null`.
+help: Check `value != null` before indexing it.
+bad:
+  fn find(k: int): [int]?
+      if k > 0 then
+          return [k]
+      return null
+
+  void main()
+      let xs = find(0)
+      print(xs[0])
+fix:
+  fn find(k: int): [int]?
+      if k > 0 then
+          return [k]
+      return null
+
+  void main()
+      let xs = find(0)
+      if xs != null then
+          print(xs[0])
+
+# ── control flow and functions ───────────────────────────────────────
+
+@ K0060 break outside a loop
+match: `break` outside a loop
+why: `break` leaves the nearest enclosing `while` or `for` loop, so it needs one around it.
+help: Put the `break` inside a loop, or use `return` to leave a function.
+bad:
+  void main()
+      break
+fix:
+  void main()
+      while true do
+          break
+
+@ K0061 continue outside a loop
+match: `continue` outside a loop
+why: `continue` jumps to the next iteration of the nearest enclosing `while` or `for` loop, so it needs one around it.
+help: Put the `continue` inside a loop.
+bad:
+  void main()
+      continue
+fix:
+  void main()
+      for i = 1 to 3
+          if i == 2 then continue
+          print(i)
+
+@ K0062 return value from a void function
+match: a void function cannot return a value
+why: A function declared `void` returns nothing, so `return` may not carry a value in it.
+help: Remove the value, or declare the function with a return type, for example `fn f(): int`.
+bad:
+  void show()
+      return 5
+
+  void main()
+      show()
+fix:
+  fn show(): int
+      return 5
+
+  void main()
+      print(show())
+
+@ K0063 missing return value
+match: a value function must return a value
+why: A function declared with a return type must hand a value back on every `return`; a bare `return` is only for `void` functions.
+help: Write `return <value>`.
+bad:
+  fn five(): int
+      return
+
+  void main()
+      print(five())
+fix:
+  fn five(): int
+      return 5
+
+  void main()
+      print(five())
+
+@ K0064 missing return on some path
+match: function '*' must return a value on every path
+span: block
+why: A function with a return type must end in a `return` (or `throw`) no matter which branch runs. Here control can reach the end of '{1}' without returning anything.
+help: Add a final `return`, or an `else` branch that returns.
+bad:
+  fn pick(n: int): int
+      if n > 0 then
+          return 1
+
+  void main()
+      print(pick(3))
+fix:
+  fn pick(n: int): int
+      if n > 0 then
+          return 1
+      return 0
+
+  void main()
+      print(pick(3))
+
+# ── mutability ───────────────────────────────────────────────────────
+
+@ K0070 assignment to a macro
+match: cannot assign to macro '*' (declared with be)
+why: `let NAME be value` declares a compile-time macro: every use of the name is replaced by the value, so there is no variable to assign to.
+help: Declare it with `let {1} = ...` if it must change.
+bad:
+  void main()
+      let limit be 10
+      limit = 11
+fix:
+  void main()
+      let limit = 10
+      limit = 11
+      print(limit)
+
+@ K0071 assignment to a fixed name
+match: cannot reassign immutable binding '*' (declared with `be`)
+why: Some names are fixed once and cannot be assigned to: names declared with `be`, `self`, and the counter of a `for` loop, which the loop itself advances. Assigning to one would change something the language relies on.
+help: Use a separate variable for the value that changes: `let {1}2 = ...`.
+bad:
+  void main()
+      for i = 1 to 3
+          i = 5
+fix:
+  void main()
+      for i = 1 to 3
+          let j = i + 1
+          print(j)
+
+@ K0072 pure function mutates state
+match: pure `fn *` mutates state — declare it `mut`
+span: block
+why: A `fn` promises not to change anything its caller can see, which lets callers rely on it. Writing a field or an array element breaks that promise.
+help: Declare it `mut {1}` (or `void`) if it is meant to change state.
+bad:
+  struct Box
+      v: int = 0
+
+  fn poke(b: Box): int
+      b.v = 9
+      return b.v
+
+  void main()
+      print(poke(new Box()))
+fix:
+  struct Box
+      v: int = 0
+
+  mut poke(b: Box): int
+      b.v = 9
+      return b.v
+
+  void main()
+      print(poke(new Box()))
+
+@ K0073 pure function calls a procedure
+match: a pure `fn` cannot call the void procedure '*'
+why: A `fn` must not change anything visible, but a `void` procedure exists to cause effects. Calling one from a `fn` would hide those effects.
+help: Make the caller `void` or `mut`, or make '{1}' a `fn`.
+bad:
+  void log(msg: string)
+      print(msg)
+
+  fn twice(n: int): int
+      log("twice")
+      return n * 2
+
+  void main()
+      print(twice(2))
+fix:
+  void log(msg: string)
+      print(msg)
+
+  void twice(n: int)
+      log("twice")
+      print(n * 2)
+
+  void main()
+      twice(2)
+
+@ K0074 macro without a value
+match: `let * be` needs a value
+why: `let NAME be value` defines a macro and the value is what the name expands to.
+help: Write `let {1} be <expression>`.
+bad:
+  void main()
+      let size be
+      print(size)
+fix:
+  void main()
+      let size be 4
+      print(size)
+
+# ── declarations ─────────────────────────────────────────────────────
+
+@ K0080 duplicate function
+match: duplicate function '*'
+why: Two functions share the name '{1}' and the compiler cannot tell them apart.
+help: Rename one of them, or give them different parameter types to overload.
+note: Two free functions with the same name are treated as overloads, so the common case is reported as [K0123](K0123.md). This code is for other name collisions.
+
+@ K0081 duplicate type
+match: duplicate type '*'
+why: A struct, class or enum called '{1}' is declared more than once, so the name would mean two things.
+help: Rename one of the types, or delete the duplicate.
+bad:
+  struct Point
+      x: int
+
+  struct Point
+      y: int
+
+  void main()
+      print(1)
+fix:
+  struct Point
+      x: int
+
+  struct Point3
+      y: int
+
+  void main()
+      print(1)
+
+@ K0082 duplicate macro
+match: duplicate macro '*'
+why: Two top-level macros are both called '{1}', so uses of the name would be ambiguous.
+help: Rename or delete one of them.
+bad:
+  let N be 1
+  let N be 2
+
+  void main()
+      print(N)
+fix:
+  let N be 1
+
+  void main()
+      print(N)
+
+@ K0083 duplicate global
+match: duplicate top-level name '*'
+why: '{1}' is declared at top level more than once, so the name would mean two things.
+help: Rename or delete one of the declarations.
+bad:
+  let total = 0
+  let total = 1
+
+  void main()
+      print(total)
+fix:
+  let total = 0
+
+  void main()
+      print(total)
+
+@ K0084 template shares a name
+match: template '*' cannot share its name with another '*' declaration (a template does not overload)
+why: A function without parameter types is a template: one body that is compiled once for every type it is called with. That cannot be combined with a typed function of the same name.
+help: Rename one of the two, or give all of them parameter types.
+bad:
+  fn twice(x: int): int
+      return x * 2
+
+  fn twice(x)
+      return x + x
+
+  void main()
+      print(twice(3))
+fix:
+  fn twice(x)
+      return x + x
+
+  void main()
+      print(twice(3))
+
+@ K0085 global needs a type or value
+match: top-level '*' needs a type annotation or an initialiser
+why: A global variable needs either a starting value or a declared type, so the compiler can tell what it holds.
+help: Write `let {1}: int = 0` or `let {1} = 0`.
+bad:
+  let total
+
+  void main()
+      print(1)
+fix:
+  let total = 0
+
+  void main()
+      print(total)
+
+@ K0086 unknown or cyclic base type
+match: cyclic or unresolved inheritance near '*'
+why: A type can only extend a struct or class that exists, and a chain of base types must end at one that extends nothing. Here a base type is missing (often a typo), or two types extend each other in a loop.
+help: Check the spelling of the base type after the `:`, declare it, or break the cycle.
+bad:
+  struct Circle : Shap
+      r: int
+
+  void main()
+      print(1)
+fix:
+  struct Shape
+      tag: int = 0
+
+  struct Circle : Shape
+      r: int = 0
+
+  void main()
+      print(1)
+
+@ K0087 abstract instantiation
+match: cannot instantiate abstract type '*'
+why: An `abstract` type is only a base for other types and has no complete value of its own.
+help: Create one of its concrete subtypes instead.
+bad:
+  abstract struct Shape
+      tag: int
+
+  void main()
+      let s = new Shape(1)
+fix:
+  abstract struct Shape
+      tag: int
+
+  struct Circle : Shape
+      r: int
+
+  void main()
+      let s = new Circle(0, 1)
+      print(s.r)
+
+@ K0088 constructing a handle
+match: cannot construct `extern type *` — it is an opaque C handle; obtain one from a C function
+why: An `extern type` stands for something C code creates and owns, so Komodo cannot build one with `new`.
+help: Call the C function that returns the handle.
+bad:
+  extern type Window
+
+  void main()
+      let w = new Window()
+fix:
+  extern type Window
+  extern fn make_window(): Window
+
+  void main()
+      let w = make_window()
+
+# ── default parameter values ─────────────────────────────────────────
+
+@ K0090 defaults on the wrong kind of function
+match: default parameter values are only allowed on free functions with a body
+why: Default values are filled in at the call site, which only works for plain functions that have a body. Methods, constructors and C prototypes cannot take them.
+help: Remove the default, or move the logic into a free function.
+bad:
+  class Counter
+      n: int = 0
+      mut bump(by: int = 1)
+          n += by
+
+  void main()
+      let c = new Counter()
+      c.bump()
+fix:
+  class Counter
+      n: int = 0
+      mut bump(by: int)
+          n += by
+
+  void main()
+      let c = new Counter()
+      c.bump(1)
+
+@ K0091 defaults on an overloaded function
+match: overloaded function '*' cannot have default parameter values
+why: Overloads are chosen by the number and types of the arguments. Defaults would make several overloads match the same call.
+help: Remove the defaults, or give the functions different names.
+bad:
+  fn f(a: int, b: int = 1): int
+      return a + b
+
+  fn f(a: string): string
+      return a
+
+  void main()
+      print(f(1))
+fix:
+  fn f(a: int, b: int): int
+      return a + b
+
+  fn f(a: string): string
+      return a
+
+  void main()
+      print(f(1, 1))
+
+@ K0092 default out of order
+match: parameter '*' needs a default value, because it follows a parameter that has one
+why: When a call leaves arguments out, the missing ones must be the last ones. So once a parameter has a default, every parameter after it needs one too.
+help: Give '{1}' a default, or move the defaulted parameters to the end.
+bad:
+  fn f(a: int = 1, b: int): int
+      return a + b
+
+  void main()
+      print(f(1, 2))
+fix:
+  fn f(b: int, a: int = 1): int
+      return a + b
+
+  void main()
+      print(f(2))
+
+@ K0093 default must be a literal
+match: default value of parameter '*' must be a literal
+why: A default is copied into each call that omits the argument, so it must be a plain literal such as 3, "x" or true.
+help: Use a literal, or compute the value inside the function.
+bad:
+  fn f(a: int, b: int = 1 + 1): int
+      return a + b
+
+  void main()
+      print(f(1))
+fix:
+  fn f(a: int, b: int = 2): int
+      return a + b
+
+  void main()
+      print(f(1))
+
+# ── export and extern ────────────────────────────────────────────────
+
+@ K0100 export fn main
+match: `export fn main` is not allowed*
+why: `main` is the entry point of a Komodo program, and the C runtime already calls it. Exporting a function with that name would clash.
+help: Export a function with a different name.
+bad:
+  export fn main(): int
+      return 0
+fix:
+  export fn run(): int
+      return 0
+
+@ K0101 export overloaded
+match: export fn '*' cannot be overloaded*
+why: Each exported function becomes one C symbol, and a C symbol names exactly one function.
+help: Give each exported function a different name.
+bad:
+  export fn f(a: int): int
+      return a
+
+  export fn f(a: string): int
+      return 1
+fix:
+  export fn f(a: int): int
+      return a
+
+  export fn g(a: string): int
+      return 1
+
+@ K0102 export parameter untyped
+match: export fn '*': parameter '*' needs a type annotation
+why: C callers must know every parameter's exact type, so an exported function cannot leave any untyped.
+help: Write `{2}: int` (or the type it should have).
+bad:
+  export fn twice(x): int
+      return 2
+fix:
+  export fn twice(x: int): int
+      return x * 2
+
+@ K0103 export parameter type
+match: export fn '*': parameter '*' has type '*', which can't cross the C ABI*
+why: Only machine-sized values can be passed to C directly: int and sized ints, bool, float, f32, string, or an `extern type` handle. Arrays and Komodo structs have a layout C does not know.
+help: Use one of the supported types.
+bad:
+  export fn total(xs: [int]): int
+      return 0
+fix:
+  export fn total(n: int): int
+      return n
+
+@ K0104 export with defaults
+match: export fn '*' cannot have default parameter values*
+why: C has no default arguments: a C caller always passes every argument.
+help: Remove the default values.
+bad:
+  export fn f(a: int = 3): int
+      return a
+fix:
+  export fn f(a: int): int
+      return a
+
+@ K0105 export return type
+match: export fn '*': return type '*' can't cross the C ABI*
+why: Only machine-sized values can be returned to C directly: int and sized ints, bool, float, f32, string, or an `extern type` handle.
+help: Return one of the supported types.
+bad:
+  export fn make(): [int]
+      return [1]
+fix:
+  export fn make(): int
+      return 1
+
+@ K0106 bad C symbol character
+match: extern*: character '*' is not allowed in the C symbol "*"
+why: The name after `=` is handed to the linker as a C symbol, and C identifiers may only contain letters, digits and underscores.
+help: Use a valid C identifier, for example "my_name".
+bad:
+  extern fn f(x: int): int = "bad-name"
+
+  void main()
+      print(f(1))
+fix:
+  extern fn f(x: int): int = "bad_name"
+
+  void main()
+      print(1)
+
+@ K0107 C symbol starts with a digit
+match: extern '*': the C symbol "*" cannot start with a digit
+why: C identifiers cannot start with a digit.
+help: Start the symbol with a letter or an underscore.
+bad:
+  extern fn f(x: int): int = "1abc"
+
+  void main()
+      print(1)
+fix:
+  extern fn f(x: int): int = "abc1"
+
+  void main()
+      print(1)
+
+@ K0108 unsupported extern variable type
+match: extern variable '*': type '*' is not supported*
+why: An `extern let` names a C global, and only machine-sized types can be read from one directly.
+help: Use int, sized ints, bool, float, f32, string or an `extern type` handle.
+bad:
+  extern let xs: [int]
+
+  void main()
+      print(1)
+fix:
+  extern let xs: int
+
+  void main()
+      print(1)
+
+@ K0109 callback parameter type
+match: '*' cannot be a C callback: parameter type '*' is not a plain machine word
+why: A Komodo function passed to C is called by C code, so its parameters must be plain machine words or doubles.
+help: Change the parameter to int, bool, float or a handle.
+bad:
+  extern fn run_cb(cb: int): int
+
+  fn scale(xs: [int], n: int): int
+      return n
+
+  void main()
+      let r = run_cb(scale)
+fix:
+  extern fn run_cb(cb: int): int
+
+  fn scale(n: int): int
+      return n
+
+  void main()
+      let r = run_cb(scale)
+
+@ K0110 callback return type
+match: '*' cannot be a C callback: return type '*' is not a plain machine word
+why: C code calling back into Komodo expects a plain machine word or double as the result.
+help: Return int, bool, float or a handle.
+bad:
+  extern fn run_cb(cb: int): int
+
+  fn scale(n: int): [int]
+      return [n]
+
+  void main()
+      let r = run_cb(scale)
+fix:
+  extern fn run_cb(cb: int): int
+
+  fn scale(n: int): int
+      return n
+
+  void main()
+      let r = run_cb(scale)
+
+@ K0111 export needs a body
+match: `export` needs a free function with a body: '*'
+why: `export fn` publishes Komodo code to C, so it needs a body. To use a C function from Komodo, write `extern fn` instead.
+help: Add a body, or use `extern fn` to declare a C function.
+bad:
+  export fn f(a: int): int
+fix:
+  export fn f(a: int): int
+      return a
+
+@ K0112 extern variable needs a type
+match: extern variable '*' needs a type*
+why: Komodo cannot read the type of a C global, so an `extern let` must say it.
+help: Write `extern let {1}: int`.
+bad:
+  extern let counter
+
+  void main()
+      print(1)
+fix:
+  extern let counter: int
+
+  void main()
+      print(1)
+
+@ K0113 extern symbol must be a string
+match: expected a string literal after `=` (the C symbol name) in extern*
+why: `extern fn name(...) = "c_symbol"` binds a Komodo name to a C symbol, and the symbol is written as a string literal.
+help: Put the C symbol in quotes after the `=`.
+bad:
+  extern fn f(x: int): int = 42
+
+  void main()
+      print(1)
+fix:
+  extern fn f(x: int): int = "f_impl"
+
+  void main()
+      print(1)
+
+@ K0114 export fn on this target
+match: export fn is not supported on target '*' yet*
+why: Exporting Komodo functions to C is implemented by the x86 backend only.
+help: Build with the default x86 target.
+note: Use `komodo --target x86` (the default) for programs that contain `export fn`.
+
+# ── overloads ────────────────────────────────────────────────────────
+
+@ K0120 no overload with that arity
+match: no overload of '*' takes * argument(s)
+mode: compile
+why: '{1}' has several definitions, but none of them accepts {2} argument(s).
+help: Call it with the number of arguments one of the overloads declares.
+bad:
+  fn f(a: int): int
+      return a
+
+  fn f(a: string): string
+      return a
+
+  void main()
+      print(f(1, 2))
+fix:
+  fn f(a: int): int
+      return a
+
+  fn f(a: string): string
+      return a
+
+  void main()
+      print(f(1))
+
+@ K0121 ambiguous overload
+match: ambiguous overloaded call to '*'
+why: More than one overload of '{1}' fits these arguments equally well, so the compiler cannot choose.
+help: Make the argument types more specific.
+note: This error is rare: it appears when two overloads accept the same argument types.
+
+@ K0122 no matching overload
+match: no overload of '*' matches the argument types
+mode: compile
+why: '{1}' has several definitions, but none of them accepts arguments of these types.
+help: Convert the arguments, or add an overload for these types.
+bad:
+  fn f(a: int): int
+      return a
+
+  fn f(a: string): string
+      return a
+
+  void main()
+      print(f(1.5))
+fix:
+  fn f(a: int): int
+      return a
+
+  fn f(a: string): string
+      return a
+
+  void main()
+      print(f(1))
+
+@ K0123 identical overloads
+match: duplicate function '*' — two overloads have identical parameter types
+mode: compile
+why: Overloads are chosen by their parameter types, so two definitions with the same parameter types could never be told apart.
+help: Change a parameter type, or rename one function.
+bad:
+  fn f(a: int): int
+      return a
+
+  fn f(b: int): int
+      return b
+
+  void main()
+      print(f(1))
+fix:
+  fn f(a: int): int
+      return a
+
+  fn f(b: string): int
+      return 1
+
+  void main()
+      print(f(1))
+
+# ── ownership ────────────────────────────────────────────────────────
+
+@ K0130 use after move
+match: use of moved value '*' — *
+why: A `unique` value has exactly one owner. Binding it to another name, or passing it on, moves ownership, and the old name is left with nothing.
+help: Use the new owner, or `copy(x)` to keep a second value.
+bad:
+  unique struct Handle
+      id: int
+
+  void main()
+      let a = new Handle(1)
+      let b = a
+      print(b.id)
+      print(a.id)
+fix:
+  unique struct Handle
+      id: int
+
+  void main()
+      let a = new Handle(1)
+      let b = a
+      print(b.id)
+
+@ K0131 moving a borrowed unique value
+match: cannot move `unique` value out of '*' — it is not a locally owned binding
+why: Only a variable that owns the value can give it away. Parameters and globals do not own theirs.
+help: Use `copy(x)` instead, or take ownership with a local `let`.
+note: This error appears when a `unique` value is moved out of a binding that does not own it, such as a parameter or a global.
+
+@ K0132 moving a unique field
+match: cannot move `unique` value of type '*' out of field '*' — *
+why: A field is owned by the struct that holds it. Taking it out would leave the struct with a hole.
+help: Move the whole owning value, or use `copy(...)`.
+note: This error appears when a `unique` value is moved out of a struct field.
+
+@ K0133 moving a unique array element
+match: cannot move `unique` value of type '*' out of an array element
+why: An array owns its elements, so one cannot be taken out and leave a hole behind.
+help: Use `copy(...)` to get a second value.
+note: This error appears when a `unique` value is moved out of an array element.
+
+# ── patterns and match ───────────────────────────────────────────────
+
+@ K0140 pattern on a non-struct
+match: struct pattern '*(…)' used on non-struct subject of type '*'
+why: `case Type(field: ...)` takes a struct apart, so the value being matched must itself be a struct.
+help: Match on a struct value, or use plain `case` values.
+bad:
+  struct P
+      x: int
+
+  void main()
+      let n = 5
+      match n
+          case P(x: 1)
+              print(1)
+          else
+              print(2)
+fix:
+  void main()
+      let n = 5
+      match n
+          case 5
+              print(1)
+          else
+              print(2)
+
+@ K0141 unrelated pattern type
+match: struct pattern type '*' is unrelated to subject type '*'
+why: A pattern can only match a type that the subject can actually be: the same struct, or a struct that extends it.
+help: Use a pattern type related to '{2}'.
+bad:
+  struct P
+      x: int
+
+  struct Z
+      y: int
+
+  void main()
+      let p = new P(1)
+      match p
+          case Z(y: 1)
+              print(1)
+          else
+              print(2)
+fix:
+  struct P
+      x: int
+
+  void main()
+      let p = new P(1)
+      match p
+          case P(x: 1)
+              print(1)
+          else
+              print(2)
+
+@ K0142 field named twice
+match: field '*' named twice in pattern '*'
+why: Each field can be matched once in a pattern.
+help: Remove the duplicate.
+bad:
+  struct P
+      x: int
+
+  void main()
+      let p = new P(1)
+      match p
+          case P(x: 1, x: 2)
+              print(1)
+          else
+              print(2)
+fix:
+  struct P
+      x: int
+
+  void main()
+      let p = new P(1)
+      match p
+          case P(x: 1)
+              print(1)
+          else
+              print(2)
+
+@ K0143 float in a pattern
+match: struct pattern cannot match on `float` field '*' yet
+why: Exact comparison of floating-point values is rarely what you want, so patterns do not support it yet.
+help: Bind the field to a name and compare it in an `if`.
+bad:
+  struct P
+      x: float
+
+  void main()
+      let p = new P(1.0)
+      match p
+          case P(x: 1.0)
+              print(1)
+fix:
+  struct P
+      x: float
+
+  void main()
+      let p = new P(1.0)
+      if p.x == 1.0 then
+          print("one")
+
+@ K0144 pattern literal type
+match: pattern for field '*': literal of type '*' is not comparable to field type '*'
+why: A literal in a pattern is compared with the field's value, so the two must have the same type.
+help: Use a literal of the field's type.
+bad:
+  struct P
+      x: int
+
+  void main()
+      let p = new P(1)
+      match p
+          case P(x: "one")
+              print(1)
+          else
+              print(2)
+fix:
+  struct P
+      x: int
+
+  void main()
+      let p = new P(1)
+      match p
+          case P(x: 1)
+              print(1)
+          else
+              print(2)
+
+@ K0145 pattern on a handle
+match: cannot destructure the opaque handle type '*' in a pattern
+why: An `extern type` handle is a pointer owned by C code. Komodo cannot see inside it.
+help: Pass the handle to a C function instead.
+note: Opaque `extern type` handles cannot be taken apart with `case Type(...)`.
+
+@ K0146 match not exhaustive
+match: match on enum '*' is not exhaustive — missing: *
+span: block
+mode: strict
+why: Under `--strict`, a `match` on an enum must name every variant or end with `else`, so adding a variant later cannot slip through unhandled.
+help: Add a `case` for {2}, or an `else` branch.
+bad:
+  enum Color
+      Red
+      Green
+      Blue
+
+  void main()
+      let c = Color::Red
+      match c
+          case Color::Red
+              print("red")
+          case Color::Green
+              print("green")
+fix:
+  enum Color
+      Red
+      Green
+      Blue
+
+  void main()
+      let c = Color::Red
+      match c
+          case Color::Red
+              print("red")
+          case Color::Green
+              print("green")
+          else
+              print("blue")
+
+# ── lints (warnings; errors under --strict) ──────────────────────────
+
+@ K0160 unreachable code
+match: unreachable code
+mode: strict
+why: The statement follows a `return`, `break`, `continue` or `throw`, so it can never run. It is usually a leftover or a mistake.
+help: Delete it, or move it before the jump.
+bad:
+  fn f(): int
+      return 1
+      print("never")
+
+  void main()
+      print(f())
+fix:
+  fn f(): int
+      print("before")
+      return 1
+
+  void main()
+      print(f())
+
+@ K0161 self-assignment
+match: self-assignment of '*' has no effect
+mode: strict
+why: Assigning a variable to itself changes nothing, so it is nearly always a typo for a different name.
+help: Check which variable you meant to assign.
+bad:
+  void main()
+      let a = 1
+      a = a
+      print(a)
+fix:
+  void main()
+      let a = 1
+      let b = 2
+      a = b
+      print(a)
+
+@ K0162 constant condition
+match: `if` condition is always *
+mode: strict
+why: The condition is a literal that is always true or always false, so one branch can never run.
+help: Remove the `if`, or use a real condition.
+bad:
+  void main()
+      if true then
+          print("always")
+fix:
+  void main()
+      let n = 3
+      if n > 2 then
+          print("big")
+
+@ K0163 division by zero
+match: division by zero
+mode: strict
+why: Dividing by a literal zero fails at run time.
+help: Divide by a non-zero value.
+bad:
+  void main()
+      let n = 5
+      print(n / 0)
+fix:
+  void main()
+      let n = 5
+      print(n / 1)
+
+@ K0164 self comparison
+match: '*' compares a value with itself
+mode: strict
+why: Comparing a value with itself always gives the same answer, so it is almost always a typo.
+help: Compare against a different value.
+bad:
+  void main()
+      let y = 3
+      if y == y then
+          print("same")
+fix:
+  void main()
+      let y = 3
+      let z = 4
+      if y == z then
+          print("same")
+
+@ K0165 unused variable
+match: '*' is declared but never used
+mode: strict
+why: Under `--strict`, a local that is never read is reported: it is usually a leftover or a misspelt name.
+help: Use '{1}', or delete it.
+bad:
+  void main()
+      let unused = 5
+      print("hi")
+fix:
+  void main()
+      print("hi")
+
+@ K0166 untyped parameter
+match: parameter '*' has no type annotation (implicit any)
+mode: strict
+why: Under `--strict`, method parameters must say their type, so mistakes are caught where the method is called.
+help: Write `{1}: int` (or the type it should have).
+bad:
+  class C
+      fn f(a): int
+          return 1
+
+  void main()
+      print(1)
+fix:
+  class C
+      fn f(a: int): int
+          return a
+
+  void main()
+      print(1)
+
+@ K0167 mut without mutation
+match: `mut *` has no mutating code — could be `fn` or `void`
+mode: strict
+why: `mut` says a function changes something, but this one changes nothing. A plain `fn` is a stronger promise to its callers.
+help: Declare it `fn`.
+bad:
+  mut one(): int
+      return 1
+
+  void main()
+      print(one())
+fix:
+  fn one(): int
+      return 1
+
+  void main()
+      print(one())
+
+@ K0168 variable without a type
+match: '*' has no type annotation and no initialiser
+mode: strict
+why: With neither a type nor a starting value, the compiler cannot tell what the variable holds.
+help: Write `let {1}: int` or `let {1} = 0`.
+bad:
+  void main()
+      let x
+      x = 1
+      print(x)
+fix:
+  void main()
+      let x = 1
+      print(x)
+
+@ K0169 reused local name
+match: '*' is already declared in this function; this `let` reuses it
+mode: lint
+why: Komodo locals are function-scoped, so a second `let {1}` in an inner block does not make a new variable: it assigns the existing one, and the new value is still there after the block.
+help: Give the inner variable a different name, or drop `let` if reassigning '{1}' is intended.
+bad:
+  void main()
+      let x = 1
+      if x > 0 then
+          let x = 5
+          print(x)
+      print(x)
+fix:
+  void main()
+      let x = 1
+      if x > 0 then
+          let y = 5
+          print(y)
+      print(x)
+
+@ K0170 comparison with a bool literal
+match: comparison with a bool literal; use the value or `not` directly
+mode: lint
+why: `x == true` is the same as `x`, and `x == false` is the same as `not x`; the longer form only adds noise.
+help: Write the bool value itself, or `not` it.
+bad:
+  void main()
+      let ok = true
+      if ok == true then
+          print("yes")
+fix:
+  void main()
+      let ok = true
+      if ok then
+          print("yes")
+
+# ── syntax ───────────────────────────────────────────────────────────
+
+@ K0180 one-line if/else
+match: unexpected 'else': a one-line `if c then X else Y` is not supported*
+why: The one-line `if c then X` form takes no `else`, to keep the grammar unambiguous.
+help: Write the branches on separate indented lines.
+bad:
+  void main()
+      let n = 7
+      if n % 2 == 0 then print("even") else print("odd")
+fix:
+  void main()
+      let n = 7
+      if n % 2 == 0 then
+          print("even")
+      else
+          print("odd")
+
+@ K0181 range as a value
+match: a range `a to b` is only valid in a `for` loop or a slice, not as a value
+why: Ranges are syntax for `for` headers and slices such as `a[1 to 3]`. They are not values you can store.
+help: Use `for i = a to b`, or make an array with `[a, b]`.
+bad:
+  void main()
+      let r = 1 to 4
+      print(r)
+fix:
+  void main()
+      for r = 1 to 4
+          print(r)
+
+@ K0182 `?` on an index
+match: '?' applies to calls, not indexing
+why: A trailing `?` catches an error thrown by a call. Indexing is not a call.
+help: Check `#a` first, or wrap the indexing in a function and call that with `?`.
+bad:
+  void main()
+      let a = [1]
+      print(a[5]?)
+fix:
+  void main()
+      let a = [1]
+      if #a > 5 then
+          print(a[5])
+
+@ K0183 `?` on something else
+match: '?' applies to calls and `new` expressions only
+why: A trailing `?` catches an error thrown by a call or a `new`, and gives `null` instead.
+help: Remove the `?`, or apply it to a call.
+note: Put the `?` directly after a function call, as in `parse(text)?`.
+
+@ K0184 methods in a struct
+match: struct bodies hold fields only; use a class for methods
+why: A `struct` is plain data. Behaviour belongs in a `class`.
+help: Change `struct` to `class`, or move the method into a free function.
+bad:
+  struct Counter
+      n: int = 0
+      mut bump()
+          n += 1
+
+  void main()
+      print(1)
+fix:
+  class Counter
+      n: int = 0
+      mut bump()
+          n += 1
+
+  void main()
+      print(1)
+
+@ K0185 link outside a module
+match: `link` may only be used inside a module*
+why: `link` tells the linker about a C library, and that declaration belongs in a module file (`.kmm` starting with `module name`).
+help: Move the `link` line into a module file.
+bad:
+  link m
+
+  void main()
+      print(1)
+fix:
+  void main()
+      print(1)
+
+@ K0186 expected case or else
+match: expected `case` or `else` in match, got *
+why: Inside a `match`, the indented lines must be `case` arms or a final `else`.
+help: Start each arm with `case value`.
+bad:
+  void main()
+      let n = 1
+      match n
+          print("x")
+fix:
+  void main()
+      let n = 1
+      match n
+          case 1
+              print("one")
+          else
+              print("other")
+
+@ K0187 unexpected token
+match: unexpected '*'*
+why: The parser found a token that cannot start or continue an expression or statement at this position.
+help: Check the line for a missing operator, a stray character or a wrong indent.
+bad:
+  void main()
+    print(1)
+      print(2)
+fix:
+  void main()
+      print(1)
+      print(2)
+
+@ K0188 unexpected top-level token
+match: Unexpected top-level token*
+why: Only declarations (`fn`, `void`, `mut`, `struct`, `class`, `enum`, `let`, `import`, `extern`, `link`) may appear at the top of a file.
+help: Check for a stray character, or an indent that closed the function too early.
+bad:
+  void main(
+      print(1)
+fix:
+  void main()
+      print(1)
+
+@ K0189 modifier without a type
+match: expected `struct` or `class` after type modifier
+why: `abstract` and `unique` modify a struct or class declaration, so one must follow.
+help: Write `abstract struct Name` or `unique struct Name`.
+bad:
+  abstract Shape
+      tag: int
+
+  void main()
+      print(1)
+fix:
+  abstract struct Shape
+      tag: int
+
+  void main()
+      print(1)
+
+@ K0190 method for unknown class
+match: method defined for unknown class '*'
+why: A method written as `Class::name` or in a class body needs the class to be declared.
+help: Check the class name, or declare the class.
+note: Declare the class before defining methods for it.
+
+@ K0191 unknown target
+match: unknown target '*'*
+why: The compiler can generate code for the targets x86, stackvm, c and wasm only.
+help: Pass one of: x86, stackvm, c, wasm.
+note: Use `komodo --target x86` (the default), `c`, `wasm` or `stackvm`.
+
+# ── back-end limits ──────────────────────────────────────────────────
+
+@ K0200 feature missing on this target
+match: *not supported yet*
+why: The program is valid Komodo, but the chosen target backend cannot generate code for this feature yet. The x86 backend supports all of the language.
+help: Build with the default x86 target.
+note: Use `komodo --target x86` (the default) to build programs that use this feature.
+
+@ K0201 internal compiler error
+match: internal: *
+why: The compiler reached a state it believes is impossible. This is a bug in the compiler, not in your program.
+help: Please report it with the smallest program that triggers it.
+note: Report this at the Komodo issue tracker with the program that triggers it.

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
-# run-tests.sh — compile every examples/*.km, run it, and check its output
-# against the matching examples/<name>.expected file.  Also compiles each
+# run-tests.sh — compile every examples/*.km and tests/examples/*.km, run it, and check
+# its output against the matching <name>.expected file (next to the .km).  Also compiles each
 # with the `stackvm` backend to confirm the target-independent path stays
 # wired up, and builds + runs it through the `c` backend (portable C via
 # gcc) against the same expected output.
@@ -22,7 +22,7 @@ komodo="${KOMODO:-$here/komodo}"
 
 names=("$@")
 if [[ ${#names[@]} -eq 0 ]]; then
-    for f in examples/*.km; do names+=("$(basename "$f" .km)"); done
+    for f in examples/*.km tests/examples/*.km; do names+=("$(basename "$f" .km)"); done
 fi
 
 work="$(mktemp -d)"
@@ -34,7 +34,8 @@ if command -v emcc >/dev/null 2>&1 && command -v node >/dev/null 2>&1; then have
 pass=0 fail=0
 for name in "${names[@]}"; do
     src="examples/$name.km"
-    exp="examples/$name.expected"
+    [[ -f "$src" ]] || src="tests/examples/$name.km"
+    exp="${src%.km}.expected"
     if [[ ! -f "$src" ]]; then
         echo "MISSING  $name  (no $src)"; fail=$((fail+1)); continue
     fi

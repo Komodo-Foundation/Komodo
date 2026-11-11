@@ -1,0 +1,17 @@
+error[K0146]: match on enum 'Color' is not exhaustive — missing: Blue
+  --> match_block.km:8:5
+   |
+ 6 | void main()
+ 7 |     let c = Color::Red
+ 8 | /     match c
+ 9 | |         case Color::Red
+10 | |             print("red")
+11 | |         case Color::Green
+12 | |             print("green")
+   | |__________________________^ match on enum 'Color' is not exhaustive — missing: Blue
+   = help: Add a `case` for Blue, or an `else` branch.
+   = why: Under `--strict`, a `match` on an enum must name every variant or end with `else`, so
+          adding a variant later cannot slip through unhandled.
+   = explain: run `komodo explain K0146` for more detail
+
+error: aborting due to previous error

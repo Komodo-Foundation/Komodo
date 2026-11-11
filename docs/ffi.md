@@ -279,7 +279,7 @@ scaled: 0.0, 0.0
 ```
 
 `copy` also leaves the source usable, so `a` is still a live object after
-`copy(a)`. The repository's `examples/ffi_struct.km` and `stdlib/raylib.kmm`
+`copy(a)`. The repository's `tests/examples/ffi_struct.km` and `stdlib/raylib.kmm`
 use the same mechanism.
 
 ## Callbacks
@@ -315,7 +315,7 @@ error: 'scale' cannot be a C callback: parameter type 'float' is not a plain mac
 error: 'seven' cannot be a C callback: it takes 7 parameters (max 6)
 ```
 
-The repository's `examples/ffi_callback.km` registers a Komodo function with
+The repository's `tests/examples/ffi_callback.km` registers a Komodo function with
 C's `atexit`, so it runs after `main` returns.
 
 ## Worked example: binding a C library
@@ -603,7 +603,7 @@ in integer registers and then the stack, `float` values in `xmm` registers and
 then the stack. Komodo's `float` is a double, which is what C's default argument
 promotion produces. Nothing checks the extra arguments against the format, so
 they must match it. Fewer arguments than the fixed parameters is a compile error.
-Full example: `examples/ffi_variadic.km`.
+Full example: `tests/examples/ffi_variadic.km`.
 
 ## Runtime ABI for runtime C files
 

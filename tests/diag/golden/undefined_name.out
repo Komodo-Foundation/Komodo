@@ -1,0 +1,15 @@
+error[K0001]: undefined name 'cont'
+ --> undefined_name.km:5:19
+  |
+3 | void main()
+4 |     let count = 10
+5 |     console.print(cont)
+  |                   ^^^^ undefined name 'cont'
+  = help: did you mean 'count'?
+  = help: Check the spelling, or declare 'cont' with `let cont = ...` before this line.
+  = why: The compiler looked for a variable, parameter, macro or function called 'cont' and found
+         none in scope. Names must be declared with `let` (or as parameters) before the line that
+         uses them.
+  = explain: run `komodo explain K0001` for more detail
+
+error: aborting due to previous error
