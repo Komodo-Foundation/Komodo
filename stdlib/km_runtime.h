@@ -228,7 +228,7 @@ KmArray  *list_dir(int64_t argc, KmArg *items);
 const char  *find(int64_t argc, KmArg *items);
 void         km_fail(const char *msg);
 
-/* bare print(...) — alias of console.print */
+/* print(...): raw output, no separator, no newline (console.* is built on it) */
 void print(int64_t argc, KmArg *items);
 
 /* ── module: string ── */

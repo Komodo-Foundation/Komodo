@@ -40,10 +40,14 @@ static void emit_args(FILE *out, int64_t argc, KmArg *items, int newline)
         putc('\n', out);
 }
 
+/* Raw output: each value written back to back, with no separator and no
+ * newline.  The primitive that console.* is built on. */
+void print(int64_t argc, KmArg *items)
+{
+    for (int64_t i = 0; i < argc; i++)
+        write_arg(stdout, items[i]);
+}
+
 void console_print(int64_t argc, KmArg *items) { emit_args(stdout, argc, items, 1); }
 void console_write(int64_t argc, KmArg *items) { emit_args(stdout, argc, items, 0); }
 void console_error(int64_t argc, KmArg *items) { emit_args(stderr, argc, items, 1); }
-
-/* Bare `print(...)` (used by the self-hosted compiler driver) is an
- * alias for `console.print`. */
-void print(int64_t argc, KmArg *items) { console_print(argc, items); }

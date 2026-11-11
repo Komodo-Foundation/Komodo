@@ -3139,6 +3139,7 @@ These names need no `import`.
 
 | Name | Meaning |
 |---|---|
+| `print(...)` | writes its arguments back to back, with no separator and no newline. The `console` functions are built on it |
 | `console.print(...)` | writes its arguments separated by spaces, then a newline |
 | `string(x)` | converts any value to text |
 | `int(x)` | converts a number to `int`, truncating |
