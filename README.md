@@ -105,4 +105,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). Bugs and ideas go in [issues](https://gi
 
 ## License
 
-MIT — see [LICENSE](LICENSE). Copyright (c) 2026 Lukas Perkins.
+MIT — see [LICENSE](LICENSE). Copyright (c) 2026 Komodo Foundation.
