@@ -2,7 +2,7 @@
 
 ## 0.3.2
 
-- Komodo Dark: restored the 0.3.0 colors, then a new palette with readable contrast and little blue, also for non-Komodo languages (Markdown, JSON, diff).
+- Komodo Dark: restored the 0.3.0 token colors (0.3.1 had made most code blue).
 
 ## 0.3.1
 
