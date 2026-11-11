@@ -4,10 +4,10 @@
   "description": "Syntax highlighting, snippets and indentation for the Komodo language (.km, .kmm).",
   "version": "0.1.0",
   "license": "MIT",
-  "publisher": "lrperks",
+  "publisher": "komodo-foundation",
   "repository": {
     "type": "git",
-    "url": "https://github.com/lrperks/Komodo.git"
+    "url": "https://github.com/Komodo-Foundation/Komodo.git"
   },
   "engines": {
     "vscode": "^1.80.0"

@@ -6,7 +6,7 @@ in Komodo and compiles itself, so most contributions are Komodo code.
 ## Setup
 
 ```bash
-git clone https://github.com/lrperks/Komodo && cd Komodo
+git clone https://github.com/Komodo-Foundation/Komodo && cd Komodo
 ./install.sh            # symlinks `komodo` onto your PATH
 komodo doctor           # checks nasm, gcc, libgc (and optional emcc, node, g++)
 komodo self test        # builds the compiler and runs every suite
