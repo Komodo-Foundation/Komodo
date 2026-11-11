@@ -50,10 +50,14 @@ for a in "$@"; do
     esac
 done
 
+# Portable helpers: GNU coreutils on Linux, BSD tools on macOS.
+sha256() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$@"; else shasum -a 256 "$@"; fi; }
+ncpu() { getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4; }
+
 sources_hash() {
     ( cd "$here"
       cat build-self.sh tools/asm-split.awk main.km stdlib/*.c stdlib/*.h 2>/dev/null
-      find modules -name '*.kmm' | LC_ALL=C sort | xargs cat ) | sha256sum | cut -d' ' -f1
+      find modules -name '*.kmm' | LC_ALL=C sort | xargs cat ) | sha256 | cut -d' ' -f1
 }
 stamp="$(sources_hash)"
 if [[ $force -eq 0 && $update_seed -eq 0 && -x "$here/kmc" && -f "$bdir/stamp" \
@@ -90,11 +94,11 @@ sys.argv=['main.py','$here/main.km','$here/main.km','x86']; exec(open('main.py')
 
 # stdlib/*.c → .build/obj/<name>-<hash>.o, in parallel, cached by content
 build_runtime() {
-    local jobs; jobs="$(nproc 2>/dev/null || echo 4)"
+    local jobs; jobs="$(ncpu)"
     local todo=() c h o
     objs=()
     for c in "$here"/stdlib/*.c; do
-        h="$(cat "$c" "$here"/stdlib/*.h | sha256sum | cut -c1-12)"
+        h="$(cat "$c" "$here"/stdlib/*.h | sha256 | cut -c1-12)"
         o="$bdir/obj/$(basename "$c" .c)-$h.o"
         objs+=("$o")
         [[ -f "$o" ]] || todo+=("$c|$o")
@@ -115,17 +119,17 @@ build_runtime() {
 # its body — editing one function reassembles only the chunk it lives in.
 # Sets kobjs=( … ) for the link line.
 assemble() {
-    local in="$1" d="$bdir/split" jobs; jobs="$(nproc 2>/dev/null || echo 4)"
+    local in="$1" d="$bdir/split" jobs; jobs="$(ncpu)"
     rm -rf "$d"; mkdir -p "$d" "$bdir/asm"
     awk -v outdir="$d" -v K=16 -f "$here/tools/asm-split.awk" "$in" >/dev/null
-    local nv; nv="$(nasm -v | head -1 | sha256sum | cut -c1-6)"
+    local nv; nv="$(nasm -v | head -1 | sha256 | cut -c1-6)"
     local todo=() f key o
     kobjs=()
     while read -r key f; do
         o="$bdir/asm/${key:0:20}$nv.o"
         kobjs+=("$o")
         if [[ -f "$o" ]]; then touch "$o"; else todo+=("${f%.body}.asm|$o"); fi
-    done < <(sha256sum "$d"/c_*.body)
+    done < <(sha256 "$d"/c_*.body)
     if [[ ${#todo[@]} -gt 0 ]]; then
         printf '%s\n' "${todo[@]}" | xargs -P "$jobs" -I{} bash -c \
             'in="{}"; nasm -f elf64 "${in%%|*}" -o "${in##*|}"'
@@ -182,6 +186,6 @@ rm -rf "$bdir/split"
 if [[ $update_seed -eq 1 ]]; then
     mkdir -p "$here/bootstrap"
     gzip -9 -n -c "$asm" > "$seed"
-    echo "wrote $seed ($(stat -c %s "$seed") bytes) — commit it with the source change"
+    echo "wrote $seed ($(wc -c < "$seed" | tr -d " ") bytes) — commit it with the source change"
 fi
 echo "$stamp" > "$bdir/stamp"
