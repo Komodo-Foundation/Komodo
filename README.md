@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="editors/vscode/icon.png" width="160" alt="Komodo logo">
+</p>
+
 # Komodo
 
 [![CI](https://github.com/Komodo-Foundation/Komodo/actions/workflows/ci.yml/badge.svg)](https://github.com/Komodo-Foundation/Komodo/actions/workflows/ci.yml)
