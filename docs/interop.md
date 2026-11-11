@@ -2,7 +2,7 @@
 
 Komodo talks to native code in both directions. This guide shows the quickest
 route each way. The details of the C ABI live in [ffi.md](ffi.md) and
-[design.md](../design.md); this page is the friendly front door.
+[the language reference](language/reference.md); this page is the friendly front door.
 
 Everything below was run on the default x86-64 target (`komodo file.km`).
 

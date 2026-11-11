@@ -8,7 +8,7 @@ Every snippet was compiled and run with the current `komodo` build, and the
 `text` blocks show its real output. Where a snippet is meant to fail, the exact
 compiler message is shown. Compile errors are printed as
 `file:line:col: error: message`; the location is left out of the text blocks.
-For the complete syntax reference see [design.md](../../design.md).
+For the complete syntax reference see [the language reference](reference.md).
 
 ## Contents
 
@@ -74,7 +74,7 @@ zero: 1 []
 - `new Name(args)` allocates the object. Arguments bind positionally to the
   fields in constructor order: fields without a default come first, then the
   fields with a default. A field that gets no argument takes its default, or
-  zero (`0`, `""`, `false`, `null`) if it has none. `design.md` states the
+  zero (`0`, `""`, `false`, `null`) if it has none. the reference states the
   same order.
 - Fields are read and written with `.`.
 - A struct has no methods. Write free functions that take the struct as a
@@ -240,7 +240,7 @@ void main()
 
 Module-level `private` is enforced: a `private` function reached as
 `module::name` from another module is an error (see
-[design.md](../../design.md#files--modules)).
+[the reference](reference.md#14-modules-and-imports)).
 
 ### Inheritance and virtual dispatch
 

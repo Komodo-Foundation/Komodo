@@ -161,8 +161,14 @@ public
         m_tokens += [new Token(TokenType::EOF, "", m_line, m_col)]
         return m_tokens
 
+    // Deprecation warnings found while lexing, as "LINE:COL: warning: ...".
+    // The driver prints them; the deprecated forms still compile.
+    mut warnings(): [string]
+        return m_warnings
+
 private
     m_src: string
+    m_warnings: [string] = []
     m_len: int = 0
     m_keywords: StrIndex? = null   // built on first use (see isKeyword)
     m_pos: int = 0
@@ -171,6 +177,9 @@ private
     m_tokens: [Token] = []
     m_indents: [int] = [0]
     m_line_start: bool = true
+
+    mut deprecated(msg: string)
+        m_warnings += [string(m_line) + ":" + string(m_col) + ": warning: " + msg]
 
     mut isDigit(c: char?): bool
         return km_ch_digit(c) == 1
@@ -289,6 +298,12 @@ private
 
         let type = TokenType::IDENT
         let lexeme = text
+        // `string.length(s)` is deprecated: `#s` is the one way to get the length.
+        if text == "length" and peek() == "(" and #m_tokens >= 2 then
+            let dot = m_tokens[#m_tokens - 1]
+            let base = m_tokens[#m_tokens - 2]
+            if dot.type == TokenType::DOT and base.type == TokenType::IDENT and base.lexeme == "string" then
+                deprecated("'string.length(s)' is deprecated: use '#s'")
         // most identifiers are not keywords — one hash probe skips the
         // whole chain of string compares below for them
         if not isKeyword(text) then
@@ -450,6 +465,8 @@ private
                 out += [new Token(TokenType::OPEN_PAREN, "(", m_line, m_col)]
                 let sub = new Lexer(readInterpExpr())
                 let subToks = sub.tokenize()
+                for w in sub.warnings() do
+                    m_warnings += [w]
                 for t in subToks do
                     if t.type != TokenType::EOF and t.type != TokenType::NEWLINE and t.type != TokenType::INDENT and t.type != TokenType::DEDENT then
                         out += [t]
@@ -578,9 +595,13 @@ private
                 m_tokens += [new Token(TokenType::CARET, "^", m_line, m_col)]
             case "&"
                 eat()
+                if peek() == "&" then
+                    deprecated("'&&' is deprecated: use 'and' (on numbers, '&&' is bitwise and)")
                 m_tokens += [new Token(TokenType::AMP, "&", m_line, m_col)]
             case "|"
                 eat()
+                if peek() == "|" then
+                    deprecated("'||' is deprecated: use 'or'")
                 m_tokens += [new Token(TokenType::PIPE, "|", m_line, m_col)]
             case "="
                 eat()
@@ -656,6 +677,7 @@ private
                     eat()
                     m_tokens += [new Token(TokenType::NEQ, "!=", m_line, m_col)]
                 else
+                    deprecated("'!' is deprecated: use 'not'")
                     m_tokens += [new Token(TokenType::NOT, "!", m_line, m_col)]
             else
                 eat()

@@ -27,7 +27,7 @@ cp -r stdlib tools "$lib/"
 chmod 755 "$lib/tools/km-bind"
 ln -s ../lib/komodo/komodo "$stage/usr/bin/komodo"
 
-cp -r docs examples README.md CHANGELOG.md design.md "$doc/"
+cp -r docs examples README.md CHANGELOG.md "$doc/"
 find "$doc/examples" -type f ! -name '*.km' ! -name '*.expected' -delete
 cp LICENSE "$doc/copyright"
 gzip -9 -n "$doc/CHANGELOG.md"

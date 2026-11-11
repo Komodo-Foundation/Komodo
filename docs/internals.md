@@ -3,7 +3,7 @@
 A contributor guide to the self-hosted compiler: how a source file becomes
 target text, where each stage lives, how the bootstrap works, and how to
 add a feature or a target. For the language itself see
-[`design.md`](../design.md); for installing and using the CLI see
+[the language reference](language/reference.md); for installing and using the CLI see
 [`README.md`](../README.md).
 
 ## Contents
@@ -403,7 +403,7 @@ Checklist. Not every step applies to every feature.
    `StackVMBackend` implementations.
 8. **Tests**: an `tests/examples/<name>.km` with `.expected`, and `tests/sema/`
    negatives with `.experr`. See [section 12](#12-tests).
-9. **Docs**: a section in `design.md`, a bullet in `README.md`'s Status.
+9. **Docs**: a section in `docs/language/reference.md`, a bullet in `README.md`'s Status.
 10. **Seed**: if `modules/` will use the feature, refresh the seed first
     ([section 10](#10-self-hosting-the-seed-and-the-fixpoint)).
 

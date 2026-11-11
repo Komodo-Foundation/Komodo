@@ -2,9 +2,10 @@
 
 This page states every syntax form and rule of the Komodo language as the
 current compiler behaves. It is the single place to check a rule. The guides
-([basics](basics.md), [types](types.md)) teach the language; [design.md](../../design.md)
-is the older catalogue, and where it disagrees with this build, this page
-follows the compiler and lists the difference in
+([basics](basics.md), [types](types.md)) teach the language, and
+[section 22](#22-compiler-passes-and-targets) covers optimization levels and
+the WebAssembly target. Where an older draft disagreed with this build, this
+page follows the compiler and lists the difference in
 [Open questions](#open-questions-for-the-maintainer).
 
 ## How to read the examples
@@ -81,7 +82,7 @@ void main(args)
 1
 ```
 
-`design.md` says the first user argument is `args[2]`. The compiler uses
+The older draft said the first user argument is `args[2]`. The compiler uses
 `args[1]`.
 
 Command line (not checked by the tool):
@@ -992,6 +993,7 @@ void main()
 ### 6.6 Strings and arrays
 
 `+` concatenates strings and `*` repeats them. `#s` is the length.
+`string.length(s)` is deprecated and warns: write `#s`.
 
 ```km
 void main()
@@ -2774,7 +2776,7 @@ void main()
 acc = 0
 ```
 
-By design.md, a program may use up to 70 % of available memory.
+By the older draft, a program may use up to 70 % of available memory.
 `KOMODO_MAX_HEAP` sets the limit (bytes, or with a `K`, `M`, `G` or `T` suffix). When live data does not
 fit, the program prints `Komodo: out of memory ...` and exits with status 3.
 
@@ -3237,7 +3239,7 @@ void main()
     let fs = [2.5, 0.5]
     console.print(algorithm.min(fs), algorithm.contains(xs, 2))
     console.print(string.split("a,b,c", ","), string.to_upper("abc"))
-    console.print(string.pad_start("7", 3, "0"), string.length("four"))
+    console.print(string.pad_start("7", 3, "0"), #"four")
 ```
 
 ```text
@@ -4714,6 +4716,63 @@ main.km:2:11: error: 'assert' takes a condition and an optional message, got 0 a
 
 ---
 
+## 22. Compiler passes and targets
+
+### 22.1 Semantic analysis
+
+Between the parser and the code generator, a static analysis pass
+(`modules/analyze/sema*.kmm`) is the single authority on the language's rules.
+The code generator lowers only a tree the analyser has accepted. It does:
+
+- **Type inference.** An unannotated `let` takes its initialiser's type.
+- **Flow-sensitive narrowing.** `x == null`, `x != null`, `x is T` and `not (...)`
+  refine a binding inside the guarded branch. A diverging branch (`return`,
+  `throw`, `break`, `continue`) narrows the rest of the block.
+- **Null safety.** Using a possibly-null value is an error until it is narrowed.
+- **Assignability.** Initialisers, returns, assignments and call arguments allow
+  numeric widening and subclass-to-base conversion.
+- **Structural rules.** Every path returns a value, `break` and `continue` appear
+  only in loops, abstract types are not instantiated, and names are not duplicated.
+- **Ownership.** A `unique` value has one owner. Moving it leaves the source
+  unusable until it is reassigned. See [section 15.3](#153-unique).
+
+A semantic error stops compilation. Strict mode (section 20) adds more checks.
+
+### 22.2 Optimization levels
+
+After analysis, an AST rewriting pass (`modules/optimize/optimize.kmm`) runs at
+the level given on the driver command line: `none`, `low`, `medium` or `max`.
+The default is `none`, and `komodo --release` selects `max`.
+
+| Level | Adds |
+|---|---|
+| `none` | nothing |
+| `low` | constant folding of arithmetic, comparisons, string `+` and `*`, `not`, and `and`/`or` with a literal guard |
+| `medium` | algebraic identities (`x+0`, `x*1`, `x*0`), dead-branch elimination on constant conditions, and dead code after a diverging statement |
+| `max` | constant propagation of never-reassigned `let x = <literal>` bindings, then another fold |
+
+Every rewrite preserves observable behaviour. Folds are skipped where the
+compile-time and native results could differ, such as division by zero and
+the bitwise operators. A folded boolean is emitted as `1` or `0`, so `print`
+output stays the same.
+
+### 22.3 WebAssembly
+
+`komodo -t wasm file.km` builds with Emscripten and runs the result under node.
+It uses the portable C backend (`-t c`) and the same runtime sources, so
+there is no separate backend. `komodo` needs `emcc` and `node` on `PATH`. It
+was tested with Emscripten 3.1.6 and node 18.
+
+- **Memory.** There is no garbage collector on this target. Memory is zeroed
+  and never freed, and the heap grows with the wasm memory.
+- **Errors.** `throw` and `f(args)?` work. A trap, such as an integer divide by
+  zero or a null access, surfaces as a node `RuntimeError`, and an uncaught error
+  does not name the function.
+- **Files.** `file::` uses node's real file system.
+- **Limits.** C FFI is not supported on this target. Any `extern fn`, including
+  by-value structs, callbacks and `link` libraries, fails at compile time with
+  `wasm backend: ... not supported yet`.
+
 ## Open questions for the maintainer
 
 Each item gives the snippet and what the compiler does now. Items marked
@@ -4853,7 +4912,7 @@ void main()
 one
 ```
 
-**12. `struct Flags : u32` is rejected.** `design.md` gives this as a fixed-width
+**12. `struct Flags : u32` is rejected.** The older draft gives this as a fixed-width
 container. The compiler reads `u32` as an unresolved parent.
 
 ```km
@@ -5037,7 +5096,7 @@ void main()
 1
 ```
 
-**25. Macros are visible before their declaration.** `design.md` says a macro is
+**25. Macros are visible before their declaration.** The older draft says a macro is
 visible from its declaration to the end of its block.
 
 ```km
@@ -5069,14 +5128,14 @@ six parameters and reject `float`. `tests/examples/ffi_callback_ext.km` (ten
 parameters, `double`s and `f32`) builds and prints the expected output with this
 compiler, and `tests/examples/ffi_callback_ext.expected` agrees.
 
-**28. `design.md` says the first user argument is `args[2]`.** The compiler
+**28. The older draft said the first user argument is `args[2]`.** The compiler
 uses `args[1]`, and `docs/language/basics.md` already notes this difference.
 
 **29. Struct equality is identity.** `a == b` on two `new A(1)` values is `0`.
 This is stated in section 6.3 as the rule. Whether `==` should compare fields is
 the maintainer's decision.
 
-**30. `design.md` says a `private` section has `private` globals and types.** The
+**30. The older draft says a `private` section has `private` globals and types.** The
 compiler checks only private functions reached as `module::name`.
 
 **31. `--strict` mode is not covered by the checker.** The examples in section 20

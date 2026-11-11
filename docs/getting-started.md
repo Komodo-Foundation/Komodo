@@ -5,7 +5,7 @@ compiler. The compiler, `kmc`, is written in Komodo and compiles programs to
 native x86-64 code (through NASM and gcc) or to portable C and WebAssembly. The
 `komodo` command wraps it: one command compiles, links and runs a program.
 
-For the full language reference see [`design.md`](../design.md). For the
+For the full language reference see [`docs/language/reference.md`](language/reference.md). For the
 project overview see the [README](../README.md).
 
 ## Requirements
@@ -222,4 +222,4 @@ exits with status 1.
 - [Foreign functions (FFI)](ffi.md): calling C and linking libraries.
 - [CLI reference](cli.md): every flag, target and build command.
 - [Internals](internals.md): how the compiler is organised.
-- [`design.md`](../design.md): the complete language reference.
+- [`docs/language/reference.md`](language/reference.md): the complete language reference.

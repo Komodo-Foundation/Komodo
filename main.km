@@ -182,7 +182,7 @@ fn moduleOnLine(line: string) : string
 // joined, the exact file list that went into that (for `<rootPath>.deps`),
 // and every `link` target declared across those files (for
 // `<rootPath>.links`) — see `linkTargets` for what that keyword does and
-// design.md's "Standard library" section for the full picture.
+// docs/language/reference.md's "Standard library" section for the full picture.
 // `stdlibProbe` is a throwaway path inside the compiler's own directory,
 // a second search root for the standard library.
 fn gather(rootPath: string, stdlibProbe: string) : GatherResult

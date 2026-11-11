@@ -1,0 +1,8 @@
+**/*.vsix
+.vscode/**
+test/**
+node_modules/.package-lock.json
+node_modules/**/*.d.ts
+node_modules/**/*.map
+node_modules/**/*.md
+.gitignore
