@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# run-sema-tests.sh — exercise the semantic analyser's diagnostics.
+# scripts/run-sema-tests.sh — exercise the semantic analyser's diagnostics.
 #
 #   tests/sema/<name>.km          compiled in DEFAULT mode; stderr must
 #                                 contain tests/sema/<name>.experr
@@ -15,11 +15,11 @@
 # Uses the native self-hosted compiler (kmc); build one with
 # ./build-self.sh.  Set $KMC to override.
 #
-# Usage:  ./run-sema-tests.sh [name ...]
+# Usage:  ./scripts/run-sema-tests.sh [name ...]
 #
 set -uo pipefail
 
-here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$here"
 
 kmc="${KMC:-$here/kmc}"

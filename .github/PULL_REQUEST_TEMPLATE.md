@@ -2,6 +2,6 @@
 
 ## Checklist
 - [ ] `./build-self.sh` reaches "fixpoint OK"
-- [ ] `./run-tests.sh`, `./run-sema-tests.sh` and `bash tests/bind/run.sh` pass
+- [ ] `./scripts/run-tests.sh`, `./scripts/run-sema-tests.sh` and `bash tests/bind/run.sh` pass
 - [ ] New behaviour has an example (`tests/examples/`) or sema test (`tests/sema/`)
 - [ ] Docs updated (`docs/`, `docs/language/reference.md`); `bootstrap/main.km.asm.gz` refreshed via `komodo self seed` if the compiler changed

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# run-tests.sh — compile every examples/*.km and tests/examples/*.km, run it, and check
+# scripts/run-tests.sh — compile every examples/*.km and tests/examples/*.km, run it, and check
 # its output against the matching <name>.expected file (next to the .km).  Also compiles each
 # with the `stackvm` backend to confirm the target-independent path stays
 # wired up, and builds + runs it through the `c` backend (portable C via
@@ -9,11 +9,11 @@
 # Uses the native, self-hosted compiler via the `komodo` CLI (build one
 # first with ./build-self.sh).  Set $KOMODO to point at a different driver.
 #
-# Usage:  ./run-tests.sh [name ...]     (default: all examples)
+# Usage:  ./scripts/run-tests.sh [name ...]     (default: all examples)
 #
 set -uo pipefail
 
-here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$here"
 
 komodo="${KOMODO:-$here/komodo}"

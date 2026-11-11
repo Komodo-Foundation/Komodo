@@ -525,8 +525,8 @@ its commit message.
 ## 7. Migration plan (12 steps)
 
 Gate **G** after every step: `./build-self.sh` (`fixpoint OK`),
-`./run-tests.sh` (49 examples x x86/stackvm/c, + wasm if available, +
-`tests/interop`), `./run-sema-tests.sh`, `tests/bind`, `tests/debug`,
+`./scripts/run-tests.sh` (49 examples x x86/stackvm/c, + wasm if available, +
+`tests/interop`), `./scripts/run-sema-tests.sh`, `tests/bind`, `tests/debug`,
 `python3 tools/check-docs.py`, `tools/perf-budget.sh`. Every step adds
 examples with `.expected` (runnable) and/or `tests/sema/*.experr`.
 Steps are additive; rollback is `git revert` of the one step.

@@ -86,8 +86,8 @@ Line counts are from `wc -l` on this checkout. Every `.kmm` file is
 | [`stdlib/string.c`](../stdlib/string.c) / [`file.c`](../stdlib/file.c) / [`math.c`](../stdlib/math.c) / [`algorithm.c`](../stdlib/algorithm.c) / [`console.c`](../stdlib/console.c) | 268 / 193 / 131 / 160 / 47 | Standard library implementations |
 | `stdlib/*.kmm` | 9 to 822 | Declarations for the libraries (ordinary modules; `raylib.kmm` is largest) |
 | [`build-self.sh`](../build-self.sh) | 159 | Bootstrap and fixpoint check for `./kmc` |
-| [`run-tests.sh`](../run-tests.sh) | 105 | Example suite across x86, stackvm, c and wasm |
-| [`run-sema-tests.sh`](../run-sema-tests.sh) | 89 | Analyzer diagnostic tests |
+| [`scripts/run-tests.sh`](../scripts/run-tests.sh) | 105 | Example suite across x86, stackvm, c and wasm |
+| [`scripts/run-sema-tests.sh`](../scripts/run-sema-tests.sh) | 89 | Analyzer diagnostic tests |
 | [`komodo`](../komodo) | ~1100 | User CLI: front end via `kmc`, then `nasm` / `gcc` / `emcc` |
 | [`bootstrap/main.km.asm.gz`](../bootstrap/main.km.asm.gz) | binary | Checked-in seed: assembly of the compiler |
 
@@ -267,7 +267,7 @@ from commits `83e672c` and `de7bfb3`:
 4. **Front-end script**: [`komodo`](../komodo) validates `-t` (around line 153)
    and decides how to produce and run output per target. The check at line
    351 limits which targets are assembled and run.
-5. **Test leg**: [`run-tests.sh`](../run-tests.sh) gets a `c` (and `wasm`)
+5. **Test leg**: [`scripts/run-tests.sh`](../scripts/run-tests.sh) gets a `c` (and `wasm`)
    block that builds and runs each example and diffs it against
    `.expected`. An example that cannot run on the target opts out with a
    marker comment (`c: skip`, `wasm: skip`). The C commit added `c: skip` to
@@ -457,7 +457,7 @@ backend work, and so it works on every target at once.
 Two suites, both driven by the native compiler. Build `./kmc` first with
 `./build-self.sh` (or `komodo self build`; plain `komodo` also builds it on demand).
 
-**Examples: `./run-tests.sh [name ...]`.** Each `tests/examples/<name>.km` is run
+**Examples: `./scripts/run-tests.sh [name ...]`.** Each `tests/examples/<name>.km` is run
 through the `komodo` script, so the front end, `nasm`, and `gcc` are all
 exercised. The output must match `tests/examples/<name>.expected` exactly (the
 script diffs it). Each example is then also:
@@ -470,7 +470,7 @@ script diffs it). Each example is then also:
 Markers are plain comments in the `.km` file. Use them only when the
 example needs the native C ABI (FFI, SDL, raylib).
 
-**Analyzer diagnostics: `./run-sema-tests.sh [filter ...]`.**
+**Analyzer diagnostics: `./scripts/run-sema-tests.sh [filter ...]`.**
 
 - `tests/sema/<name>.km` is compiled in default mode. It must fail, and its
   stderr must contain the text of `tests/sema/<name>.experr` as a substring.

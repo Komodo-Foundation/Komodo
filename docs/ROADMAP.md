@@ -26,7 +26,7 @@ write a useful program with only the standard library. Status as of 0.1.0.
 
 ## 3. Correctness and quality
 - [ ] Differential testing: every example produces identical output on x86, c and
-      wasm (`run-tests.sh` already runs all three).
+      wasm (`scripts/run-tests.sh` already runs all three).
 - [ ] Fuzz the lexer/parser/analyser: no crash on any input; errors carry
       `file:line:col`.
 - [ ] Memory: leak/ASan runs of the runtime, bounded-heap tests.

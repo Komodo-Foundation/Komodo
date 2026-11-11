@@ -366,11 +366,11 @@ if [[ "$cmd" == "self" ]]; then
         seed)  exec ./build-self.sh --force --update-seed ;;
         test)
             rc=0
-            ./run-tests.sh "${rest_args[@]:1}" || rc=1
-            ./run-sema-tests.sh || rc=1
+            ./scripts/run-tests.sh "${rest_args[@]:1}" || rc=1
+            ./scripts/run-sema-tests.sh || rc=1
             python3 tools/check-docs.py || rc=1
             exit $rc ;;
-        *) die "usage: komodo self build|test|seed" "build = ./build-self.sh, test = run-tests.sh + run-sema-tests.sh, seed = refresh bootstrap/main.km.asm.gz" 2 ;;
+        *) die "usage: komodo self build|test|seed" "build = ./build-self.sh, test = scripts/run-tests.sh + scripts/run-sema-tests.sh, seed = refresh bootstrap/main.km.asm.gz" 2 ;;
     esac
 fi
 
