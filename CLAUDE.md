@@ -9,6 +9,11 @@ Komodo is a self-hosting language/compiler (x86-64 NASM, portable C, WebAssembly
 4. **Subagents:** prefer Haiku; Sonnet only for hard compiler work. Usage is tight.
 5. **Pushing:** push finished work and open PRs without asking; never force-push; don't enable auto-merge. Do not touch another session's branch (check `gh pr list` and `git branch -r` first).
 
+## Using the graph
+- A code graph lives in `graphify-out/` (gitignored, about 1 MB). Read `graphify-out/GRAPH_REPORT.md` or run `graphify query "<question>"` / `graphify explain "<name>"` before grepping broadly.
+- It covers `docs/`, `stdlib/` (C runtime), `tools/`, `tests/`, `editors/`, and `kmrepl/`. It does not cover the compiler's `.km` sources or the asm seed, so use `rg` for those. Verify details against source.
+- Regenerate after code changes (no LLM, a few seconds): `pip install graphifyy && graphify update .`
+
 ## Build and test
 - `./build-self.sh` builds `./kmc` (~2 s) from the checked-in seed `bootstrap/main.km.asm.gz`; must print `fixpoint OK`. After compiler changes run `./build-self.sh --force --update-seed` and commit the seed. New syntax must not be used in the compiler's own sources until a seed supports it.
 - Suites: `./run-tests.sh` (examples on x86/stackvm/c/wasm + interop), `./run-sema-tests.sh`, `bash tests/{bind,debug,widths,diag,fmt,doc}/run.sh`, `python3 tests/lsp/run.py`, `python3 tools/check-docs.py`, `tools/perf-budget.sh`. `komodo self test` runs the main ones.
