@@ -527,7 +527,7 @@ public
 
     // contents of a string lexeme, the surrounding quotes removed
     fn strBody(lexeme: string): string
-        return lexeme[1 to (lexeme.length - 1)]
+        return lexeme[1:(lexeme.length - 1)]
 
     fn repeatStr(body: string, n: int): string
         let out = ""

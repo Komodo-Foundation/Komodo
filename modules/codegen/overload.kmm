@@ -310,12 +310,12 @@ fn Codegen::instDisplay(func: FunctionDecl): string
     let cut = -1
     let i = 0
     while i + 3 <= n.length and cut < 0 do
-        if n[i to (i + 3)] == "__g" then
+        if n[i:(i + 3)] == "__g" then
             cut = i
         i += 1
     if cut < 0 then
         return ""
-    let out = n[0 to cut] + "("
+    let out = n[0:cut] + "("
     let k = 0
     for p in func.params do
         if k > 0 then

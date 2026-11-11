@@ -677,8 +677,8 @@ public
 
     void macroRestore(mark: int)
         while #m_macroNames > mark do
-            m_macroNames = m_macroNames[0 to (#m_macroNames - 1)]
-            m_macroExprs = m_macroExprs[0 to (#m_macroExprs - 1)]
+            m_macroNames = m_macroNames[0:(#m_macroNames - 1)]
+            m_macroExprs = m_macroExprs[0:(#m_macroExprs - 1)]
 
     void pushMacro(name: string, e: Expression?)
         if e == null then
@@ -907,7 +907,7 @@ public
         let i = 0
         while i < #m_pathKeys do
             let k = m_pathKeys[i]
-            let deeper = #k > #pfx and k[0 to #pfx] == pfx
+            let deeper = #k > #pfx and k[0:#pfx] == pfx
             if k != key and not deeper then
                 nk += [k]
                 nt += [m_pathTypes[i]]
@@ -926,8 +926,8 @@ public
 
     mut pathRestore(mark: int, snap: [Type])
         while #m_pathKeys > mark do
-            m_pathKeys = m_pathKeys[0 to (#m_pathKeys - 1)]
-            m_pathTypes = m_pathTypes[0 to (#m_pathTypes - 1)]
+            m_pathKeys = m_pathKeys[0:(#m_pathKeys - 1)]
+            m_pathTypes = m_pathTypes[0:(#m_pathTypes - 1)]
         let i = 0
         while i < #snap and i < #m_pathTypes do
             m_pathTypes[i] = snap[i]

@@ -90,7 +90,7 @@ struct Token
     line: int
     column: int
 
-// Bounded substring: `s[start to end]` given `n == #s` (stdlib/runtime.c).
+// Bounded substring: `s[start:end]` given `n == #s` (stdlib/runtime.c).
 extern fn km_str_sub(s: string, n: int, start: int, end: int): string
 
 // The lexer's state lives on the class; every operation on it is
@@ -155,7 +155,7 @@ public
                     ti += 1
 
         while #m_indents > 1 do
-            m_indents = m_indents[0 to (#m_indents - 1)]
+            m_indents = m_indents[0:(#m_indents - 1)]
             m_tokens += [new Token(TokenType::DEDENT, "", m_line, m_col)]
 
         m_tokens += [new Token(TokenType::EOF, "", m_line, m_col)]
@@ -298,12 +298,16 @@ private
 
         let type = TokenType::IDENT
         let lexeme = text
-        // `string.length(s)` is deprecated: `#s` is the one way to get the length.
-        if text == "length" and peek() == "(" and #m_tokens >= 2 then
+        // `string.length(s)` and `string.substring(s, a, b)` are deprecated:
+        // `#s` and `s[a:b]` are the one way to get them.
+        if (text == "length" or text == "substring") and peek() == "(" and #m_tokens >= 2 then
             let dot = m_tokens[#m_tokens - 1]
             let base = m_tokens[#m_tokens - 2]
             if dot.type == TokenType::DOT and base.type == TokenType::IDENT and base.lexeme == "string" then
-                deprecated("'string.length(s)' is deprecated: use '#s'")
+                if text == "length" then
+                    deprecated("'string.length(s)' is deprecated: use '#s'")
+                else
+                    deprecated("'string.substring(s, a, b)' is deprecated: use 's[a:b]'")
         // most identifiers are not keywords — one hash probe skips the
         // whole chain of string compares below for them
         if not isKeyword(text) then
@@ -533,7 +537,7 @@ private
             m_tokens += [new Token(TokenType::INDENT, "", m_line, m_col)]
         else if indent < m_indents[#m_indents - 1] then
             while m_indents[#m_indents - 1] > indent do
-                m_indents = m_indents[0 to (#m_indents - 1)]
+                m_indents = m_indents[0:(#m_indents - 1)]
                 m_tokens += [new Token(TokenType::DEDENT, "", m_line, m_col)]
         m_line_start = false
 

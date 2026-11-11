@@ -17,7 +17,7 @@ module km_compiler
 fn constElemName(d: VarDecl): string
     let t = d.declaredType or ""
     if t.length > 2 and t[0] == "[" then
-        return t[1 to (t.length - 1)]
+        return t[1:(t.length - 1)]
     let init = d.init
     if init is ArrayExpr and #init.elements > 0 then
         let first = constLiteral(init.elements[0])
@@ -129,7 +129,7 @@ fn constValueText(x: Expression, elem: string): string
     if lit is StringLiteral then
         return lit.value
     if lit is CharLiteral then
-        return string(constCharCode(lit.value[1 to (lit.value.length - 1)]))
+        return string(constCharCode(lit.value[1:(lit.value.length - 1)]))
     let text = constNumberText(x)
     if constElemIsFloat(elem) and lit is IntLiteral then
         return text + ".0"

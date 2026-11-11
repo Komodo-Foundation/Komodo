@@ -71,6 +71,8 @@ fn compileMapped(source: string, target: string, strict: bool, opt: string, file
     if parsed == null then
         throw (parser.position() + ": " + (km_error_message() or "parse error"))
     let ast: Program = parsed
+    for w in parser.warnings() do
+        print(diagOne(locate(w, files, starts)))
 
     let analyzer = new Analyzer(strict)
     if target == "lint" then
@@ -128,7 +130,7 @@ fn locate(msg: string, files: [string], starts: [int]): string
         k += 1
     if at < 0 then
         return msg
-    return files[at] + ":" + string(line - starts[at] + 1) + msg[i to n]
+    return files[at] + ":" + string(line - starts[at] + 1) + msg[i:n]
 
 fn digitVal(c: char): int
     let d = "0123456789"

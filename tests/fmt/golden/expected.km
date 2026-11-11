@@ -15,7 +15,7 @@ void main()
     let s = "a=b , c"   // kept  as written
     let t = `x {xs[0]+1} = {s}`
     let c = '='
-    console.print(xs[1:], xs[:2], xs[0 to 2], s[1])
+    console.print(xs[1:], xs[:2], xs[0:2], s[1])
     if counter < limit and not (limit >= 10) then
         counter += 1
 

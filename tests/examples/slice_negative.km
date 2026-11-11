@@ -1,0 +1,10 @@
+// Slices on strings and arrays, Python style: a negative bound counts from
+// the end, and bounds past either end are clamped.
+
+import console
+
+void main()
+    let s = "Komodo"
+    console.print(s[-2:], s[:-1], s[-100:2], s[4:99], s[3:1] + "|")
+    let xs = [1, 2, 3, 4]
+    console.print(xs[-2:], xs[:-1], xs[1:], #xs[0:-99])

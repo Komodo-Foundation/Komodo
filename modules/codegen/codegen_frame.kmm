@@ -111,16 +111,16 @@ mut Codegen::exprType(e: Expression?): string
         return "int"
     if e is CallExpr then
         if e.receiver != null then
-            let ro = resolveMethodOwner(exprType(e.receiver), e.name[1 to e.name.length])
+            let ro = resolveMethodOwner(exprType(e.receiver), e.name[1:e.name.length])
             if ro != "" then
-                return fnRet(ro + "__" + e.name[1 to e.name.length])
+                return fnRet(ro + "__" + e.name[1:e.name.length])
         let d = dotIndex(e.name)
         // a dotted call may name an overload set / template through its
         // "_"-joined form (`algorithm.sum` → overloaded `algorithm_sum`)
         let cn = e.name
         if d > 0 then
-            let r = e.name[0 to d]
-            let mth = e.name[(d + 1) to e.name.length]
+            let r = e.name[0:d]
+            let mth = e.name[(d + 1):e.name.length]
             if isMethodReceiver(r) then
                 let owner = resolveMethodOwner(receiverType(r), mth)
                 if owner != "" then
@@ -142,7 +142,7 @@ mut Codegen::exprType(e: Expression?): string
 mut Codegen::structPatBindType(typeName: string, field: string): string
     let ft = fieldTypeOf(typeName, field)
     if #ft > 0 and ft[#ft - 1] == "?" then
-        return ft[0 to (#ft - 1)]
+        return ft[0:(#ft - 1)]
     return ft
 
 // Pre-scan a statement list, reserving a slot for every variable it (or a

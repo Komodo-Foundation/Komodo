@@ -504,7 +504,7 @@ public
     mut fieldCopyExpr(read: Expression, ftype: string): Expression
         let base = stripOpt(ftype) or ftype
         if isArrayType(base) then
-            // `src.f[0 to #src.f]` — a fresh buffer (elements shared).
+            // `src.f[0:#src.f]` — a fresh buffer (elements shared).
             let sl = new SliceExpr()
             sl.object = read
             return sl
@@ -705,7 +705,7 @@ public
     // `"[[string]]"` → `"[string]"`, `"[int]"` → `"int"`, else unchanged.
     fn elemTypeOf(t: string): string
         if #t >= 2 and t[0] == "[" and t[#t - 1] == "]" then
-            return t[1 to (#t - 1)]
+            return t[1:(#t - 1)]
         return t
 
     // Field-slot indices in positional-constructor order, matching the
@@ -794,8 +794,8 @@ public
 
     void macroScopeRestore(mark: int)
         while #m_macroNames > mark do
-            m_macroNames = m_macroNames[0 to (#m_macroNames - 1)]
-            m_macroExprs = m_macroExprs[0 to (#m_macroExprs - 1)]
+            m_macroNames = m_macroNames[0:(#m_macroNames - 1)]
+            m_macroExprs = m_macroExprs[0:(#m_macroExprs - 1)]
 
     void pushMacro(name: string, e: Expression?)
         if e == null then

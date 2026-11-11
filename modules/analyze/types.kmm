@@ -122,7 +122,7 @@ fn litFits(v: string, k: string): bool
     let neg = #v > 0 and v[0] == "-"
     let m = v
     if neg then
-        m = v[1 to #v]
+        m = v[1:#v]
     let hex = #m > 2 and m[0] == "0" and (m[1] == "x" or m[1] == "X")
     let lim = ""
     let bits = intBits(k)
@@ -156,9 +156,9 @@ fn litFits(v: string, k: string): bool
             lim = "9223372036854775807"
     if hex then
         // compare hex digit count against the limit's: nibbles = bits / 4
-        let d = m[2 to #m]
+        let d = m[2:#m]
         while #d > 1 and d[0] == "0" do
-            d = d[1 to #d]
+            d = d[1:#d]
         let nib = bits / 4
         if #d < nib then
             return true
@@ -166,7 +166,7 @@ fn litFits(v: string, k: string): bool
             return false
         return not sg or d[0] <= "7"
     while #m > 1 and m[0] == "0" do
-        m = m[1 to #m]
+        m = m[1:#m]
     if #m != #lim then
         return #m < #lim
     return m <= lim
@@ -174,7 +174,7 @@ fn litFits(v: string, k: string): bool
 // a literal's Type carries its text in `name` ("lit:300" / "lit"), so
 // assignment can range-check it; `delit` forgets that.
 fn isLit(t: Type): bool
-    return (t.kind == "int" or t.kind == "float") and #t.name >= 3 and t.name[0 to 3] == "lit"
+    return (t.kind == "int" or t.kind == "float") and #t.name >= 3 and t.name[0:3] == "lit"
 
 fn delit(t: Type): Type
     if isLit(t) then
@@ -182,7 +182,7 @@ fn delit(t: Type): Type
     return t
 
 fn litText(t: Type): string
-    return t.name[4 to #t.name]
+    return t.name[4:#t.name]
 
 fn canonInt(k: string): string
     if k == "uint" then
@@ -278,7 +278,7 @@ fn stripOpt(t: string?): string?
     if t == null then
         return null
     if #t > 0 and t[#t - 1] == "?" then
-        return t[0 to (#t - 1)]
+        return t[0:(#t - 1)]
     return t
 
 fn isPrimName(w: string): bool
@@ -297,7 +297,7 @@ fn parseTypeStr(s: string?): Type
     let nullable = false
     if #body > 0 and body[#body - 1] == "?" then
         nullable = true
-        body = body[0 to (#body - 1)]
+        body = body[0:(#body - 1)]
     let inner = parseTypeBody(body)
     if nullable then
         return tNullable(inner)
@@ -305,7 +305,7 @@ fn parseTypeStr(s: string?): Type
 
 fn parseTypeBody(body: string): Type
     if #body >= 2 and body[0] == "[" and body[#body - 1] == "]" then
-        return tArray(parseTypeStr(body[1 to (#body - 1)]))
+        return tArray(parseTypeStr(body[1:(#body - 1)]))
     if body == "any" then
         return tAny
     // `f64` is just `float`; `f32` keeps its own kind (see isFloatKind).

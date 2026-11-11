@@ -105,7 +105,7 @@ void Codegen::genThrow(msg: Expression?)
         genExpr(msg)
     m_backend.throwErr()
 
-// `obj[start to end]` — a fresh string or array holding the half-open
+// `obj[start:end]` — a fresh string or array holding the half-open
 // range.  A missing start is 0; a missing end is passed as -1 and the
 // runtime helper clamps it to the length.
 void Codegen::genSlice(e: SliceExpr)
@@ -118,7 +118,7 @@ void Codegen::genSlice(e: SliceExpr)
         genExpr(e.start)
     m_backend.pushAcc()
     if e.end == null then
-        m_backend.loadIntLit("-1")
+        m_backend.loadIntLit("9223372036854775807")  // "to the end": clamped to the length
     else
         genExpr(e.end)
     if isStr then
@@ -549,7 +549,7 @@ void Codegen::genCall(e: CallExpr)
     // `expr.method(args)` on a computed receiver (a field of a field, an
     // index, a call result): evaluate the receiver expression itself.
     if e.receiver != null then
-        genMethodCallE(exprType(e.receiver), "", e.receiver, e.name[1 to e.name.length], e.args)
+        genMethodCallE(exprType(e.receiver), "", e.receiver, e.name[1:e.name.length], e.args)
         return
 
     // `recv.method(args)` where `recv` is an object-typed local, a field
@@ -557,8 +557,8 @@ void Codegen::genCall(e: CallExpr)
     // rides in as implicit argument 0.
     let dot = dotIndex(e.name)
     if dot > 0 then
-        let recv = e.name[0 to dot]
-        let meth = e.name[(dot + 1) to e.name.length]
+        let recv = e.name[0:dot]
+        let meth = e.name[(dot + 1):e.name.length]
         if isMethodReceiver(recv) then
             genMethodCall(recv, meth, e.args)
             return

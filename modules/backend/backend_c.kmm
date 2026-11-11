@@ -70,7 +70,7 @@ void CBackend::stmt(text: string)
 
 // A label name from Backend.newLabel (".L12") as a C identifier ("L12").
 fn CBackend::cl(name: string): string
-    return "L" + name[2 to name.length]
+    return "L" + name[2:name.length]
 
 // A C identifier for a Komodo name: anything outside [A-Za-z0-9_] → "_".
 fn CBackend::cname(s: string): string
@@ -107,7 +107,7 @@ void CBackend::pushTmp(t: string)
 mut CBackend::popTmp(): string
     let n = #m_tmps
     let t = m_tmps[n - 1]
-    m_tmps = m_tmps[0 to (n - 1)]
+    m_tmps = m_tmps[0:(n - 1)]
     return t
 
 mut CBackend::topTmp(): string
@@ -126,7 +126,7 @@ mut CBackend::topFrame(): string
 mut CBackend::popFrame(): string
     let n = #m_frames
     let f = m_frames[n - 1]
-    m_frames = m_frames[0 to (n - 1)]
+    m_frames = m_frames[0:(n - 1)]
     return f
 
 // The C expression for a call of `name` with `n` arguments in frame `f`.
@@ -275,9 +275,9 @@ mut CBackend::binaryInt(op_: string)
 mut CBackend::normInt(k: string)
     let ct = k + "_t"
     if k[0] == "i" then
-        ct = "int" + k[1 to #k] + "_t"
+        ct = "int" + k[1:#k] + "_t"
     else
-        ct = "uint" + k[1 to #k] + "_t"
+        ct = "uint" + k[1:#k] + "_t"
     stmt("acc = (" + ct + ")acc;")
 
 mut CBackend::binaryIntU(op_: string)
@@ -652,8 +652,8 @@ mut CBackend::tryBegin()
 mut CBackend::tryEnd()
     let catchL = m_tryCatch[#m_tryCatch - 1]
     let doneL = m_tryDone[#m_tryDone - 1]
-    m_tryCatch = m_tryCatch[0 to (#m_tryCatch - 1)]
-    m_tryDone = m_tryDone[0 to (#m_tryDone - 1)]
+    m_tryCatch = m_tryCatch[0:(#m_tryCatch - 1)]
+    m_tryDone = m_tryDone[0:(#m_tryDone - 1)]
     stmt("km_try_pop();")
     stmt("goto " + cl(doneL) + ";")
     line(cl(catchL) + ": ;")
