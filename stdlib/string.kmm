@@ -16,7 +16,7 @@ module string
 // Predicates return int (1 / 0), matching `algorithm` and `file`.
 // Offsets are byte offsets; -1 means "not found".
 
-// Length of s in bytes, not characters: length("é") is 2.
+// Deprecated: use #s. Length of s in bytes, not characters: #"é" is 2.
 fn string_length(s: string): int
 // Splits s at each occurrence of sep. Empty pieces are kept, so "a,,b" gives 3
 // items. An empty s gives one empty item, and an empty sep does not split: the

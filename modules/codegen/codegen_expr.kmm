@@ -969,6 +969,19 @@ void Codegen::genMethodCallE(objType: string, recv: string, recvExpr: Expression
     // Virtual when the static type carries a vtable slot for this method;
     // a plain direct call otherwise (structs, leaf classes).
     let slot = methodSlotOf(objType, meth)
+    if slot < 0 and m_backend.isFastFn(sym, total) then
+        if recvExpr != null then
+            genExpr(recvExpr)
+        else
+            loadReceiver(recv)
+        m_backend.pushAcc()
+        for a in args do
+            genExpr(a)
+            if exprType(a) == "float" then
+                m_backend.floatToBits()
+            m_backend.pushAcc()
+        m_backend.callFast(sym, total)
+        return
     m_backend.callFrameBegin(total)
     m_backend.callArgTag(0, 0)
     if recvExpr != null then

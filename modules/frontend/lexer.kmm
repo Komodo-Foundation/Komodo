@@ -298,6 +298,12 @@ private
 
         let type = TokenType::IDENT
         let lexeme = text
+        // `string.length(s)` is deprecated: `#s` is the one way to get the length.
+        if text == "length" and peek() == "(" and #m_tokens >= 2 then
+            let dot = m_tokens[#m_tokens - 1]
+            let base = m_tokens[#m_tokens - 2]
+            if dot.type == TokenType::DOT and base.type == TokenType::IDENT and base.lexeme == "string" then
+                deprecated("'string.length(s)' is deprecated: use '#s'")
         // most identifiers are not keywords — one hash probe skips the
         // whole chain of string compares below for them
         if not isKeyword(text) then
