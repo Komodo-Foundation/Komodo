@@ -2690,7 +2690,7 @@ A module is a `.kmm` file whose first line is `module <name>`. Its members are
 reached with `name::member` or `name.member` (for functions).
 
 This example needs two files: `greet.kmm` and `main.km`. The repository has the
-same files as `examples/greet.kmm` and `examples/module_demo.km`.
+same files as `tests/examples/greet.kmm` and `tests/examples/module_demo.km`.
 
 <!-- doc-skip -->
 ```km
@@ -3512,8 +3512,8 @@ void main()
 error: extern variable 'xs': type '[int]' is not supported (use int / sized ints, bool, float, f32, string or an `extern type` handle)
 ```
 
-Writing an `extern let` is shown in `examples/ffi_extern_var.km` with
-`examples/cglobals.kmm` (needs a C companion).
+Writing an `extern let` is shown in `tests/examples/ffi_extern_var.km` with
+`tests/examples/cglobals.kmm` (needs a C companion).
 
 ### 19.6 Passing values to C
 
@@ -3565,14 +3565,14 @@ main.km:7:11: error: 'cb' cannot be a C callback: parameter type '[int]' is not 
 ```
 
 Callbacks with more than six parameters and with `float` parameters compile and
-run (`examples/ffi_callback_ext.km`). `docs/ffi.md` says otherwise; see open
+run (`tests/examples/ffi_callback_ext.km`). `docs/ffi.md` says otherwise; see open
 questions.
 
 ### 19.8 Structs by value
 
 `copy(struct)` as an `extern` argument passes a struct by value, and an
 `extern` may return a struct. This needs a C companion. See
-`examples/ffi_struct.km`, `examples/ffi_sret.km` and `stdlib/raylib.kmm`.
+`tests/examples/ffi_struct.km`, `tests/examples/ffi_sret.km` and `stdlib/raylib.kmm`.
 
 ### 19.9 Exporting to C: `export fn`
 
@@ -3695,7 +3695,7 @@ input: `komodo prog.km -- driver.c`.
 ### 19.10 `link` (modules only)
 
 `link` names a library or a companion C file for a module; see
-`stdlib/sdl2.kmm` and `examples/cbhelper.kmm`. `link` outside a module is an
+`stdlib/sdl2.kmm` and `tests/examples/cbhelper.kmm`. `link` outside a module is an
 error:
 
 <!-- doc-error -->
@@ -5060,9 +5060,9 @@ main.km:2:5: error: initialiser for 'x': type 'int' is not assignable to 'Nope'
 ```
 
 **27. Callback limits in `docs/ffi.md` are stale.** It says callbacks take up to
-six parameters and reject `float`. `examples/ffi_callback_ext.km` (ten
+six parameters and reject `float`. `tests/examples/ffi_callback_ext.km` (ten
 parameters, `double`s and `f32`) builds and prints the expected output with this
-compiler, and `examples/ffi_callback_ext.expected` agrees.
+compiler, and `tests/examples/ffi_callback_ext.expected` agrees.
 
 **28. `design.md` says the first user argument is `args[2]`.** The compiler
 uses `args[1]`, and `docs/language/basics.md` already notes this difference.

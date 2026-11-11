@@ -390,8 +390,8 @@ rechecks a second stage if the first differs.
 
 ## Test scripts
 
-- **`./run-tests.sh [name ...]`** compiles and runs each `examples/*.km` and
-  diffs its output against `examples/<name>.expected`. It also builds each
+- **`./run-tests.sh [name ...]`** compiles and runs each `examples/*.km` and `tests/examples/*.km`, diffing
+  its output against the `.expected` file beside it. It also builds each
   example with `-t stackvm`, `-t c` and, when `emcc` and `node` are installed,
   `-t wasm`. A file can opt out of a target with a comment line containing
   `stackvm: skip`, `c: skip` or `wasm: skip`.

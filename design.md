@@ -430,8 +430,8 @@ extern "SDL2"                       // a block: one library, many decls
   a `float` / `f32` (a C `double` / `float`), and return one of those or
   `void` — no arrays. Parameters beyond the six integer / eight SSE
   registers are read from the C stack, so a callback may take, say, ten
-  arguments. See `examples/ffi_callback.km` and
-  `examples/ffi_callback_ext.km`.
+  arguments. See `tests/examples/ffi_callback.km` and
+  `tests/examples/ffi_callback_ext.km`.
 - `data(arr)` — the element pointer of a Komodo array, for passing a
   writable buffer / out-param to C (e.g. `SDL_PollEvent(data(ev))`). Read
   results back with ordinary `arr[i]`.
@@ -461,7 +461,7 @@ extern "SDL2"                       // a block: one library, many decls
   arguments shift by one register) and unpacks the filled buffer into a
   fresh Komodo object, exactly like the register case. Same field
   restrictions (scalars only, up to 192 bytes) — see
-  `examples/ffi_sret.km`. (The buffer is shared, so the result must be
+  `tests/examples/ffi_sret.km`. (The buffer is shared, so the result must be
   consumed before the next struct-returning call, which it always is.)
 - **Global variables — `extern let name: T`.** Reads and writes go
   straight to the C symbol (`extern let counter: i32`,
@@ -470,7 +470,7 @@ extern "SDL2"                       // a block: one library, many decls
   (`const char *`), or a handle — widened on read and narrowed on write,
   so `counter += 1` on a C `int` is correct. Add `= "sym"` to bind a
   differently spelled symbol. Arrays and structs are rejected. Works in
-  `extern "lib"` blocks too. See `examples/ffi_extern_var.km`.
+  `extern "lib"` blocks too. See `tests/examples/ffi_extern_var.km`.
 - The `komodo` CLI reads `<file>.links` and needs no link flags.
 
 ### Exporting to C and C++ (`export fn`)
@@ -548,7 +548,7 @@ members of an `extern "lib"` block; the symbol may contain letters,
 digits, `_ $ @ ?`. C++ *classes* are reached the usual way: write a
 small `extern "C"` wrapper (`counter_new`, `counter_add`, …) and bind
 those, with the class held as an opaque `extern type` handle — see
-`examples/ffi_cxx.km`.
+`tests/examples/ffi_cxx.km`.
 
 C++ sources are built by `komodo` itself: `.cpp` / `.cc` / `.cxx` files
 after `--` (or named by a module's `link "x.cpp"`) are compiled with
