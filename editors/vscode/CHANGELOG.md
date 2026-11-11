@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.2
+
+- Komodo Dark: restored the 0.3.0 token colors (0.3.1 had made most code blue).
+
 ## 0.3.1
 
 - Komodo Dark: conventional syntax colors (muted keywords, strings, numbers, types, comments); green kept as the accent.
