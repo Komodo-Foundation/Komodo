@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.0
+
+- Komodo Dark color theme: near-black background, Komodo green accent, tuned for Komodo token scopes.
+
 ## 0.2.1
 
 - Breakpoints can be set in `.km` and `.kmm` files.

@@ -1,8 +1,8 @@
 {
   "name": "komodo-lang",
   "displayName": "Komodo",
-  "description": "Komodo language support: highlighting, diagnostics, outline, formatting, run/build/test tasks and debugging for .km and .kmm files.",
-  "version": "0.2.1",
+  "description": "Komodo language support: highlighting, diagnostics, outline, formatting, run/build/test tasks and debugging and a dark theme for .km and .kmm files.",
+  "version": "0.3.0",
   "license": "MIT",
   "publisher": "komodo-foundation",
   "icon": "icon.png",
@@ -22,7 +22,8 @@
     "Snippets",
     "Formatters",
     "Linters",
-    "Debuggers"
+    "Debuggers",
+    "Themes"
   ],
   "keywords": [
     "komodo",
@@ -321,6 +322,13 @@
     "breakpoints": [
       {
         "language": "komodo"
+      }
+    ],
+    "themes": [
+      {
+        "label": "Komodo Dark",
+        "uiTheme": "vs-dark",
+        "path": "./themes/komodo-dark.json"
       }
     ]
   },

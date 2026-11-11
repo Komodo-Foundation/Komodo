@@ -1,0 +1,41 @@
+{
+  "name": "Komodo Dark",
+  "type": "dark",
+  "colors": {
+    "editor.background": "#08090a",
+    "editor.foreground": "#d6dcd7",
+    "editorLineNumber.foreground": "#3a403c",
+    "editorLineNumber.activeForeground": "#8a948d",
+    "editorCursor.foreground": "#6fff0f",
+    "editor.selectionBackground": "#1f3a14",
+    "editor.lineHighlightBackground": "#101211",
+    "editorIndentGuide.background1": "#161a17",
+    "editorIndentGuide.activeBackground1": "#2a322c",
+    "activityBar.background": "#050606",
+    "sideBar.background": "#050606",
+    "statusBar.background": "#050606",
+    "statusBar.foreground": "#8a948d",
+    "statusBar.debuggingBackground": "#6fff0f",
+    "statusBar.debuggingForeground": "#08090a",
+    "tab.activeBackground": "#08090a",
+    "tab.inactiveBackground": "#050606",
+    "button.background": "#6fff0f",
+    "button.foreground": "#08090a",
+    "focusBorder": "#6fff0f"
+  },
+  "tokenColors": [
+    { "scope": ["comment", "punctuation.definition.comment"], "settings": { "foreground": "#5d685f", "fontStyle": "italic" } },
+    { "scope": ["comment.block.documentation.komodo"], "settings": { "foreground": "#7c897e", "fontStyle": "italic" } },
+    { "scope": ["keyword.control.komodo", "keyword.other.komodo", "keyword.operator.word.komodo"], "settings": { "foreground": "#6fff0f" } },
+    { "scope": ["storage.modifier.komodo", "storage.type.komodo"], "settings": { "foreground": "#a6e36a" } },
+    { "scope": ["keyword.operator.komodo", "punctuation.separator.namespace.komodo"], "settings": { "foreground": "#9fb3a4" } },
+    { "scope": ["entity.name.function", "entity.name.function.call.komodo", "support.function.builtin.komodo"], "settings": { "foreground": "#8fe3ff" } },
+    { "scope": ["entity.name.type.komodo", "support.type.komodo"], "settings": { "foreground": "#f0c674" } },
+    { "scope": ["entity.name.namespace.komodo"], "settings": { "foreground": "#c9a7ff" } },
+    { "scope": ["variable.other.member.komodo", "variable.language.self.komodo"], "settings": { "foreground": "#d6dcd7" } },
+    { "scope": ["constant.numeric", "constant.language.komodo"], "settings": { "foreground": "#ff9e64" } },
+    { "scope": ["string.quoted", "string.template"], "settings": { "foreground": "#b5e3a0" } },
+    { "scope": ["constant.character.escape.komodo"], "settings": { "foreground": "#ffd27a" } },
+    { "scope": ["keyword.other.todo.komodo"], "settings": { "foreground": "#08090a", "background": "#ffd27a", "fontStyle": "bold" } }
+  ]
+}

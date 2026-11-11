@@ -16,6 +16,7 @@ programs (`.km`) and modules (`.kmm`).
 | Debugging | `F5` builds with `komodo build -g` and starts gdb or lldb on Komodo source lines |
 | Editing | comment toggling, bracket and quote pairs, indentation, `/** */` continuation, indentation folding and `// region` markers |
 | Snippets | `main`, `fn`, `void`, `mut`, `class`, `struct`, `enum`, `module`, `if`, `ifelse`, `for`, `forin`, `while`, `match`, `import`, `letbe`, `try`, `test`, ... |
+| Color theme | **Komodo Dark**: near-black background, green accent (Preferences: Color Theme) |
 | File icon | `.km` and `.kmm` files show the Komodo icon in themes that use language icons |
 
 ## Requirements

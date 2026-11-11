@@ -48,14 +48,14 @@ code --install-extension komodo-foundation.komodo-lang
 From a `.vsix` file, built from a checkout with `vsce` (needs Node):
 
 ```bash
-cd editors/vscode && npm install && npx @vscode/vsce package    # writes komodo-lang-0.2.1.vsix
-code --install-extension komodo-lang-0.2.1.vsix
+cd editors/vscode && npm install && npx @vscode/vsce package    # writes komodo-lang-0.3.0.vsix
+code --install-extension komodo-lang-0.3.0.vsix
 ```
 
 Or, while working on the extension, run `npm install` there and link the folder so edits show up on reload:
 
 ```bash
-ln -s /path/to/Komodo/editors/vscode ~/.vscode/extensions/komodo-foundation.komodo-lang-0.2.1
+ln -s /path/to/Komodo/editors/vscode ~/.vscode/extensions/komodo-foundation.komodo-lang-0.3.0
 ```
 
 Reload the window (Developer: Reload Window). `.km` and `.kmm` files now
