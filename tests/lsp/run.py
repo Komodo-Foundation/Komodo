@@ -10,6 +10,7 @@ Spawns the server, speaks LSP over stdio, and asserts:
     still has the old text
   * a lint warning is published with severity 2
   * documentSymbol lists top-level declarations only
+  * definition, hover and completion find top-level names across the directory
   * shutdown then exit ends the process with status 0
 
     python3 tests/lsp/run.py
@@ -210,6 +211,59 @@ def main():
               'symbol selectionRange points at the name')
         check(add['range']['end']['line'] == 19, 'symbol range ends at its last body line')
 
+    # definition, hover and completion, by name, across files in the directory
+    doc_text = ('import console\n'
+                '\n'
+                '// Doubles a number.\n'
+                'fn twice(n: int): int\n'
+                '    return n * 2\n'
+                '\n'
+                'void main()\n'
+                '    console.print(add(twice(2), 1))\n')
+    doc = work / 'doc.km'
+    doc.write_text(doc_text)
+    doc_uri = doc.as_uri()
+    c.notify('textDocument/didOpen', {'textDocument': {
+        'uri': doc_uri, 'languageId': 'komodo', 'version': 1, 'text': doc_text}})
+    resp, _ = c.request('textDocument/definition', {'textDocument': {'uri': shapes_uri},
+                        'position': {'line': 22, 'character': 19}})
+    locs = resp.get('result') or []
+    check(len(locs) == 1 and locs[0]['uri'] == shapes_uri
+          and locs[0]['range']['start'] == {'line': 18, 'character': 3},
+          'definition of add (in another file, with no open buffer) points at its name (got %s)'
+          % json.dumps(locs))
+    resp, _ = c.request('textDocument/definition', {'textDocument': {'uri': doc_uri},
+                        'position': {'line': 7, 'character': 23}})
+    locs = resp.get('result') or []
+    check(len(locs) == 1 and locs[0]['uri'] == doc_uri
+          and locs[0]['range']['start'] == {'line': 3, 'character': 3},
+          'definition of twice points at its declaration in the open file (got %s)'
+          % json.dumps(locs))
+    resp, _ = c.request('textDocument/definition', {'textDocument': {'uri': doc_uri},
+                        'position': {'line': 7, 'character': 4}})
+    check(resp.get('result') == [], 'definition of a name with no declaration finds nothing')
+
+    resp, _ = c.request('textDocument/hover', {'textDocument': {'uri': doc_uri},
+                        'position': {'line': 7, 'character': 23}})
+    value = ((resp.get('result') or {}).get('contents') or {}).get('value', '')
+    check('fn twice(n: int): int' in value and 'Doubles a number.' in value,
+          'hover shows the declaration and its doc comment (got %r)' % value)
+    resp, _ = c.request('textDocument/hover', {'textDocument': {'uri': shapes_uri},
+                        'position': {'line': 22, 'character': 19}})
+    value = ((resp.get('result') or {}).get('contents') or {}).get('value', '')
+    check('fn add(a: int, b: int): int' in value,
+          'hover on a name from another file shows its declaration (got %r)' % value)
+
+    resp, _ = c.request('textDocument/completion', {'textDocument': {'uri': doc_uri},
+                        'position': {'line': 7, 'character': 4}})
+    labels = {item['label']: item for item in resp.get('result') or []}
+    check({'twice', 'Token', 'Counter', 'add', 'main'} <= set(labels),
+          'completion offers declarations from this file and its neighbours')
+    check(labels.get('fn') is None and 'return' in labels and 'print' in labels,
+          'completion offers keywords and built-ins')
+    check(labels.get('twice', {}).get('kind') == 3 and labels.get('Token', {}).get('kind') == 22,
+          'completion kinds: function for fn, struct for struct')
+
     # shutdown and exit
     resp, _ = c.request('shutdown', None)
     check(resp.get('result') is None and 'error' not in resp, 'shutdown answers null')
@@ -222,7 +276,7 @@ def main():
     check(code == 0, 'exit after shutdown ends the server with status 0 (got %s)' % code)
 
     project_files = sorted(p.name for p in work.iterdir())
-    check(project_files == ['bad.km', 'lint.km', 'shapes.km'],
+    check(project_files == ['bad.km', 'doc.km', 'lint.km', 'shapes.km'],
           'compiler wrote nothing into the project directory (found %s)' % project_files)
     tmp.cleanup()
     if failures:
